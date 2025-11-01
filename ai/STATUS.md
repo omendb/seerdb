@@ -26,14 +26,16 @@
 - Complete understanding of LSM-tree design space and trade-offs
 - Research errors corrected (Tucana 2020 removed, Bourbon corrected)
 
-### Active Work - Baseline Benchmarks Complete!
+### Active Work - All Benchmarks Complete!
 - ✅ **Learned bloom filter prototype COMPLETE** (research validated!)
 - ✅ 73.5% space reduction at 100k elements (close to 90% claim)
 - ✅ Crossover point found: ~10k elements minimum
-- ✅ **Baseline benchmarks COMPLETE** (RocksDB vs sled)
-- RocksDB: 363k writes/sec, 1M reads/sec (LSM-tree, write-optimized)
-- sled: 66k writes/sec, 3.1M reads/sec (B+tree, read-optimized)
-- **Next**: Architecture design or begin core LSM implementation
+- ✅ **Baseline benchmarks COMPLETE** (RocksDB vs sled vs fjall)
+- **fjall**: 438k writes/sec, 576k mixed (best LSM, Rust-native, 2024)
+- RocksDB: 343k writes/sec, 1.1M reads/sec (C++, 2013)
+- sled: 74k writes/sec, 2.3M reads/sec (B+tree, read-optimized)
+- **Winner**: fjall (27-40% faster than RocksDB)
+- **Next**: Study fjall source, begin core LSM implementation
 - Optional: Read FASTER paper (concurrency patterns)
 
 ---
@@ -76,11 +78,12 @@
   - Better FPR than traditional (0% vs 1%)
   - Confirms adaptive strategy needed (Bourbon CBA)
 
-- ✅ **Baseline benchmarks complete** (RocksDB vs sled)
-  - RocksDB: 363k writes/sec, 1M reads/sec (LSM-tree strength)
-  - sled: 3.1M reads/sec, 66k writes/sec (B+tree strength)
-  - Clear winner for our workload: LSM-tree (append-heavy)
-  - Established performance targets for seerdb implementation
+- ✅ **Baseline benchmarks complete** (RocksDB vs sled vs fjall)
+  - **fjall**: 438k writes/sec, 576k mixed (best LSM, 27-40% faster than RocksDB)
+  - RocksDB: 343k writes/sec, 1.1M reads/sec (LSM-tree, C++)
+  - sled: 2.3M reads/sec, 74k writes/sec (B+tree, Rust)
+  - Clear winner: **fjall** (modern Rust LSM-tree, built 2024)
+  - Established performance targets: beat fjall baseline with learned components
 
 ---
 
@@ -100,11 +103,11 @@
 - Claims depend heavily on workload characteristics
 - Need to benchmark with omen-specific workload (vector embeddings)
 
-### Baseline Benchmarking
-- fjall timed out (>40s for 100k writes)
-- Likely API usage issue or configuration problem
-- Excluded from baseline comparison, investigate later
-- RocksDB and sled sufficient for establishing targets
+### Baseline Benchmarking (RESOLVED)
+- fjall initially timed out (>40s for 100k writes)
+- Root cause: Using individual inserts instead of batches
+- Fixed: Use `keyspace.batch()` API for batch writes
+- Result: fjall now fastest LSM (438k writes/sec, 27% faster than RocksDB)
 
 ---
 

@@ -4,7 +4,7 @@
 
 ---
 
-## Baseline: RocksDB vs sled ✅ COMPLETE
+## Baseline: RocksDB vs sled vs fjall ✅ COMPLETE
 
 **Date**: October 31, 2025
 **Hardware**: M3 Max, 128GB RAM, macOS
@@ -12,59 +12,69 @@
 **Goal**: Establish baseline performance for comparison with seerdb
 
 ### Setup
-- **Systems**: RocksDB 0.22, sled 0.34
+- **Systems**: RocksDB 0.22 (C++, 2013), sled 0.34 (Rust, B+tree), fjall 2.11 (Rust, LSM, 2024)
 - **Workloads**:
   1. Sequential Writes (100k ops)
   2. Random Reads (100k ops)
   3. Mixed 50/50 read/write (100k ops)
   4. Range Scans (1000 scans, 100 keys each)
 - **Metrics**: Throughput (ops/sec), Latency (us/op)
-- **Note**: fjall benchmarks timed out (>40s for 100k writes) - API investigation needed
+- **Note**: fjall initially timed out due to incorrect API usage (individual inserts instead of batches)
 
 ### Results
 
-| Workload | RocksDB Throughput | RocksDB Latency | sled Throughput | sled Latency | Winner |
-|----------|-------------------|-----------------|-----------------|--------------|---------|
-| Sequential Writes | 363,350 ops/sec | 2.75 us/op | 66,122 ops/sec | 15.12 us/op | **RocksDB 5.5x** |
-| Random Reads | 1,040,540 ops/sec | 0.96 us/op | 3,128,585 ops/sec | 0.32 us/op | **sled 3.0x** |
-| Mixed 50/50 | 395,537 ops/sec | 2.53 us/op | 85,956 ops/sec | 11.63 us/op | **RocksDB 4.6x** |
-| Range Scans | 19,871 scans/sec | 0.05 ms/scan | 51,252 scans/sec | 0.02 ms/scan | **sled 2.6x** |
+| Workload | RocksDB | sled | fjall | Winner |
+|----------|---------|------|-------|---------|
+| Sequential Writes | 343k ops/sec (2.91 us) | 74k ops/sec (13.52 us) | **438k ops/sec (2.28 us)** | **fjall 1.27x** |
+| Random Reads | **1.1M ops/sec (0.90 us)** | 2.3M ops/sec (0.43 us) | 760k ops/sec (1.32 us) | **RocksDB** |
+| Mixed 50/50 | 413k ops/sec (2.42 us) | 90k ops/sec (11.12 us) | **576k ops/sec (1.74 us)** | **fjall 1.40x** |
+| Range Scans | **20k scans/sec (0.05 ms)** | 51k scans/sec (0.02 ms) | 11k scans/sec (0.09 ms) | **sled** |
 
 ### Key Findings
 
-**RocksDB Strengths**:
-- **Write throughput**: 5.5x faster sequential writes, 4.6x faster mixed workload
-- **Consistent performance**: Low latency across all workloads
-- **Production-proven**: Battle-tested, predictable behavior
+**fjall Strengths** (Modern Rust LSM-tree):
+- **Best write throughput**: 438k ops/sec, 27% faster than RocksDB
+- **Best mixed workload**: 576k ops/sec, 40% faster than RocksDB
+- **Rust-native**: Clean API, type safety, excellent for our use case
+- **Modern design**: Built in 2024 with lessons from RocksDB, sled
 
-**sled Strengths**:
-- **Read throughput**: 3.0x faster random reads
-- **Scan performance**: 2.6x faster range scans
-- **Rust-native**: Easier integration, better type safety
+**RocksDB Strengths** (Battle-tested C++ LSM-tree):
+- **Good all-around performance**: 343k writes, 1.1M reads
+- **Production-proven**: Used by Facebook, MySQL, MongoDB
+- **Consistent latency**: Predictable performance
 
-**Trade-offs**:
-- RocksDB: Write-optimized (LSM-tree), slower reads
-- sled: Read-optimized (B+tree), slower writes
-- Our workload: Append-heavy + range scans → LSM-tree better fit
+**sled Strengths** (Rust B+tree):
+- **Fastest reads**: 2.3M ops/sec (2x RocksDB)
+- **Fastest scans**: 51k scans/sec (2.5x RocksDB)
+- **Simple API**: Easy to use, good for read-heavy workloads
+
+**Architecture Trade-offs**:
+- **LSM-tree** (RocksDB, fjall): Write-optimized, append-heavy workloads
+- **B+tree** (sled): Read-optimized, slower writes
+- **Our workload**: Append-heavy + range scans → **LSM-tree (fjall) is best fit**
 
 ### Implications for seerdb
 
-**Target Performance** (conservative):
-- **Sequential writes**: >360k ops/sec (match RocksDB baseline)
-- **Random reads**: >1M ops/sec (match RocksDB)
-- **Mixed workload**: >400k ops/sec (match RocksDB)
-- **Range scans**: >50k scans/sec (match sled)
+**Baseline Comparison**: Use **fjall** as primary comparison (modern Rust LSM-tree, 2024)
+
+**Target Performance** (match fjall baseline):
+- **Sequential writes**: >440k ops/sec (match fjall)
+- **Random reads**: >2M ops/sec (match sled, beat fjall)
+- **Mixed workload**: >580k ops/sec (match fjall)
+- **Range scans**: >50k scans/sec (match sled, beat fjall)
 
 **With Optimizations** (WiscKey + Learned components):
-- **Sequential writes**: 1-3M ops/sec (10x RocksDB with KV separation)
-- **Random reads**: 5M+ ops/sec (5x with learned bloom filters)
-- **Space usage**: 40-50% bloom filter reduction, 90% KV separation benefit
+- **Sequential writes**: 2-4M ops/sec (5-10x fjall with KV separation)
+- **Random reads**: 5-10M ops/sec (2-5x sled with learned bloom filters)
+- **Mixed workload**: 2-3M ops/sec (3-5x fjall)
+- **Space usage**: 40-50% bloom filter reduction, 70-90% KV separation benefit
+
+**Key Insight**: fjall (2024) already beats RocksDB (2013) by 27-40%, validating that modern LSM implementations can be significantly faster. Our optimizations should push even further.
 
 **Next Steps**:
-1. Implement core LSM-tree (WAL, memtable, SSTable)
-2. Add learned bloom filters
-3. Re-run benchmarks, validate improvement claims
-4. Investigate fjall API (timeout issue)
+1. Study fjall source code (learn from their optimizations)
+2. Implement core LSM-tree with learned components
+3. Target: Beat fjall baseline, validate 5-10x improvement claims
 
 ---
 
