@@ -46,6 +46,10 @@ fjall = "2.3"
 default = []
 # Note: io_uring support can be added later as opt-in (security concerns)
 
+[[bench]]
+name = "sstable_bench"
+harness = false
+
 [profile.release]
 opt-level = 3
 lto = true
