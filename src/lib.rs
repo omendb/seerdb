@@ -3,11 +3,13 @@
 
 pub mod bloom;
 pub mod compaction;
+pub mod db;
 pub mod memtable;
 pub mod sstable;
 pub mod wal;
 
 pub use bloom::{BloomFilter, LearnedBloomFilter};
+pub use db::{DB, DBOptions};
 pub use memtable::Memtable;
 pub use sstable::{SSTable, SSTableBuilder};
 pub use wal::{Record, WAL};
