@@ -15,6 +15,12 @@ bytes = "1.9"
 # Async I/O (tokio default, secure)
 tokio = { version = "1.41", features = ["full"] }
 
+# WAL and data integrity
+crc32fast = "1.4"
+
+# Memtable (concurrent skiplist)
+crossbeam-skiplist = "0.1"
+
 # ML for learned bloom filters (prototype phase)
 smartcore = "0.3"  # Decision trees, good performance
 rand = "0.8"
@@ -29,6 +35,7 @@ bincode = "1.3"
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1.6"
+tempfile = "3.14"
 
 # Baseline systems for benchmarking
 rocksdb = "0.22"

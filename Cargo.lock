@@ -1193,7 +1193,9 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "bytes",
+ "crc32fast",
  "criterion",
+ "crossbeam-skiplist",
  "fjall",
  "proptest",
  "rand 0.8.5",
@@ -1201,6 +1203,7 @@ dependencies = [
  "serde",
  "sled",
  "smartcore",
+ "tempfile",
  "thiserror",
  "tokio",
  "twox-hash",

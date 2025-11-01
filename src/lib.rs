@@ -2,8 +2,12 @@
 // License: Elastic-2.0
 
 pub mod bloom;
+pub mod memtable;
+pub mod wal;
 
 pub use bloom::{BloomFilter, LearnedBloomFilter};
+pub use memtable::Memtable;
+pub use wal::{Record, WAL};
 
 #[cfg(test)]
 mod tests {
