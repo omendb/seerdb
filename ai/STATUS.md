@@ -1,8 +1,8 @@
 # STATUS - seerdb
 
 **Last Updated**: November 1, 2025
-**Current Phase**: Week 8 In Progress - DB Interface + Recovery
-**Focus**: Core engine with recovery, integration tests remaining
+**Current Phase**: Week 8 Complete - DB Interface Functional
+**Focus**: Core engine complete with all components integrated
 
 ---
 
@@ -50,8 +50,8 @@
   - Size and file-count based triggers
   - src/compaction/: 580 lines (mod.rs, merge.rs)
 
-**Tests**: 49 passing (44 unit + 5 recovery tests)
-**Code**: 2,350+ lines of core engine code
+**Tests**: 63 passing (49 unit + 14 integration)
+**Code**: 2,750+ lines (core engine + integration tests)
 **Benchmarks**: seerdb: 348k writes/sec (96% of RocksDB baseline)
 
 ---
@@ -81,16 +81,17 @@
 
 ## Active Work
 
-**Week 8 Progress**:
+**Week 8 Complete**:
 - ✅ DB struct integrating all components
 - ✅ Public API (get/put/delete)
 - ✅ Flush logic (memtable → L0)
 - ✅ Compaction scheduling
 - ✅ Benchmark (348k writes/sec - 96% of RocksDB)
 - ✅ WAL recovery on startup
-- 📋 Comprehensive integration tests (remaining)
+- ✅ Comprehensive integration tests (10 end-to-end tests)
+- ✅ 63 tests passing
 
-**Next**: Complete Week 8 integration tests
+**Next**: Week 9 - Learned Bloom Filters
 
 ---
 
@@ -184,9 +185,10 @@
 - L1 threshold: 10MB (configurable)
 - Read amplification: O(levels) = O(7) worst case
 
-**Tests**: 49 passing
-- 44 unit tests (module-level)
-- 5 recovery tests (crash recovery)
+**Tests**: 63 passing
+- 49 unit tests (module-level + recovery)
+- 10 DB integration tests (end-to-end lifecycle)
+- 4 component integration tests (WAL + memtable + SSTable)
 
 ---
 
@@ -203,9 +205,8 @@
 - ✅ WAL recovery on startup
 
 **Pending**:
-- 📋 Integration tests (Week 8)
-- 📋 Background compaction
-- 📋 File cleanup after compaction
+- 📋 Background compaction (future)
+- 📋 File cleanup after compaction (future)
 - 📋 Learned bloom filters (Week 9+)
 - 📋 Learned indexes (Week 10+)
 - 📋 KV separation (Week 13+)
@@ -281,10 +282,15 @@ Functional: All components integrated, WAL recovery works
 ## Recent Commits
 
 ```
+3cd8e53 - feat: add comprehensive DB integration tests
+  - 10 end-to-end tests covering full DB lifecycle
+  - Tests: lifecycle, deletes, overwrites, flushes, recovery, mixed ops
+  - 63 tests passing (49 unit + 14 integration)
+
 c863e92 - feat: implement WAL recovery on database startup
   - Automatic WAL replay on DB::open()
   - Recovery tests: basic, deletes, overwrites, flush, empty WAL
-  - 49 tests passing
+  - 49 tests passing (44 unit + 5 recovery)
 
 f75d601 - feat: add seerdb benchmark - 348k writes/sec (96% of RocksDB)
   - Sequential writes: 348k ops/sec
