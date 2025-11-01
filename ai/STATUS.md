@@ -1,8 +1,8 @@
 # STATUS - seerdb
 
 **Last Updated**: November 1, 2025
-**Current Phase**: Week 6 Complete - SSTable Enhanced with Binary Search + Bloom Filters
-**Focus**: Core engine functional, ready for Week 7 (LSM Compaction)
+**Current Phase**: Week 7 Complete - LSM Compaction Implemented
+**Focus**: Core engine with compaction ready, Week 8: Main DB interface
 
 ---
 
@@ -16,7 +16,7 @@
 - ✅ Phase 3 Workload-Aware (1/1): Bourbon
 - 📋 Phase 4 Modern Hardware (0/1): FASTER remaining (optional)
 
-**Core Engine Complete** (Weeks 5-6):
+**Core Engine Complete** (Weeks 5-7):
 - ✅ **Write-Ahead Log (WAL)**: Durability with CRC32 checksums
   - SyncPolicy: SyncAll, SyncData, None
   - Batch writes supported
@@ -43,112 +43,121 @@
   - Serialization: to_bytes/from_bytes
   - src/bloom/traditional.rs: 252 lines
 
-**Tests**: 32 passing (28 unit + 4 integration)
-**Code**: 1,320+ lines of core engine code
+- ✅ **Compaction System** (Week 7):
+  - LSM level structure (L0-L6, exponential sizing)
+  - Merge iterator (k-way merge with deduplication)
+  - compact_sstables() function
+  - Size and file-count based triggers
+  - src/compaction/: 580 lines (mod.rs, merge.rs)
+
+**Tests**: 43 passing (39 unit + 4 integration)
+**Code**: 2,180+ lines of core engine code
 **Benchmarks**: Criterion-based SSTable performance tests
 
 ---
 
-## Week 6 Results Summary
+## Week 7 Results Summary
 
-**Performance**:
-- Point lookups (100k entries): 476k ops/sec (existing keys)
-- Missing key lookups: **9.1M ops/sec** (19x faster with bloom filter)
-- Full scans: 352k entries/sec (linear scaling)
+**Compaction System**:
+- LSM tree with 7 levels (L0-L6)
+- L0 trigger: 4+ SSTables
+- L1+ trigger: Exponential size thresholds (10MB, 100MB, 1GB, ...)
+- Merge iterator: Deduplicates and keeps newest values
+- compact_sstables(): Merges multiple SSTables into one
 
-**Key Achievement**: Bloom filter provides constant-time (~11 µs) rejection of missing keys regardless of SSTable size
+**Performance Characteristics**:
+- Read amplification: O(N) → O(log N) with compaction
+- Example: 1000 flushes without compaction = 1000 SSTables to check
+- Example: With compaction = 7 levels max to check
 
-**Comparison to RocksDB**:
-- Existing keys: 2.2x slower (no block cache yet)
-- Missing keys: **8.7x faster** (bloom filter advantage)
+**Tests Added**: 11 compaction tests
+- 5 level management tests
+- 4 merge iterator tests
+- 2 end-to-end compaction tests
 
-**Details**: See ai/WEEK6_RESULTS.md
+**Details**: See ai/WEEK7_RESULTS.md
 
 ---
 
 ## Active Work
 
-**Week 6 Just Completed**:
-- ✅ Binary search on SSTable index
-- ✅ Bloom filter integration
-- ✅ Benchmark suite (criterion)
-- ✅ 32 tests passing
+**Week 7 Just Completed**:
+- ✅ LSM level structure
+- ✅ Merge iterator (k-way merge)
+- ✅ Compaction function
+- ✅ Size/file-count triggers
+- ✅ 43 tests passing
 
-**Next: Week 7 - LSM Compaction**
+**Next: Week 8 - Main DB Interface**
 
 ---
 
 ## What Worked
 
-### Week 5-6 Implementation
+### Week 7 Implementation
+- **Collect-and-sort merge**: Simpler than streaming, correct behavior
+- **Test coverage**: 11 compaction tests ensure correctness
+- **Deduplication logic**: Properly keeps newest values
+- **Level thresholds**: Exponential sizing (10x ratio) works well
+
+### Previous Weeks (5-6)
 - **Rapid prototyping**: WAL + Memtable + SSTable in ~1 week
-- **Test-driven**: 32 tests ensure correctness
+- **Test-driven**: Tests caught bugs early (e.g., deduplication)
 - **Benchmarking validates**: Measured 19x bloom filter improvement
 - **Research informs design**: Dostoevsky/WiscKey principles applied
-
-### Integration Testing
-- Crash recovery works (WAL replay)
-- Flush to SSTable preserves data
-- Delete operations handled correctly (tombstones)
-- Concurrent writes safe (crossbeam-skiplist)
-
-### Bloom Filter Integration
-- Format extensibility: Added bloom filter without breaking compatibility
-- Serialization efficient: Bit packing reduces size by 8x
-- Performance validated: 19x speedup for negative lookups
 
 ---
 
 ## What Didn't Work
 
-### Simplifications Made
-- No block-based storage yet (simple key-value format)
-- No compression yet (LZ4 deferred to later)
-- No block cache (LRU deferred to later)
-- Rationale: Get core LSM working first, optimize later
+### Merge Iterator Complexity
+- Initial design: Streaming k-way merge with BinaryHeap
+- Blocker: SSTable::iter() requires &mut self (lifetime issues)
+- Solution: Collect all entries upfront, then sort
+- Trade-off: O(N) memory during merge, but simpler and correct
 
-### Format Trade-offs
-- Current format reads full key+value on miss (inefficient)
-- Block-based format would read only key (better)
-- Acceptable for now - Week 7 may revisit
+### Still Pending
+- Block-based storage (simple key-value format for now)
+- Compression (LZ4 deferred)
+- Block cache (LRU deferred)
+- Background compaction thread (manual for now)
 
 ---
 
 ## Blockers
 
 ### None Currently
-- Core engine is functional
-- Clear path to Week 7 (compaction)
+- Compaction system functional
+- Ready for Week 8 (DB interface)
 - All tests passing
 
 ---
 
 ## Next Session
 
-**Week 7: LSM Compaction** (Critical for performance)
+**Week 8: Main DB Interface** (Integration week)
 
-**Goal**: Implement leveled compaction to keep read amplification bounded
+**Goal**: Create unified DB interface that ties everything together
 
 **Tasks**:
-1. Compaction strategy (leveled or lazy leveling)
-2. Level management (size ratios, triggers)
-3. SSTable merging (sorted merge of multiple SSTables)
-4. Tombstone handling (remove during compaction)
-5. Background thread for compaction
-6. Tests: compaction correctness, level invariants
+1. DB struct (combines WAL, memtable, LSMTree)
+2. Public API: get(), put(), delete(), scan()
+3. Flush logic: Memtable → L0 SSTable
+4. Compaction scheduling: Trigger on flush
+5. File management: Delete old SSTables after compaction
+6. Recovery: WAL replay on startup
+7. Tests: End-to-end DB operations
+8. Benchmark vs fjall (target: match 438k writes/sec)
 
 **Why This Matters**:
-- Without compaction: Reads become O(N * log M) where N = # SSTables
-- With compaction: Reads bounded to O(levels * log M)
-- Example: 100M entries without compaction = 100 SSTables
-- Example: 100M entries with compaction = 4-5 levels (logarithmic)
+- Currently have components but no unified interface
+- Need to wire WAL → Memtable → SSTable → Compaction
+- Integration is where bugs often hide
+- Benchmark will validate design decisions
 
-**Architecture Decisions Needed**:
-- Leveled vs Lazy Leveling (Dostoevsky recommends lazy)
-- Level size ratios (T=10 standard)
-- Compaction triggers (level size thresholds)
-
-**Key Reference**: Dostoevsky paper (lazy leveling for mixed workloads)
+**Architecture Decision**:
+- Synchronous compaction first (simple)
+- Background thread later (Week 9+)
 
 ---
 
@@ -159,17 +168,22 @@
 - Memtable: 234 lines
 - SSTable: 425 lines
 - Bloom: 252 lines (traditional)
-- Integration tests: 194 lines
-- Benchmarks: 90 lines
-- **Total: ~1,600 lines**
+- Compaction: 580 lines
+- Tests: 300+ lines
+- **Total: ~2,200 lines**
 
 **Performance** (SSTable, 100k entries):
-- Existing key lookup: 2.1 µs
-- Missing key lookup: 109 ns (19x faster)
+- Existing key lookup: 2.1 µs (476k ops/sec)
+- Missing key lookup: 109 ns (9.1M ops/sec, 19x faster)
 - Full scan: 28.4 ms (10k entries)
 
-**Tests**: 32 passing
-- 28 unit tests (module-level)
+**Compaction**:
+- L0 trigger: 4 SSTables
+- L1 threshold: 10MB (configurable)
+- Read amplification: O(levels) = O(7) worst case
+
+**Tests**: 43 passing
+- 39 unit tests (module-level)
 - 4 integration tests (end-to-end)
 
 ---
@@ -179,47 +193,59 @@
 **Completed**:
 - ✅ WAL for durability
 - ✅ Memtable (skiplist)
-- ✅ SSTable with bloom filters
-- ✅ Binary search on index
+- ✅ SSTable with bloom filters + binary search
+- ✅ LSM compaction system
+- ✅ Merge iterator
 
 **Pending**:
-- 📋 LSM compaction (Week 7)
-- 📋 Multi-level structure
-- 📋 Background compaction thread
+- 📋 Main DB interface (Week 8)
+- 📋 Flush coordination
+- 📋 Background compaction
+- 📋 File cleanup
 - 📋 Learned bloom filters (Week 9+)
 - 📋 Learned indexes (Week 10+)
 - 📋 KV separation (Week 13+)
 
-**Format**:
+**Current Architecture**:
 ```
-Current:
-[entries...][index][bloom_len][bloom_filter][footer]
+┌──────────────┐
+│     WAL      │  ← Durability
+└──────┬───────┘
+       │
+┌──────▼───────┐
+│   Memtable   │  ← In-memory buffer
+└──────┬───────┘
+       │ flush
+┌──────▼───────┐
+│   SSTable    │  ← Disk storage (with bloom filters)
+│   (L0-L6)    │
+└──────┬───────┘
+       │ compact
+┌──────▼───────┐
+│  Compaction  │  ← Merge SSTables
+└──────────────┘
 
-Future (with blocks):
-[data_blocks...][index_blocks...][bloom][footer]
+Missing: DB interface to coordinate all components
 ```
 
 ---
 
 ## Research Insights Applied
 
-1. **Dostoevsky (lazy leveling)**:
-   - Will implement in Week 7
-   - Upper levels: tiered (faster writes)
-   - Largest level: leveled (better reads)
+1. **Dostoevsky (leveled compaction)**:
+   - Implemented exponential level sizing (T=10 ratio)
+   - L0 uses file count, L1+ uses size
+   - Ready for lazy leveling upgrade
 
-2. **WiscKey (KV separation)**:
-   - Deferred to Week 13
-   - Threshold: 4KB (perfect for omen vectors)
+2. **Merge correctness**:
+   - Stable sort preserves ordering
+   - Lower source_id = newer = wins conflicts
+   - Matches LSM semantics
 
-3. **Bourbon (adaptive learning)**:
-   - Will use CBA for learned components
-   - Only train on long-lived SSTables
-
-4. **Learned bloom filters**:
-   - Week 9 implementation
-   - Use traditional below 10k keys
-   - Use learned above 10k (73% space savings)
+3. **Size ratios**:
+   - Base size: 10MB (adjustable)
+   - Ratio: 10x between levels
+   - Standard in literature (RocksDB default)
 
 ---
 
@@ -228,15 +254,17 @@ Future (with blocks):
 **fjall Baseline** (from baseline_benchmark):
 - Writes: 438k ops/sec
 - Mixed: 576k ops/sec
-- **Target**: Match or beat with core engine, exceed with learned components
+- **Target**: Match or beat with Week 8 integration
 
 **seerdb Progress**:
 - SSTable reads: 476k ops/sec (existing), 9.1M ops/sec (missing)
-- Full LSM performance TBD (needs compaction)
+- Compaction: Functional, not yet benchmarked end-to-end
+- Full DB performance: Week 8 will reveal
 
 **Differentiation** (vs fjall):
 - Binary search: ✅ Implemented (O(log n) vs fjall's O(n))
 - Bloom filters: ✅ Implemented (fjall has basic bloom)
+- Compaction: ✅ Implemented (similar to fjall)
 - Learned bloom: 📋 Week 9 (fjall has ZERO learned components)
 - Learned index: 📋 Week 10 (fjall uses binary search)
 - SIMD: 📋 Week 14 (fjall has ZERO SIMD)
@@ -248,13 +276,23 @@ Future (with blocks):
 ## Recent Commits
 
 ```
+ea3b5bd - feat: implement LSM compaction with merge iterator
+  - LSM level structure (L0-L6)
+  - Merge iterator (k-way merge, deduplication)
+  - compact_sstables() function
+  - 43 tests passing
+
+dd48aa1 - docs: Week 6 results and benchmark suite
+  - SSTable benchmark suite
+  - Binary search + bloom filter results
+  - 32 tests passing
+
 a4d2c8b - feat: enhance SSTable with binary search and bloom filters
   - Binary search: O(log n) lookups
   - Bloom filter: 19x speedup for negative lookups
   - 32 tests passing
 
 [Previous commits...]
-598244a - chore: initial project structure
 ```
 
 ---
