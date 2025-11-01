@@ -26,11 +26,14 @@
 - Complete understanding of LSM-tree design space and trade-offs
 - Research errors corrected (Tucana 2020 removed, Bourbon corrected)
 
-### Active Work - Prototype Complete!
+### Active Work - Baseline Benchmarks Complete!
 - ✅ **Learned bloom filter prototype COMPLETE** (research validated!)
 - ✅ 73.5% space reduction at 100k elements (close to 90% claim)
 - ✅ Crossover point found: ~10k elements minimum
-- Next: Architecture design or continue with full LSM implementation
+- ✅ **Baseline benchmarks COMPLETE** (RocksDB vs sled)
+- RocksDB: 363k writes/sec, 1M reads/sec (LSM-tree, write-optimized)
+- sled: 66k writes/sec, 3.1M reads/sec (B+tree, read-optimized)
+- **Next**: Architecture design or begin core LSM implementation
 - Optional: Read FASTER paper (concurrency patterns)
 
 ---
@@ -73,6 +76,12 @@
   - Better FPR than traditional (0% vs 1%)
   - Confirms adaptive strategy needed (Bourbon CBA)
 
+- ✅ **Baseline benchmarks complete** (RocksDB vs sled)
+  - RocksDB: 363k writes/sec, 1M reads/sec (LSM-tree strength)
+  - sled: 3.1M reads/sec, 66k writes/sec (B+tree strength)
+  - Clear winner for our workload: LSM-tree (append-heavy)
+  - Established performance targets for seerdb implementation
+
 ---
 
 ## What Didn't Work
@@ -90,6 +99,12 @@
 - WiscKey shows 2.5-111x speedup (wide range!)
 - Claims depend heavily on workload characteristics
 - Need to benchmark with omen-specific workload (vector embeddings)
+
+### Baseline Benchmarking
+- fjall timed out (>40s for 100k writes)
+- Likely API usage issue or configuration problem
+- Excluded from baseline comparison, investigate later
+- RocksDB and sled sufficient for establishing targets
 
 ---
 

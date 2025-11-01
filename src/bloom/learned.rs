@@ -8,7 +8,6 @@
 
 use super::traditional::BloomFilter;
 use smartcore::linalg::basic::matrix::DenseMatrix;
-use smartcore::linalg::basic::arrays::{Array1, Array2};
 use smartcore::tree::decision_tree_classifier::DecisionTreeClassifier;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
