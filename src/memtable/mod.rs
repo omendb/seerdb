@@ -3,8 +3,11 @@
 
 use bytes::Bytes;
 use crossbeam_skiplist::SkipMap;
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+
+use crate::sstable::{SSTable, SSTableBuilder, SSTableError};
 
 /// In-memory sorted table for recent writes
 pub struct Memtable {
@@ -116,6 +119,27 @@ impl Memtable {
     /// Clone the skipmap for creating an immutable snapshot
     pub fn snapshot(&self) -> Arc<SkipMap<Bytes, Entry>> {
         Arc::clone(&self.data)
+    }
+
+    /// Flush memtable to disk as an SSTable
+    /// Only writes Value entries, skips Tombstones (they'll be in WAL)
+    pub fn flush(&self, path: impl AsRef<Path>) -> Result<SSTable, SSTableError> {
+        let mut builder = SSTableBuilder::new();
+
+        // Iterate in sorted order and add to SSTable
+        for entry in self.iter() {
+            match entry.1 {
+                Entry::Value(value) => {
+                    builder.add(entry.0, value);
+                }
+                Entry::Tombstone => {
+                    // Skip tombstones - they're in the WAL
+                    // Compaction will handle them properly later
+                }
+            }
+        }
+
+        builder.build(path)
     }
 }
 
@@ -241,5 +265,51 @@ mod tests {
         }
 
         assert_eq!(memtable.len(), 1000);
+    }
+
+    #[test]
+    fn test_memtable_flush() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let sstable_path = dir.path().join("flush.sst");
+
+        let memtable = Memtable::new(1024);
+        memtable.put(Bytes::from("key1"), Bytes::from("value1"));
+        memtable.put(Bytes::from("key2"), Bytes::from("value2"));
+        memtable.put(Bytes::from("key3"), Bytes::from("value3"));
+
+        // Flush to disk
+        let mut sstable = memtable.flush(&sstable_path).unwrap();
+
+        // Verify data was written correctly
+        assert_eq!(sstable.len(), 3);
+        assert_eq!(
+            sstable.get(b"key1").unwrap(),
+            Some(Bytes::from("value1"))
+        );
+        assert_eq!(
+            sstable.get(b"key2").unwrap(),
+            Some(Bytes::from("value2"))
+        );
+    }
+
+    #[test]
+    fn test_memtable_flush_with_tombstones() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let sstable_path = dir.path().join("flush_tombstones.sst");
+
+        let memtable = Memtable::new(1024);
+        memtable.put(Bytes::from("key1"), Bytes::from("value1"));
+        memtable.delete(Bytes::from("key2")); // Tombstone
+        memtable.put(Bytes::from("key3"), Bytes::from("value3"));
+
+        // Flush to disk
+        let sstable = memtable.flush(&sstable_path).unwrap();
+
+        // Only non-tombstone entries should be written
+        assert_eq!(sstable.len(), 2);
     }
 }

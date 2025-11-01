@@ -3,10 +3,12 @@
 
 pub mod bloom;
 pub mod memtable;
+pub mod sstable;
 pub mod wal;
 
 pub use bloom::{BloomFilter, LearnedBloomFilter};
 pub use memtable::Memtable;
+pub use sstable::{SSTable, SSTableBuilder};
 pub use wal::{Record, WAL};
 
 #[cfg(test)]
