@@ -2,9 +2,9 @@
 // Integrates WAL, Memtable, SSTable, and Compaction
 
 use crate::compaction::{compact_sstables, LSMTree};
-use crate::memtable::{Entry, Memtable};
+use crate::memtable::Memtable;
 use crate::sstable::SSTable;
-use crate::wal::{Record, SyncPolicy, WAL};
+use crate::wal::{Record, SyncPolicy, WAL, WALReader};
 use bytes::Bytes;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -80,12 +80,18 @@ impl DB {
         // Create data directory if it doesn't exist
         std::fs::create_dir_all(&options.data_dir)?;
 
-        // Open or create WAL
         let wal_path = options.data_dir.join("wal.log");
-        let wal = WAL::create(&wal_path, options.wal_sync_policy)?;
 
         // Create memtable
         let memtable = Memtable::new(options.memtable_capacity);
+
+        // Recover from WAL if it exists
+        if wal_path.exists() {
+            Self::recover(&wal_path, &memtable)?;
+        }
+
+        // Create new WAL (overwrites old one after recovery)
+        let wal = WAL::create(&wal_path, options.wal_sync_policy)?;
 
         // Create LSM tree
         let lsm = LSMTree::new(
@@ -95,13 +101,43 @@ impl DB {
             options.num_levels,
         );
 
-        Ok(Self {
+        let db = Self {
             options: options.clone(),
             wal: Arc::new(Mutex::new(wal)),
             memtable: Arc::new(memtable),
             lsm: Arc::new(Mutex::new(lsm)),
             sstable_counter: Arc::new(Mutex::new(0)),
-        })
+        };
+
+        // Flush memtable if it filled up during recovery
+        if db.memtable.should_flush() {
+            db.flush()?;
+        }
+
+        Ok(db)
+    }
+
+    /// Recover memtable from WAL
+    fn recover(wal_path: &Path, memtable: &Memtable) -> Result<()> {
+        let mut reader = WALReader::open(wal_path)
+            .map_err(|e| DBError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+
+        let records = reader
+            .read_all()
+            .map_err(|e| DBError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+
+        for record in records {
+            match record {
+                Record::Put { key, value } => {
+                    memtable.put(key, value);
+                }
+                Record::Delete { key } => {
+                    memtable.delete(key);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Put a key-value pair
@@ -184,7 +220,7 @@ impl DB {
         drop(counter);
 
         // Flush memtable to SSTable
-        let sstable = self.memtable.flush(&sstable_path)?;
+        self.memtable.flush(&sstable_path)?;
         let size = std::fs::metadata(&sstable_path)?.len();
 
         // Add to LSM tree L0
@@ -202,7 +238,7 @@ impl DB {
 
     /// Compact a level
     fn compact_level(&self, level_num: usize) -> Result<()> {
-        let mut lsm = self.lsm.lock().unwrap();
+        let lsm = self.lsm.lock().unwrap();
 
         // Get SSTables to compact
         let level = lsm.level(level_num).ok_or(DBError::NotOpened)?;
@@ -225,12 +261,12 @@ impl DB {
         drop(lsm); // Release lock during compaction
 
         // Compact SSTables
-        let (result_path, size) = compact_sstables(&input_paths, &output_path)?;
+        let (_result_path, _size) = compact_sstables(&input_paths, &output_path)?;
 
         // Update LSM tree
         // TODO: This is simplified - need proper level management
         // For now, just add to next level
-        let mut lsm = self.lsm.lock().unwrap();
+        let _lsm = self.lsm.lock().unwrap();
         // lsm.add_to_level(level_num + 1, result_path, size);
 
         // TODO: Delete input SSTables
@@ -363,5 +399,132 @@ mod tests {
             .collect();
 
         assert!(sst_files.len() > 0, "No SSTable files created");
+    }
+
+    #[test]
+    fn test_db_recovery_basic() {
+        let dir = tempdir().unwrap();
+        let options = DBOptions {
+            data_dir: dir.path().to_path_buf(),
+            ..Default::default()
+        };
+
+        // Write some data
+        {
+            let db = DB::open(options.clone()).unwrap();
+            db.put(b"key1", b"value1").unwrap();
+            db.put(b"key2", b"value2").unwrap();
+            db.put(b"key3", b"value3").unwrap();
+            // Drop db (simulates shutdown without flush)
+        }
+
+        // Reopen and verify data recovered from WAL
+        {
+            let db = DB::open(options.clone()).unwrap();
+            assert_eq!(db.get(b"key1").unwrap(), Some(Bytes::from("value1")));
+            assert_eq!(db.get(b"key2").unwrap(), Some(Bytes::from("value2")));
+            assert_eq!(db.get(b"key3").unwrap(), Some(Bytes::from("value3")));
+        }
+    }
+
+    #[test]
+    fn test_db_recovery_with_deletes() {
+        let dir = tempdir().unwrap();
+        let options = DBOptions {
+            data_dir: dir.path().to_path_buf(),
+            ..Default::default()
+        };
+
+        // Write and delete some data
+        {
+            let db = DB::open(options.clone()).unwrap();
+            db.put(b"key1", b"value1").unwrap();
+            db.put(b"key2", b"value2").unwrap();
+            db.delete(b"key1").unwrap(); // Delete key1
+            db.put(b"key3", b"value3").unwrap();
+        }
+
+        // Reopen and verify recovery
+        {
+            let db = DB::open(options.clone()).unwrap();
+            assert_eq!(db.get(b"key1").unwrap(), None); // Deleted
+            assert_eq!(db.get(b"key2").unwrap(), Some(Bytes::from("value2")));
+            assert_eq!(db.get(b"key3").unwrap(), Some(Bytes::from("value3")));
+        }
+    }
+
+    #[test]
+    fn test_db_recovery_with_overwrites() {
+        let dir = tempdir().unwrap();
+        let options = DBOptions {
+            data_dir: dir.path().to_path_buf(),
+            ..Default::default()
+        };
+
+        // Write with overwrites
+        {
+            let db = DB::open(options.clone()).unwrap();
+            db.put(b"key1", b"old_value").unwrap();
+            db.put(b"key1", b"new_value").unwrap(); // Overwrite
+        }
+
+        // Reopen and verify newest value recovered
+        {
+            let db = DB::open(options.clone()).unwrap();
+            assert_eq!(db.get(b"key1").unwrap(), Some(Bytes::from("new_value")));
+        }
+    }
+
+    #[test]
+    fn test_db_recovery_with_flush() {
+        let dir = tempdir().unwrap();
+        let options = DBOptions {
+            data_dir: dir.path().to_path_buf(),
+            memtable_capacity: 100, // Small to trigger flush during recovery
+            ..Default::default()
+        };
+
+        // Write enough data to trigger flush on recovery
+        {
+            let db = DB::open(options.clone()).unwrap();
+            for i in 0..20 {
+                let key = format!("key_{}", i);
+                let value = format!("value_with_long_data_{}", i);
+                db.put(key.as_bytes(), value.as_bytes()).unwrap();
+            }
+        }
+
+        // Reopen (recovery should trigger flush due to small memtable)
+        {
+            let db = DB::open(options.clone()).unwrap();
+            for i in 0..20 {
+                let key = format!("key_{}", i);
+                let value = format!("value_with_long_data_{}", i);
+                assert_eq!(
+                    db.get(key.as_bytes()).unwrap(),
+                    Some(Bytes::from(value))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_db_recovery_empty_wal() {
+        let dir = tempdir().unwrap();
+        let options = DBOptions {
+            data_dir: dir.path().to_path_buf(),
+            ..Default::default()
+        };
+
+        // Create DB (no data written)
+        {
+            let _db = DB::open(options.clone()).unwrap();
+        }
+
+        // Reopen (WAL exists but is empty)
+        {
+            let db = DB::open(options.clone()).unwrap();
+            assert_eq!(db.get(b"key1").unwrap(), None);
+        }
     }
 }

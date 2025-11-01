@@ -130,8 +130,10 @@ pub struct LSMTree {
     /// Levels (L0, L1, L2, ...)
     levels: Vec<Level>,
     /// Size ratio between levels (default: 10)
+    #[allow(dead_code)]
     size_ratio: u64,
     /// Base level size (L1 threshold)
+    #[allow(dead_code)]
     base_size: u64,
     /// Data directory
     data_dir: PathBuf,

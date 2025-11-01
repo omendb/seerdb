@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
 pub use record::Record;
+pub use reader::WALReader;
 
 #[derive(Debug, Error)]
 pub enum WALError {
