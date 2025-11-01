@@ -1,8 +1,8 @@
 # STATUS - seerdb
 
 **Last Updated**: November 1, 2025
-**Current Phase**: Week 7 Complete - LSM Compaction Implemented
-**Focus**: Core engine with compaction ready, Week 8: Main DB interface
+**Current Phase**: Week 8 In Progress - DB Interface + Recovery
+**Focus**: Core engine with recovery, integration tests remaining
 
 ---
 
@@ -50,9 +50,9 @@
   - Size and file-count based triggers
   - src/compaction/: 580 lines (mod.rs, merge.rs)
 
-**Tests**: 43 passing (39 unit + 4 integration)
-**Code**: 2,180+ lines of core engine code
-**Benchmarks**: Criterion-based SSTable performance tests
+**Tests**: 49 passing (44 unit + 5 recovery tests)
+**Code**: 2,350+ lines of core engine code
+**Benchmarks**: seerdb: 348k writes/sec (96% of RocksDB baseline)
 
 ---
 
@@ -81,14 +81,16 @@
 
 ## Active Work
 
-**Week 7 Just Completed**:
-- ✅ LSM level structure
-- ✅ Merge iterator (k-way merge)
-- ✅ Compaction function
-- ✅ Size/file-count triggers
-- ✅ 43 tests passing
+**Week 8 Progress**:
+- ✅ DB struct integrating all components
+- ✅ Public API (get/put/delete)
+- ✅ Flush logic (memtable → L0)
+- ✅ Compaction scheduling
+- ✅ Benchmark (348k writes/sec - 96% of RocksDB)
+- ✅ WAL recovery on startup
+- 📋 Comprehensive integration tests (remaining)
 
-**Next: Week 8 - Main DB Interface**
+**Next**: Complete Week 8 integration tests
 
 ---
 
@@ -182,9 +184,9 @@
 - L1 threshold: 10MB (configurable)
 - Read amplification: O(levels) = O(7) worst case
 
-**Tests**: 43 passing
-- 39 unit tests (module-level)
-- 4 integration tests (end-to-end)
+**Tests**: 49 passing
+- 44 unit tests (module-level)
+- 5 recovery tests (crash recovery)
 
 ---
 
@@ -196,36 +198,39 @@
 - ✅ SSTable with bloom filters + binary search
 - ✅ LSM compaction system
 - ✅ Merge iterator
+- ✅ Main DB interface (Week 8)
+- ✅ Flush coordination
+- ✅ WAL recovery on startup
 
 **Pending**:
-- 📋 Main DB interface (Week 8)
-- 📋 Flush coordination
+- 📋 Integration tests (Week 8)
 - 📋 Background compaction
-- 📋 File cleanup
+- 📋 File cleanup after compaction
 - 📋 Learned bloom filters (Week 9+)
 - 📋 Learned indexes (Week 10+)
 - 📋 KV separation (Week 13+)
 
 **Current Architecture**:
 ```
-┌──────────────┐
-│     WAL      │  ← Durability
-└──────┬───────┘
-       │
-┌──────▼───────┐
-│   Memtable   │  ← In-memory buffer
-└──────┬───────┘
-       │ flush
-┌──────▼───────┐
-│   SSTable    │  ← Disk storage (with bloom filters)
-│   (L0-L6)    │
-└──────┬───────┘
-       │ compact
-┌──────▼───────┐
-│  Compaction  │  ← Merge SSTables
-└──────────────┘
+┌──────────────────────────────────────────┐
+│              DB Interface                │  ← Unified public API
+│  (get/put/delete + recovery on startup) │
+└────┬─────────┬─────────┬─────────────────┘
+     │         │         │
+┌────▼─────┐ ┌▼────────┐│
+│   WAL    │ │Memtable ││  ← In-memory + durability
+└──────────┘ └─────┬───┘│
+                   │    │ flush
+             ┌─────▼────▼──────┐
+             │   SSTable (L0)  │  ← Disk storage + bloom filters
+             └─────┬───────────┘
+                   │ compact
+             ┌─────▼───────────┐
+             │   LSM Levels    │  ← L1-L6 (exponential sizing)
+             │  (Compaction)   │
+             └─────────────────┘
 
-Missing: DB interface to coordinate all components
+Functional: All components integrated, WAL recovery works
 ```
 
 ---
@@ -276,21 +281,27 @@ Missing: DB interface to coordinate all components
 ## Recent Commits
 
 ```
+c863e92 - feat: implement WAL recovery on database startup
+  - Automatic WAL replay on DB::open()
+  - Recovery tests: basic, deletes, overwrites, flush, empty WAL
+  - 49 tests passing
+
+f75d601 - feat: add seerdb benchmark - 348k writes/sec (96% of RocksDB)
+  - Sequential writes: 348k ops/sec
+  - Random reads: 5.5M ops/sec
+  - Mixed 50/50: 642k ops/sec
+
+7e421cb - feat: implement main DB interface with flush and compaction
+  - Unified DB struct integrating all components
+  - Public API: get(), put(), delete()
+  - Automatic flush and compaction scheduling
+  - 48 tests passing
+
 ea3b5bd - feat: implement LSM compaction with merge iterator
   - LSM level structure (L0-L6)
   - Merge iterator (k-way merge, deduplication)
   - compact_sstables() function
   - 43 tests passing
-
-dd48aa1 - docs: Week 6 results and benchmark suite
-  - SSTable benchmark suite
-  - Binary search + bloom filter results
-  - 32 tests passing
-
-a4d2c8b - feat: enhance SSTable with binary search and bloom filters
-  - Binary search: O(log n) lookups
-  - Bloom filter: 19x speedup for negative lookups
-  - 32 tests passing
 
 [Previous commits...]
 ```
