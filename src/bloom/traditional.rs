@@ -96,6 +96,64 @@ impl BloomFilter {
         (1.0 - (-k * n / m).exp()).powf(k)
     }
 
+    /// Serialize bloom filter to bytes
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+
+        // Write metadata
+        bytes.extend_from_slice(&(self.bits.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(&(self.num_hashes as u32).to_le_bytes());
+        bytes.extend_from_slice(&(self.count as u64).to_le_bytes());
+
+        // Pack bits into bytes (8 bits per byte)
+        let mut packed_bits = Vec::new();
+        for chunk in self.bits.chunks(8) {
+            let mut byte = 0u8;
+            for (i, &bit) in chunk.iter().enumerate() {
+                if bit {
+                    byte |= 1 << i;
+                }
+            }
+            packed_bits.push(byte);
+        }
+        bytes.extend_from_slice(&packed_bits);
+
+        bytes
+    }
+
+    /// Deserialize bloom filter from bytes
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < 20 {
+            return None; // Not enough data for metadata
+        }
+
+        // Read metadata
+        let num_bits = u64::from_le_bytes(bytes[0..8].try_into().ok()?) as usize;
+        let num_hashes = u32::from_le_bytes(bytes[8..12].try_into().ok()?) as usize;
+        let count = u64::from_le_bytes(bytes[12..20].try_into().ok()?) as usize;
+
+        // Unpack bits from bytes
+        let packed_bits = &bytes[20..];
+        let mut bits = Vec::with_capacity(num_bits);
+        for byte in packed_bits {
+            for i in 0..8 {
+                if bits.len() < num_bits {
+                    bits.push((byte & (1 << i)) != 0);
+                }
+            }
+        }
+
+        if bits.len() != num_bits {
+            return None;
+        }
+
+        Some(Self {
+            bits,
+            num_hashes,
+            count,
+        })
+    }
+
     /// Hash function with seed
     fn hash<T: Hash>(&self, item: &T, seed: usize) -> u64 {
         if seed % 2 == 0 {
@@ -166,5 +224,28 @@ mod tests {
 
         println!("Bloom filter size for 10k elements: {} bytes", size);
         assert!(size > 0);
+    }
+
+    #[test]
+    fn test_serialization() {
+        let mut bf = BloomFilter::new(1000, 0.01);
+
+        // Insert some elements
+        bf.insert(&"key1");
+        bf.insert(&"key2");
+        bf.insert(&"key3");
+
+        // Serialize
+        let bytes = bf.to_bytes();
+
+        // Deserialize
+        let bf2 = BloomFilter::from_bytes(&bytes).unwrap();
+
+        // Verify same behavior
+        assert!(bf2.contains(&"key1"));
+        assert!(bf2.contains(&"key2"));
+        assert!(bf2.contains(&"key3"));
+        assert!(!bf2.contains(&"key4"));
+        assert_eq!(bf2.len(), 3);
     }
 }

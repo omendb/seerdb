@@ -1,8 +1,8 @@
 // SSTable: Sorted String Table on disk
-// Simple implementation for Week 5 (flush memtable to disk)
-// Week 6 will add: bloom filters, compression, learned index
+// Week 6: Enhanced with bloom filters, compression, and binary search
 
-use bytes::{Bytes, BytesMut, Buf, BufMut};
+use bytes::Bytes;
+use crate::bloom::BloomFilter;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -22,29 +22,38 @@ pub enum SSTableError {
 
 pub type Result<T> = std::result::Result<T, SSTableError>;
 
-/// Simple SSTable writer (Week 5 version)
+/// SSTable writer with bloom filter support
 pub struct SSTableBuilder {
     entries: Vec<(Bytes, Bytes)>,
+    bloom: BloomFilter,
 }
 
 impl SSTableBuilder {
-    /// Create a new SSTable builder
+    /// Create a new SSTable builder with default bloom filter (1% FPR, 10k elements)
     pub fn new() -> Self {
+        Self::with_bloom_capacity(10000, 0.01)
+    }
+
+    /// Create a new SSTable builder with custom bloom filter parameters
+    pub fn with_bloom_capacity(expected_elements: usize, false_positive_rate: f64) -> Self {
         Self {
             entries: Vec::new(),
+            bloom: BloomFilter::new(expected_elements, false_positive_rate),
         }
     }
 
     /// Add a key-value pair (must be added in sorted order)
     pub fn add(&mut self, key: Bytes, value: Bytes) {
+        // Add key to bloom filter
+        self.bloom.insert(&key);
         self.entries.push((key, value));
     }
 
     /// Build and write SSTable to disk
-    /// Format: [entries...][index][footer]
+    /// Format: [entries...][index][bloom_filter_len: u64][bloom_filter][footer]
     /// Entry: [key_len: u32][key][value_len: u32][value]
-    /// Index: [num_entries: u32][offsets: [u64; num_entries]]
-    /// Footer: [index_offset: u64]
+    /// Index: [num_entries: u32][(key_len: u32, key, offset: u64); num_entries]
+    /// Footer: [index_offset: u64][bloom_offset: u64]
     pub fn build(self, path: impl AsRef<Path>) -> Result<SSTable> {
         let path = path.as_ref().to_path_buf();
         let mut file = OpenOptions::new()
@@ -53,12 +62,12 @@ impl SSTableBuilder {
             .truncate(true)
             .open(&path)?;
 
-        let mut offsets = Vec::new();
+        let mut index_entries = Vec::new();
         let mut current_offset = 0u64;
 
         // Write entries
         for (key, value) in &self.entries {
-            offsets.push(current_offset);
+            index_entries.push((key.clone(), current_offset));
 
             // Write key
             file.write_all(&(key.len() as u32).to_le_bytes())?;
@@ -73,14 +82,26 @@ impl SSTableBuilder {
 
         let index_offset = current_offset;
 
-        // Write index
-        file.write_all(&(offsets.len() as u32).to_le_bytes())?;
-        for offset in &offsets {
+        // Write index with keys for binary search
+        file.write_all(&(index_entries.len() as u32).to_le_bytes())?;
+        current_offset += 4;
+        for (key, offset) in &index_entries {
+            file.write_all(&(key.len() as u32).to_le_bytes())?;
+            file.write_all(key)?;
             file.write_all(&offset.to_le_bytes())?;
+            current_offset += 4 + key.len() as u64 + 8;
         }
 
-        // Write footer (index offset)
+        let bloom_offset = current_offset;
+
+        // Write bloom filter
+        let bloom_bytes = self.bloom.to_bytes();
+        file.write_all(&(bloom_bytes.len() as u64).to_le_bytes())?;
+        file.write_all(&bloom_bytes)?;
+
+        // Write footer (index offset, bloom offset)
         file.write_all(&index_offset.to_le_bytes())?;
+        file.write_all(&bloom_offset.to_le_bytes())?;
 
         file.sync_all()?;
 
@@ -95,11 +116,12 @@ impl Default for SSTableBuilder {
     }
 }
 
-/// SSTable reader
+/// SSTable reader with bloom filter
 pub struct SSTable {
     file: File,
     path: PathBuf,
-    index: Vec<u64>,  // Offsets of each entry
+    index: Vec<(Bytes, u64)>,  // (Key, offset) pairs for binary search
+    bloom: BloomFilter,
     num_entries: usize,
 }
 
@@ -109,11 +131,12 @@ impl SSTable {
         let path = path.as_ref().to_path_buf();
         let mut file = OpenOptions::new().read(true).open(&path)?;
 
-        // Read footer (last 8 bytes)
-        file.seek(SeekFrom::End(-8))?;
-        let mut footer_buf = [0u8; 8];
+        // Read footer (last 16 bytes: index_offset + bloom_offset)
+        file.seek(SeekFrom::End(-16))?;
+        let mut footer_buf = [0u8; 16];
         file.read_exact(&mut footer_buf)?;
-        let index_offset = u64::from_le_bytes(footer_buf);
+        let index_offset = u64::from_le_bytes(footer_buf[0..8].try_into().unwrap());
+        let bloom_offset = u64::from_le_bytes(footer_buf[8..16].try_into().unwrap());
 
         // Read index
         file.seek(SeekFrom::Start(index_offset))?;
@@ -124,34 +147,65 @@ impl SSTable {
 
         let mut index = Vec::with_capacity(num_entries);
         for _ in 0..num_entries {
+            // Read key
+            let mut key_len_buf = [0u8; 4];
+            file.read_exact(&mut key_len_buf)?;
+            let key_len = u32::from_le_bytes(key_len_buf) as usize;
+
+            let mut key = vec![0u8; key_len];
+            file.read_exact(&mut key)?;
+
+            // Read offset
             let mut offset_buf = [0u8; 8];
             file.read_exact(&mut offset_buf)?;
-            index.push(u64::from_le_bytes(offset_buf));
+            let offset = u64::from_le_bytes(offset_buf);
+
+            index.push((Bytes::from(key), offset));
         }
+
+        // Read bloom filter
+        file.seek(SeekFrom::Start(bloom_offset))?;
+        let mut bloom_len_buf = [0u8; 8];
+        file.read_exact(&mut bloom_len_buf)?;
+        let bloom_len = u64::from_le_bytes(bloom_len_buf) as usize;
+
+        let mut bloom_bytes = vec![0u8; bloom_len];
+        file.read_exact(&mut bloom_bytes)?;
+
+        let bloom = BloomFilter::from_bytes(&bloom_bytes)
+            .ok_or(SSTableError::InvalidFormat)?;
 
         Ok(Self {
             file,
             path,
             index,
+            bloom,
             num_entries,
         })
     }
 
-    /// Get a value by key (linear search for now, Week 6 will add binary search + bloom filter)
+    /// Get a value by key using bloom filter + binary search
     pub fn get(&mut self, key: &[u8]) -> Result<Option<Bytes>> {
-        for &offset in &self.index {
-            self.file.seek(SeekFrom::Start(offset))?;
+        // Check bloom filter first - if not present, definitely not in SSTable
+        if !self.bloom.contains(&key) {
+            return Ok(None);
+        }
 
-            // Read key
-            let mut key_len_buf = [0u8; 4];
-            self.file.read_exact(&mut key_len_buf)?;
-            let key_len = u32::from_le_bytes(key_len_buf) as usize;
+        // Bloom filter says key might be present, do binary search
+        let result = self.index.binary_search_by(|(k, _)| k.as_ref().cmp(key));
 
-            let mut entry_key = vec![0u8; key_len];
-            self.file.read_exact(&mut entry_key)?;
+        match result {
+            Ok(idx) => {
+                // Found the key, read the value
+                let (_key, offset) = &self.index[idx];
+                self.file.seek(SeekFrom::Start(*offset))?;
 
-            // Check if this is the key we're looking for
-            if entry_key == key {
+                // Read key (skip it)
+                let mut key_len_buf = [0u8; 4];
+                self.file.read_exact(&mut key_len_buf)?;
+                let key_len = u32::from_le_bytes(key_len_buf) as usize;
+                self.file.seek(SeekFrom::Current(key_len as i64))?;
+
                 // Read value
                 let mut value_len_buf = [0u8; 4];
                 self.file.read_exact(&mut value_len_buf)?;
@@ -160,22 +214,20 @@ impl SSTable {
                 let mut value = vec![0u8; value_len];
                 self.file.read_exact(&mut value)?;
 
-                return Ok(Some(Bytes::from(value)));
+                Ok(Some(Bytes::from(value)))
             }
-
-            // Skip value if not the key we want
-            let mut value_len_buf = [0u8; 4];
-            self.file.read_exact(&mut value_len_buf)?;
-            let value_len = u32::from_le_bytes(value_len_buf) as usize;
-            self.file.seek(SeekFrom::Current(value_len as i64))?;
+            Err(_) => {
+                // Key not found (bloom filter false positive)
+                Ok(None)
+            }
         }
-
-        Ok(None)
     }
 
     /// Iterate over all entries
-    pub fn iter(&mut self) -> Result<SSTableIterator> {
-        SSTableIterator::new(&mut self.file, &self.index)
+    pub fn iter(&mut self) -> Result<SSTableIterator<'_>> {
+        // Extract just the offsets for the iterator
+        let offsets: Vec<u64> = self.index.iter().map(|(_, offset)| *offset).collect();
+        SSTableIterator::new(&mut self.file, &offsets)
     }
 
     /// Get number of entries
@@ -333,5 +385,41 @@ mod tests {
             sstable.get(b"key1").unwrap(),
             Some(Bytes::from("value1"))
         );
+    }
+
+    #[test]
+    fn test_sstable_bloom_filter() {
+        let dir = tempdir().unwrap();
+        let sstable_path = dir.path().join("test_bloom.sst");
+
+        // Build SSTable with 100 keys
+        let mut builder = SSTableBuilder::with_bloom_capacity(100, 0.01);
+        for i in 0..100 {
+            let key = format!("key_{:03}", i);
+            let value = format!("value_{}", i);
+            builder.add(Bytes::from(key), Bytes::from(value));
+        }
+
+        let mut sstable = builder.build(&sstable_path).unwrap();
+
+        // Keys that exist should be found
+        assert_eq!(
+            sstable.get(b"key_000").unwrap(),
+            Some(Bytes::from("value_0"))
+        );
+        assert_eq!(
+            sstable.get(b"key_050").unwrap(),
+            Some(Bytes::from("value_50"))
+        );
+        assert_eq!(
+            sstable.get(b"key_099").unwrap(),
+            Some(Bytes::from("value_99"))
+        );
+
+        // Keys that don't exist should return None
+        // Bloom filter should filter most of these without binary search
+        assert_eq!(sstable.get(b"key_100").unwrap(), None);
+        assert_eq!(sstable.get(b"key_999").unwrap(), None);
+        assert_eq!(sstable.get(b"nonexistent").unwrap(), None);
     }
 }
