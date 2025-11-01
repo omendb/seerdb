@@ -1,14 +1,14 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+// seerdb: Research-grade storage engine with learned data structures
+// License: Elastic-2.0
+
+pub mod bloom;
+
+pub use bloom::{BloomFilter, LearnedBloomFilter};
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+    fn basic_test() {
+        assert_eq!(2 + 2, 4);
     }
 }
