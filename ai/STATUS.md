@@ -58,8 +58,8 @@
   - ValuePointer (offset + length) for LSM tree
   - src/vlog/mod.rs: 398 lines
 
-**Tests**: 68 passing (58 unit + 10 integration)
-**Code**: 3,300+ lines (core engine + integration tests)
+**Tests**: 87 passing (68 unit + 5 crash recovery + 14 integration)
+**Code**: 3,660+ lines (core engine + crash recovery tests + integration tests)
 **Benchmarks**: seerdb: 348k writes/sec (96% of RocksDB baseline)
 
 ---
@@ -196,7 +196,7 @@
    - Extracted `do_compact_level()` shared implementation
    - Single source of truth for compaction logic
 
-### HIGH Priority Issues (2 remaining, 2 completed)
+### HIGH Priority Issues (1 remaining, 3 completed)
 - ✅ **HIGH-1**: 261 `.unwrap()` calls - Fixed (commit 28daa66)
   - All 17 production unwraps fixed
   - 244 test unwraps acceptable (idiomatic in tests)
@@ -205,9 +205,12 @@
   - CRC32 checksums added to SSTable format v1
   - Corruption detection tests passing
 - ❌ **HIGH-3**: No stress tests (unknown behavior under load)
-- ❌ **HIGH-4**: No crash recovery tests (unknown durability guarantees)
+- ✅ **HIGH-4**: No crash recovery tests - Fixed (commit 0431cb0)
+  - 5/5 crash recovery tests passing
+  - Fixed 3 critical bugs discovered by tests
+  - Corruption detection, WAL truncation, graceful recovery
 
-**Progress**: 5/7 critical+high issues fixed (71%)
+**Progress**: 6/7 critical+high issues fixed (86%)
 **See**: `ai/CRITICAL_BUGS.md` for full list and details
 
 ---
@@ -228,20 +231,24 @@
    - Audited all 11 source files
    - 244 test unwraps verified acceptable
 8. ✅ Add SSTable checksums (HIGH-2) - commit a9aa99e
+9. ✅ Add crash recovery tests (HIGH-4) - commit 8bfbaa3, 0431cb0
+   - 5/5 crash recovery tests passing
+   - Fixed 3 critical bugs: SSTable loading, WAL truncation, graceful recovery
+   - Tests: corruption detection, truncated WAL, crash during flush/compaction
 
 **Remaining Phase 1 Tasks**:
-1. ❌ Add WAL recovery tests (HIGH-3)
-2. ❌ Add crash recovery tests (HIGH-4)
+1. ❌ Add stress tests (HIGH-3)
 
 **Timeline**:
-- Phase 1 (Critical bugs): 2-3 weeks (Week 2 in progress - 71% complete)
+- Phase 1 (Critical bugs): 2-3 weeks (Week 2 in progress - 86% complete)
 - Phase 2 (Testing): 3-4 weeks
 - Phase 3 (Observability): 1-2 weeks
 - Phase 4 (Code quality): 1 week
 - Phase 5 (Real-world validation): 2-4 weeks
 - **Total: 10-12 weeks to production-ready**
 
-**Progress**: All 3 CRITICAL bugs fixed, 2/4 HIGH bugs fixed, 71% completion
+**Progress**: All 3 CRITICAL bugs fixed, 3/4 HIGH bugs fixed, 86% completion
+**Latest**: HIGH-4 crash recovery tests complete (commit 0431cb0)
 **See**: `ai/PRODUCTION_ROADMAP.md` for detailed plan
 
 ---
