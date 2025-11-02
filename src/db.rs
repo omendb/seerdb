@@ -1,9 +1,10 @@
 // Main database interface
-// Integrates WAL, Memtable, SSTable, and Compaction
+// Integrates WAL, Memtable, SSTable, Compaction, and VLog
 
 use crate::compaction::{compact_sstables, LSMTree};
 use crate::memtable::Memtable;
 use crate::sstable::SSTable;
+use crate::vlog::VLog;
 use crate::wal::{Record, SyncPolicy, WAL, WALReader};
 use bytes::Bytes;
 use std::path::{Path, PathBuf};
@@ -23,6 +24,9 @@ pub enum DBError {
 
     #[error("Compaction error: {0}")]
     Compaction(#[from] crate::compaction::CompactionError),
+
+    #[error("VLog error: {0}")]
+    VLog(#[from] crate::vlog::VLogError),
 
     #[error("Database not opened")]
     NotOpened,
@@ -45,6 +49,9 @@ pub struct DBOptions {
     pub size_ratio: u64,
     /// Number of LSM levels (default: 7)
     pub num_levels: usize,
+    /// VLog threshold: values larger than this go to vLog (default: None = disabled)
+    /// Set to Some(4096) for 4KB threshold (good for embeddings)
+    pub vlog_threshold: Option<usize>,
 }
 
 impl Default for DBOptions {
@@ -56,6 +63,7 @@ impl Default for DBOptions {
             base_level_size: 10 * 1024 * 1024, // 10MB
             size_ratio: 10,
             num_levels: 7,
+            vlog_threshold: None, // Disabled by default
         }
     }
 }
@@ -70,6 +78,8 @@ pub struct DB {
     memtable: Arc<Memtable>,
     /// LSM tree for level management
     lsm: Arc<Mutex<LSMTree>>,
+    /// Value log for KV separation (optional)
+    vlog: Arc<Mutex<Option<VLog>>>,
     /// Counter for generating SSTable filenames
     sstable_counter: Arc<Mutex<u64>>,
 }
@@ -81,6 +91,7 @@ impl DB {
         std::fs::create_dir_all(&options.data_dir)?;
 
         let wal_path = options.data_dir.join("wal.log");
+        let vlog_path = options.data_dir.join("values.vlog");
 
         // Create memtable
         let memtable = Memtable::new(options.memtable_capacity);
@@ -92,6 +103,17 @@ impl DB {
 
         // Create new WAL (overwrites old one after recovery)
         let wal = WAL::create(&wal_path, options.wal_sync_policy)?;
+
+        // Create or open vLog if KV separation is enabled
+        let vlog = if options.vlog_threshold.is_some() {
+            if vlog_path.exists() {
+                Some(VLog::open(&vlog_path)?)
+            } else {
+                Some(VLog::create(&vlog_path)?)
+            }
+        } else {
+            None
+        };
 
         // Create LSM tree
         let lsm = LSMTree::new(
@@ -106,6 +128,7 @@ impl DB {
             wal: Arc::new(Mutex::new(wal)),
             memtable: Arc::new(memtable),
             lsm: Arc::new(Mutex::new(lsm)),
+            vlog: Arc::new(Mutex::new(vlog)),
             sstable_counter: Arc::new(Mutex::new(0)),
         };
 
@@ -172,13 +195,24 @@ impl DB {
             return Ok(Some(value));
         }
 
+        // Get vLog if available (need to clone for SSTable attachment)
+        let vlog_path = self.options.data_dir.join("values.vlog");
+        let has_vlog = self.vlog.lock().unwrap().is_some();
+
         // Check SSTables in LSM tree (L0 -> L6)
         let lsm = self.lsm.lock().unwrap();
         for level_num in 0..lsm.num_levels() {
             if let Some(level) = lsm.level(level_num) {
                 // Check each SSTable in this level
                 for sstable_path in level.sstables() {
-                    let mut sstable = SSTable::open(sstable_path)?;
+                    let mut sstable = if has_vlog {
+                        // Attach vLog for reading value pointers
+                        let vlog = VLog::open(&vlog_path)?;
+                        SSTable::open(sstable_path)?.with_vlog(vlog)
+                    } else {
+                        SSTable::open(sstable_path)?
+                    };
+
                     if let Some(value) = sstable.get(key)? {
                         return Ok(Some(value));
                     }
@@ -210,6 +244,9 @@ impl DB {
 
     /// Flush memtable to L0 SSTable
     fn flush(&self) -> Result<()> {
+        use crate::memtable::Entry;
+        use crate::sstable::SSTableBuilder;
+
         // Generate SSTable filename
         let mut counter = self.sstable_counter.lock().unwrap();
         let sstable_path = self
@@ -219,8 +256,33 @@ impl DB {
         *counter += 1;
         drop(counter);
 
-        // Flush memtable to SSTable
-        self.memtable.flush(&sstable_path)?;
+        // Build SSTable with optional vLog support
+        let mut vlog_guard = self.vlog.lock().unwrap();
+
+        let _sstable = if let (Some(threshold), Some(ref mut vlog)) =
+            (self.options.vlog_threshold, vlog_guard.as_mut())
+        {
+            // KV separation enabled - use vLog for large values
+            let mut builder = SSTableBuilder::new().with_vlog_threshold(threshold);
+
+            for (key, entry) in self.memtable.iter() {
+                match entry {
+                    Entry::Value(value) => {
+                        builder.add_with_vlog(key, value, vlog)?;
+                    }
+                    Entry::Tombstone => {
+                        // Skip tombstones during flush
+                    }
+                }
+            }
+
+            builder.build(&sstable_path)?
+        } else {
+            // No KV separation - traditional flush
+            drop(vlog_guard); // Release lock
+            self.memtable.flush(&sstable_path)?
+        };
+
         let size = std::fs::metadata(&sstable_path)?.len();
 
         // Add to LSM tree L0
@@ -525,6 +587,73 @@ mod tests {
         {
             let db = DB::open(options.clone()).unwrap();
             assert_eq!(db.get(b"key1").unwrap(), None);
+        }
+    }
+
+    #[test]
+    fn test_db_with_kv_separation() {
+        let dir = tempdir().unwrap();
+        let options = DBOptions {
+            data_dir: dir.path().to_path_buf(),
+            memtable_capacity: 200, // Small enough to trigger flush
+            vlog_threshold: Some(50), // 50 byte threshold
+            ..Default::default()
+        };
+
+        let db = DB::open(options).unwrap();
+
+        // Small value (stored inline in SSTable after flush)
+        db.put(b"small_key", b"tiny_value").unwrap();
+
+        // Large value (will be stored in vLog after flush)
+        let large_value = vec![b'X'; 100];
+        db.put(b"large_key", &large_value).unwrap();
+
+        // Write more data to trigger flush
+        for i in 0..3 {
+            let key = format!("k{}", i);
+            let value = format!("value_data_{}", i);
+            db.put(key.as_bytes(), value.as_bytes()).unwrap();
+        }
+
+        // Verify all values can be read (from memtable or flushed SSTable)
+        assert_eq!(db.get(b"small_key").unwrap(), Some(Bytes::from("tiny_value")));
+        assert_eq!(
+            db.get(b"large_key").unwrap(),
+            Some(Bytes::from(large_value))
+        );
+
+        // Verify vLog file was created
+        let vlog_path = dir.path().join("values.vlog");
+        assert!(vlog_path.exists(), "vLog file should exist with vlog_threshold enabled");
+    }
+
+    #[test]
+    fn test_db_with_kv_separation_recovery() {
+        let dir = tempdir().unwrap();
+        let options = DBOptions {
+            data_dir: dir.path().to_path_buf(),
+            vlog_threshold: Some(50), // 50 byte threshold
+            ..Default::default()
+        };
+
+        // Write data with large values
+        {
+            let db = DB::open(options.clone()).unwrap();
+            db.put(b"key1", b"small_value").unwrap();
+            let large_value = vec![b'Y'; 200];
+            db.put(b"key2", &large_value).unwrap();
+        }
+
+        // Reopen and verify recovery works with vLog
+        {
+            let db = DB::open(options.clone()).unwrap();
+            assert_eq!(
+                db.get(b"key1").unwrap(),
+                Some(Bytes::from("small_value"))
+            );
+            let expected_large = vec![b'Y'; 200];
+            assert_eq!(db.get(b"key2").unwrap(), Some(Bytes::from(expected_large)));
         }
     }
 }
