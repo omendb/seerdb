@@ -224,7 +224,7 @@
 **Phase 1: Fix Critical Bugs** (Current - Week 2)
 
 **Completed This Week**:
-1. ✅ Create ai/PRODUCTION_ROADMAP.md (5-phase plan)
+1. ✅ Create ai/PLAN.md (5-phase roadmap)
 2. ✅ Create ai/CRITICAL_BUGS.md (15 known issues)
 3. ✅ Deduplicate compaction code (CRITICAL-3) - commit 67722be
 4. ✅ Fix LSM tree updates (CRITICAL-1) - commit 1434acf
@@ -257,7 +257,7 @@
 
 **Progress**: ✅ All 3 CRITICAL bugs fixed, ✅ All 4 HIGH bugs fixed, 100% Phase 1 complete!
 **Latest**: HIGH-3 stress tests complete (commit b44e547)
-**See**: `ai/PRODUCTION_ROADMAP.md` for detailed plan
+**See**: `ai/PLAN.md` for detailed roadmap
 
 ---
 

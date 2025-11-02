@@ -1,9 +1,9 @@
 # seerdb - Research-Grade Storage Engine
 
 **Repository**: seerdb (Storage Engine with Learned Data Structures)
-**Last Updated**: October 31, 2025 - Initial Setup
+**Last Updated**: November 2, 2025
 **License**: Elastic License 2.0 (source-available)
-**Status**: Week 1 - Research Phase
+**Status**: Phase 2.4 - Leak Detection (Phase 1 & 2.3 Complete, 118 tests passing)
 
 ---
 
@@ -30,12 +30,12 @@
 
 **→ First time?** Load these in order:
 1. This file (CLAUDE.md) - Project overview
-2. `ai/research/PAPERS.md` - Paper reading list and summaries
-3. `ai/TODO.md` - Current research tasks
-4. `ai/STATUS.md` - Current progress
+2. `ai/PLAN.md` - Strategic roadmap (4 phases)
+3. `ai/STATUS.md` - Current state and progress
+4. `ai/TODO.md` - Current tasks
 5. `ai/DECISIONS.md` - Design decisions
 
-**→ Continuing research?** Check `ai/STATUS.md` and `ai/research/PAPERS.md`
+**→ Continuing work?** Check `ai/STATUS.md` first, then `ai/TODO.md`
 
 ---
 
@@ -72,15 +72,20 @@
 
 ---
 
-## Research Phase (Current - Weeks 1-4)
+## Current Phase: Phase 2 - Testing & Validation
 
-### Goals
+**Status**: Phase 2.4 - Leak Detection (in progress)
 
-1. **Deep understanding** of key papers and concepts
-2. **Benchmark** existing systems (RocksDB, sled, fjall, PebblesDB)
-3. **Design** architecture based on omen workloads
-4. **Prototype** learned bloom filters (validate research claims)
-5. **Document** design decisions with rationale
+**Completed**:
+- ✅ Phase 1: Production Hardening (7 critical bugs fixed, all tests passing)
+- ✅ Phase 2.1: Stress Tests (5 tests, 100k-1M ops)
+- ✅ Phase 2.2: Crash Recovery Tests (5 tests, all scenarios covered)
+- ✅ Phase 2.3: Fuzzing & Property-Based Testing (1M+ fuzz executions, 8 property tests, 18 edge case tests)
+
+**In Progress**:
+- ⏳ Phase 2.4: Leak Detection (memory, FD, thread leak tests)
+
+**For complete roadmap**: See `ai/PLAN.md` (4-phase strategic plan)
 
 ### Key Papers to Read (Priority Order)
 

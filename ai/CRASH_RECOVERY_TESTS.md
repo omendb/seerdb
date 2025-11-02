@@ -322,7 +322,7 @@ After tests implemented:
 1. Document durability guarantees per SyncPolicy
 2. Update README with crash recovery behavior
 3. Add "Durability" section to ARCHITECTURE.md
-4. Update PRODUCTION_ROADMAP.md progress
+4. Update PLAN.md progress
 
 ---
 
