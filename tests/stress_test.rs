@@ -318,13 +318,21 @@ fn test_stress_concurrent_access() {
     println!("==========================================\n");
 
     // Verify that some writes from each thread succeeded
+    // Since only ~20% of operations are writes, check multiple keys
     println!("Verifying thread writes...");
     for thread_id in 0..num_threads {
-        let key = format!("t{}_key_{:07}", thread_id, 0);
-        let value = db.get(key.as_bytes()).unwrap();
+        let mut found = false;
+        // Check first 100 keys - at least one should exist (20% write rate = ~20 keys)
+        for i in 0..100 {
+            let key = format!("t{}_key_{:07}", thread_id, i);
+            if db.get(key.as_bytes()).unwrap().is_some() {
+                found = true;
+                break;
+            }
+        }
         assert!(
-            value.is_some(),
-            "Thread {} writes should be persisted",
+            found,
+            "Thread {} writes should be persisted (checked first 100 keys)",
             thread_id
         );
     }
