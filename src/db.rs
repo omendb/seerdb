@@ -405,18 +405,20 @@ impl DB {
         drop(lsm_lock); // Release lock during compaction
 
         // Compact SSTables
-        let (_result_path, _size) = compact_sstables(&input_paths, &output_path)?;
+        let (result_path, size) = compact_sstables(&input_paths, &output_path)?;
 
-        // Update LSM tree
-        // TODO: This is simplified - need proper level management
-        // For now, just add to next level
-        let _lsm = lsm.lock().unwrap();
-        // lsm.add_to_level(level_num + 1, result_path, size);
+        // Update LSM tree - add to next level and remove from current level
+        let mut lsm = lsm.lock().unwrap();
+        lsm.add_to_level(level_num + 1, result_path, size);
+        lsm.remove_sstables_from_level(level_num, &input_paths);
+        drop(lsm);
 
-        // TODO: Delete input SSTables
-        // for path in input_paths {
-        //     std::fs::remove_file(path)?;
-        // }
+        // Delete input SSTables from disk
+        for path in input_paths {
+            if let Err(e) = std::fs::remove_file(&path) {
+                eprintln!("Warning: Failed to delete SSTable {:?}: {}", path, e);
+            }
+        }
 
         Ok(())
     }

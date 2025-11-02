@@ -207,6 +207,41 @@ impl LSMTree {
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
     }
+
+    /// Add an SSTable to a specific level (after compaction)
+    pub fn add_to_level(&mut self, level_num: usize, path: PathBuf, size: u64) {
+        if let Some(level) = self.levels.get_mut(level_num) {
+            level.add_sstable(path, size);
+        }
+    }
+
+    /// Remove specific SSTables from a level (after compaction)
+    pub fn remove_sstables_from_level(&mut self, level_num: usize, paths: &[PathBuf]) {
+        if let Some(level) = self.levels.get_mut(level_num) {
+            for path in paths {
+                if let Some(pos) = level.sstables.iter().position(|p| p == path) {
+                    let removed_path = level.sstables.remove(pos);
+
+                    // Update size (need to get file size)
+                    if let Ok(metadata) = std::fs::metadata(&removed_path) {
+                        let size = metadata.len();
+                        level.size = level.size.saturating_sub(size);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Clear all SSTables from a level (used during compaction)
+    pub fn clear_level(&mut self, level_num: usize) -> Vec<PathBuf> {
+        if let Some(level) = self.levels.get_mut(level_num) {
+            let paths = std::mem::take(&mut level.sstables);
+            level.size = 0;
+            paths
+        } else {
+            Vec::new()
+        }
+    }
 }
 
 #[cfg(test)]
