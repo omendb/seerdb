@@ -196,15 +196,18 @@
    - Extracted `do_compact_level()` shared implementation
    - Single source of truth for compaction logic
 
-### HIGH Priority Issues (3 remaining, 1 completed)
-- ⏳ **HIGH-1**: 261 `.unwrap()` calls (10/261 fixed in db.rs hot paths)
+### HIGH Priority Issues (2 remaining, 2 completed)
+- ✅ **HIGH-1**: 261 `.unwrap()` calls - Fixed (commit 28daa66)
+  - All 17 production unwraps fixed
+  - 244 test unwraps acceptable (idiomatic in tests)
+  - Complete audit of all 11 source files
 - ✅ **HIGH-2**: No checksums on SSTables - Fixed (commit a9aa99e)
   - CRC32 checksums added to SSTable format v1
   - Corruption detection tests passing
 - ❌ **HIGH-3**: No stress tests (unknown behavior under load)
 - ❌ **HIGH-4**: No crash recovery tests (unknown durability guarantees)
 
-**Progress**: 4/7 critical+high issues fixed (57%)
+**Progress**: 5/7 critical+high issues fixed (71%)
 **See**: `ai/CRITICAL_BUGS.md` for full list and details
 
 ---
@@ -220,26 +223,25 @@
 4. ✅ Fix LSM tree updates (CRITICAL-1) - commit 1434acf
 5. ✅ Implement file cleanup (CRITICAL-2) - commit 1434acf
 6. ✅ Run clippy and fix all warnings (11 warnings) - commit f118d4b
-7. ✅ Fix 10 critical unwraps in db.rs hot paths (HIGH-1 partial) - commit b32fbf2
+7. ✅ Complete unwrap audit (HIGH-1) - commit 28daa66
+   - Fixed all 17 production unwraps
+   - Audited all 11 source files
+   - 244 test unwraps verified acceptable
 8. ✅ Add SSTable checksums (HIGH-2) - commit a9aa99e
 
 **Remaining Phase 1 Tasks**:
-1. ⏳ Complete unwrap audit and fixes (HIGH-1): 251 remaining
-   - Next: src/sstable/mod.rs (58 unwraps)
-   - Then: src/vlog/mod.rs (28 unwraps)
-   - Then: src/compaction/mod.rs (22 unwraps)
-2. ❌ Add WAL recovery tests (HIGH-3)
-3. ❌ Add crash recovery tests (HIGH-4)
+1. ❌ Add WAL recovery tests (HIGH-3)
+2. ❌ Add crash recovery tests (HIGH-4)
 
 **Timeline**:
-- Phase 1 (Critical bugs): 2-3 weeks (Week 2 in progress)
+- Phase 1 (Critical bugs): 2-3 weeks (Week 2 in progress - 71% complete)
 - Phase 2 (Testing): 3-4 weeks
 - Phase 3 (Observability): 1-2 weeks
 - Phase 4 (Code quality): 1 week
 - Phase 5 (Real-world validation): 2-4 weeks
 - **Total: 10-12 weeks to production-ready**
 
-**Progress**: All 3 CRITICAL bugs fixed, 1/4 HIGH bugs fixed, 57% completion
+**Progress**: All 3 CRITICAL bugs fixed, 2/4 HIGH bugs fixed, 71% completion
 **See**: `ai/PRODUCTION_ROADMAP.md` for detailed plan
 
 ---
