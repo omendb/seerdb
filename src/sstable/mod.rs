@@ -1,8 +1,10 @@
 // SSTable: Sorted String Table on disk
 // Week 6: Enhanced with bloom filters, compression, and binary search
+// Week 13: KV separation - stores value pointers for large values
 
 use bytes::Bytes;
 use crate::bloom::BloomFilter;
+use crate::vlog::{ValuePointer, VLog};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -18,14 +20,25 @@ pub enum SSTableError {
 
     #[error("Invalid SSTable format")]
     InvalidFormat,
+
+    #[error("VLog error: {0}")]
+    VLog(String),
 }
 
 pub type Result<T> = std::result::Result<T, SSTableError>;
 
-/// SSTable writer with bloom filter support
+/// Entry value - either inline or pointer to vLog
+#[derive(Debug, Clone)]
+enum EntryValue {
+    Inline(Bytes),
+    Pointer(ValuePointer),
+}
+
+/// SSTable writer with bloom filter support and optional KV separation
 pub struct SSTableBuilder {
-    entries: Vec<(Bytes, Bytes)>,
+    entries: Vec<(Bytes, EntryValue)>,
     bloom: BloomFilter,
+    vlog_threshold: Option<usize>, // If Some(n), values > n bytes go to vLog
 }
 
 impl SSTableBuilder {
@@ -39,19 +52,54 @@ impl SSTableBuilder {
         Self {
             entries: Vec::new(),
             bloom: BloomFilter::new(expected_elements, false_positive_rate),
+            vlog_threshold: None,
         }
     }
 
+    /// Enable KV separation - values larger than threshold will be stored in vLog
+    pub fn with_vlog_threshold(mut self, threshold: usize) -> Self {
+        self.vlog_threshold = Some(threshold);
+        self
+    }
+
     /// Add a key-value pair (must be added in sorted order)
+    /// If vLog is provided and value > threshold, stores value in vLog
     pub fn add(&mut self, key: Bytes, value: Bytes) {
         // Add key to bloom filter
         self.bloom.insert(&key);
-        self.entries.push((key, value));
+        self.entries.push((key, EntryValue::Inline(value)));
+    }
+
+    /// Add a key-value pair with explicit vLog handling
+    /// For large values, appends to vLog and stores pointer
+    pub fn add_with_vlog(&mut self, key: Bytes, value: Bytes, vlog: &mut VLog) -> Result<()> {
+        self.bloom.insert(&key);
+
+        let entry_value = if let Some(threshold) = self.vlog_threshold {
+            if value.len() > threshold {
+                // Store in vLog, keep pointer
+                let pointer = vlog
+                    .append(&key, &value)
+                    .map_err(|e| SSTableError::VLog(e.to_string()))?;
+                EntryValue::Pointer(pointer)
+            } else {
+                // Store inline
+                EntryValue::Inline(value)
+            }
+        } else {
+            // No vLog, store inline
+            EntryValue::Inline(value)
+        };
+
+        self.entries.push((key, entry_value));
+        Ok(())
     }
 
     /// Build and write SSTable to disk
     /// Format: [entries...][index][bloom_filter_len: u64][bloom_filter][footer]
-    /// Entry: [key_len: u32][key][value_len: u32][value]
+    /// Entry: [key_len: u32][key][flag: u8][value_data]
+    ///   flag=0x00: inline  → [value_len: u32][value]
+    ///   flag=0x01: pointer → [offset: u64][length: u32]
     /// Index: [num_entries: u32][(key_len: u32, key, offset: u64); num_entries]
     /// Footer: [index_offset: u64][bloom_offset: u64]
     pub fn build(self, path: impl AsRef<Path>) -> Result<SSTable> {
@@ -66,7 +114,7 @@ impl SSTableBuilder {
         let mut current_offset = 0u64;
 
         // Write entries
-        for (key, value) in &self.entries {
+        for (key, entry_value) in &self.entries {
             index_entries.push((key.clone(), current_offset));
 
             // Write key
@@ -74,10 +122,29 @@ impl SSTableBuilder {
             file.write_all(key)?;
             current_offset += 4 + key.len() as u64;
 
-            // Write value
-            file.write_all(&(value.len() as u32).to_le_bytes())?;
-            file.write_all(value)?;
-            current_offset += 4 + value.len() as u64;
+            // Write value (inline or pointer)
+            match entry_value {
+                EntryValue::Inline(value) => {
+                    // Flag: 0x00 = inline
+                    file.write_all(&[0x00])?;
+                    current_offset += 1;
+
+                    // Write value
+                    file.write_all(&(value.len() as u32).to_le_bytes())?;
+                    file.write_all(value)?;
+                    current_offset += 4 + value.len() as u64;
+                }
+                EntryValue::Pointer(pointer) => {
+                    // Flag: 0x01 = pointer
+                    file.write_all(&[0x01])?;
+                    current_offset += 1;
+
+                    // Write pointer (offset + length)
+                    file.write_all(&pointer.offset.to_le_bytes())?;
+                    file.write_all(&pointer.length.to_le_bytes())?;
+                    current_offset += 8 + 4;
+                }
+            }
         }
 
         let index_offset = current_offset;
@@ -116,13 +183,14 @@ impl Default for SSTableBuilder {
     }
 }
 
-/// SSTable reader with bloom filter
+/// SSTable reader with bloom filter and optional vLog
 pub struct SSTable {
     file: File,
     path: PathBuf,
     index: Vec<(Bytes, u64)>,  // (Key, offset) pairs for binary search
     bloom: BloomFilter,
     num_entries: usize,
+    vlog: Option<VLog>, // Optional vLog for reading value pointers
 }
 
 impl SSTable {
@@ -181,10 +249,18 @@ impl SSTable {
             index,
             bloom,
             num_entries,
+            vlog: None,
         })
     }
 
+    /// Attach a vLog for reading value pointers
+    pub fn with_vlog(mut self, vlog: VLog) -> Self {
+        self.vlog = Some(vlog);
+        self
+    }
+
     /// Get a value by key using bloom filter + binary search
+    /// Handles both inline values and vLog pointers
     pub fn get(&mut self, key: &[u8]) -> Result<Option<Bytes>> {
         // Check bloom filter first - if not present, definitely not in SSTable
         if !self.bloom.contains(&key) {
@@ -206,15 +282,52 @@ impl SSTable {
                 let key_len = u32::from_le_bytes(key_len_buf) as usize;
                 self.file.seek(SeekFrom::Current(key_len as i64))?;
 
-                // Read value
-                let mut value_len_buf = [0u8; 4];
-                self.file.read_exact(&mut value_len_buf)?;
-                let value_len = u32::from_le_bytes(value_len_buf) as usize;
+                // Read flag byte
+                let mut flag_buf = [0u8; 1];
+                self.file.read_exact(&mut flag_buf)?;
+                let flag = flag_buf[0];
 
-                let mut value = vec![0u8; value_len];
-                self.file.read_exact(&mut value)?;
+                match flag {
+                    0x00 => {
+                        // Inline value
+                        let mut value_len_buf = [0u8; 4];
+                        self.file.read_exact(&mut value_len_buf)?;
+                        let value_len = u32::from_le_bytes(value_len_buf) as usize;
 
-                Ok(Some(Bytes::from(value)))
+                        let mut value = vec![0u8; value_len];
+                        self.file.read_exact(&mut value)?;
+
+                        Ok(Some(Bytes::from(value)))
+                    }
+                    0x01 => {
+                        // Value pointer - read from vLog
+                        let mut offset_buf = [0u8; 8];
+                        self.file.read_exact(&mut offset_buf)?;
+                        let vlog_offset = u64::from_le_bytes(offset_buf);
+
+                        let mut length_buf = [0u8; 4];
+                        self.file.read_exact(&mut length_buf)?;
+                        let vlog_length = u32::from_le_bytes(length_buf);
+
+                        let pointer = ValuePointer {
+                            offset: vlog_offset,
+                            length: vlog_length,
+                        };
+
+                        // Read from vLog
+                        if let Some(vlog) = &mut self.vlog {
+                            let value = vlog
+                                .read(pointer)
+                                .map_err(|e| SSTableError::VLog(e.to_string()))?;
+                            Ok(Some(value))
+                        } else {
+                            Err(SSTableError::VLog(
+                                "Value pointer found but no vLog attached".to_string(),
+                            ))
+                        }
+                    }
+                    _ => Err(SSTableError::InvalidFormat),
+                }
             }
             Err(_) => {
                 // Key not found (bloom filter false positive)
@@ -291,19 +404,38 @@ impl<'a> Iterator for SSTableIterator<'a> {
             return Some(Err(e.into()));
         }
 
-        // Read value
-        let mut value_len_buf = [0u8; 4];
-        if let Err(e) = self.file.read_exact(&mut value_len_buf) {
+        // Read flag byte
+        let mut flag_buf = [0u8; 1];
+        if let Err(e) = self.file.read_exact(&mut flag_buf) {
             return Some(Err(e.into()));
         }
-        let value_len = u32::from_le_bytes(value_len_buf) as usize;
+        let flag = flag_buf[0];
 
-        let mut value = vec![0u8; value_len];
-        if let Err(e) = self.file.read_exact(&mut value) {
-            return Some(Err(e.into()));
+        match flag {
+            0x00 => {
+                // Inline value
+                let mut value_len_buf = [0u8; 4];
+                if let Err(e) = self.file.read_exact(&mut value_len_buf) {
+                    return Some(Err(e.into()));
+                }
+                let value_len = u32::from_le_bytes(value_len_buf) as usize;
+
+                let mut value = vec![0u8; value_len];
+                if let Err(e) = self.file.read_exact(&mut value) {
+                    return Some(Err(e.into()));
+                }
+
+                Some(Ok((Bytes::from(key), Bytes::from(value))))
+            }
+            0x01 => {
+                // Value pointer - skip for now (iterator doesn't have vLog access)
+                // This is a limitation we'll address later
+                Some(Err(SSTableError::VLog(
+                    "Iterator doesn't support vLog pointers yet".to_string(),
+                )))
+            }
+            _ => Some(Err(SSTableError::InvalidFormat)),
         }
-
-        Some(Ok((Bytes::from(key), Bytes::from(value))))
     }
 }
 
@@ -421,5 +553,147 @@ mod tests {
         assert_eq!(sstable.get(b"key_100").unwrap(), None);
         assert_eq!(sstable.get(b"key_999").unwrap(), None);
         assert_eq!(sstable.get(b"nonexistent").unwrap(), None);
+    }
+
+    #[test]
+    fn test_sstable_with_vlog_inline_values() {
+        use crate::vlog::VLog;
+
+        let dir = tempdir().unwrap();
+        let sstable_path = dir.path().join("test_vlog.sst");
+        let vlog_path = dir.path().join("test.vlog");
+
+        // Create vLog
+        let mut vlog = VLog::create(&vlog_path).unwrap();
+
+        // Build SSTable with small values (will be stored inline)
+        let mut builder = SSTableBuilder::new().with_vlog_threshold(100); // 100 byte threshold
+        builder.add_with_vlog(Bytes::from("key1"), Bytes::from("small_value"), &mut vlog).unwrap();
+        builder.add_with_vlog(Bytes::from("key2"), Bytes::from("tiny"), &mut vlog).unwrap();
+
+        let mut sstable = builder.build(&sstable_path).unwrap();
+
+        // Read values - should work without vLog attached (inline values)
+        assert_eq!(
+            sstable.get(b"key1").unwrap(),
+            Some(Bytes::from("small_value"))
+        );
+        assert_eq!(
+            sstable.get(b"key2").unwrap(),
+            Some(Bytes::from("tiny"))
+        );
+    }
+
+    #[test]
+    fn test_sstable_with_vlog_large_values() {
+        use crate::vlog::VLog;
+
+        let dir = tempdir().unwrap();
+        let sstable_path = dir.path().join("test_vlog.sst");
+        let vlog_path = dir.path().join("test.vlog");
+
+        // Create vLog
+        let mut vlog = VLog::create(&vlog_path).unwrap();
+
+        // Build SSTable with large values (will be stored in vLog)
+        let mut builder = SSTableBuilder::new().with_vlog_threshold(10); // 10 byte threshold
+        let large_value = vec![b'x'; 100];
+        builder.add_with_vlog(Bytes::from("key1"), Bytes::from(large_value.clone()), &mut vlog).unwrap();
+
+        let mut sstable = builder.build(&sstable_path).unwrap();
+
+        // Try to read without vLog - should fail
+        let result = sstable.get(b"key1");
+        assert!(result.is_err());
+
+        // Reopen vLog and attach to SSTable
+        let vlog = VLog::open(&vlog_path).unwrap();
+        let mut sstable = SSTable::open(&sstable_path).unwrap().with_vlog(vlog);
+
+        // Now should work
+        assert_eq!(
+            sstable.get(b"key1").unwrap(),
+            Some(Bytes::from(large_value))
+        );
+    }
+
+    #[test]
+    fn test_sstable_with_vlog_mixed_values() {
+        use crate::vlog::VLog;
+
+        let dir = tempdir().unwrap();
+        let sstable_path = dir.path().join("test_vlog.sst");
+        let vlog_path = dir.path().join("test.vlog");
+
+        // Create vLog
+        let mut vlog = VLog::create(&vlog_path).unwrap();
+
+        // Build SSTable with mixed small and large values
+        let mut builder = SSTableBuilder::new().with_vlog_threshold(50); // 50 byte threshold
+        builder.add_with_vlog(Bytes::from("key1"), Bytes::from("small"), &mut vlog).unwrap();
+        let large_value = vec![b'x'; 100];
+        builder.add_with_vlog(Bytes::from("key2"), Bytes::from(large_value.clone()), &mut vlog).unwrap();
+        builder.add_with_vlog(Bytes::from("key3"), Bytes::from("also_small"), &mut vlog).unwrap();
+
+        let mut sstable = builder.build(&sstable_path).unwrap();
+
+        // Small values work without vLog
+        assert_eq!(
+            sstable.get(b"key1").unwrap(),
+            Some(Bytes::from("small"))
+        );
+        assert_eq!(
+            sstable.get(b"key3").unwrap(),
+            Some(Bytes::from("also_small"))
+        );
+
+        // Large value requires vLog
+        let result = sstable.get(b"key2");
+        assert!(result.is_err());
+
+        // Attach vLog
+        let vlog = VLog::open(&vlog_path).unwrap();
+        let mut sstable = SSTable::open(&sstable_path).unwrap().with_vlog(vlog);
+
+        // All values should work now
+        assert_eq!(
+            sstable.get(b"key1").unwrap(),
+            Some(Bytes::from("small"))
+        );
+        assert_eq!(
+            sstable.get(b"key2").unwrap(),
+            Some(Bytes::from(large_value))
+        );
+        assert_eq!(
+            sstable.get(b"key3").unwrap(),
+            Some(Bytes::from("also_small"))
+        );
+    }
+
+    #[test]
+    fn test_sstable_vlog_reopen() {
+        use crate::vlog::VLog;
+
+        let dir = tempdir().unwrap();
+        let sstable_path = dir.path().join("test_vlog.sst");
+        let vlog_path = dir.path().join("test.vlog");
+
+        // Create and populate
+        {
+            let mut vlog = VLog::create(&vlog_path).unwrap();
+            let mut builder = SSTableBuilder::new().with_vlog_threshold(20);
+
+            let large_value = vec![b'A'; 100];
+            builder.add_with_vlog(Bytes::from("key1"), Bytes::from(large_value), &mut vlog).unwrap();
+            builder.build(&sstable_path).unwrap();
+        }
+
+        // Reopen and verify
+        let vlog = VLog::open(&vlog_path).unwrap();
+        let mut sstable = SSTable::open(&sstable_path).unwrap().with_vlog(vlog);
+
+        let value = sstable.get(b"key1").unwrap().unwrap();
+        assert_eq!(value.len(), 100);
+        assert_eq!(value[0], b'A');
     }
 }

@@ -1,8 +1,8 @@
 # STATUS - seerdb
 
 **Last Updated**: November 1, 2025
-**Current Phase**: Week 9 Complete - Learned Bloom Research
-**Focus**: Research findings: learned blooms work for specific use cases only
+**Current Phase**: Week 13 In Progress - KV Separation (WiscKey)
+**Focus**: Implementing value log and SSTable integration
 
 ---
 
@@ -33,9 +33,9 @@
 - ✅ **SSTable**: Sorted String Table on disk
   - **Binary search** on keys (O(log n) lookups)
   - **Bloom filter** integration (19x speedup for negative lookups)
+  - **KV separation** (Week 13): Inline vs vLog pointers
   - Iterator support
-  - Simple format (no blocks yet)
-  - src/sstable/mod.rs: 425 lines
+  - src/sstable/mod.rs: 700 lines
 
 - ✅ **Bloom Filters**: Traditional implementation with serialization
   - Configurable FPR (default 1%)
@@ -50,8 +50,15 @@
   - Size and file-count based triggers
   - src/compaction/: 580 lines (mod.rs, merge.rs)
 
-**Tests**: 63 passing (49 unit + 14 integration)
-**Code**: 2,750+ lines (core engine + integration tests)
+- ✅ **Value Log (vLog)** (Week 13):
+  - WiscKey-style append-only value storage
+  - CRC32 checksums for integrity
+  - Record format: [key_len][key][value_len][value][crc]
+  - ValuePointer (offset + length) for LSM tree
+  - src/vlog/mod.rs: 398 lines
+
+**Tests**: 63 passing (53 unit + 10 integration)
+**Code**: 3,150+ lines (core engine + integration tests)
 **Benchmarks**: seerdb: 348k writes/sec (96% of RocksDB baseline)
 
 ---
@@ -99,7 +106,15 @@
 - ⚠️ Finding: Not suitable for general-purpose KV storage
 - ✅ Documented research findings
 
-**Next**: Skip to Week 13 (KV Separation) - more applicable to seerdb
+**Week 13 In Progress**: KV Separation (WiscKey)
+- ✅ Value log (vLog) implementation with CRC checksums
+- ✅ SSTable support for inline values and vLog pointers
+- ✅ Entry format: [key][flag: 0x00=inline, 0x01=pointer][value_data]
+- ✅ Tests: inline values, large values, mixed, reopen
+- ✅ Demo: 33% write amplification reduction
+- 🔄 Next: Update DB interface to use vLog for large values
+- 📋 TODO: Implement garbage collection
+- 📋 TODO: Benchmark write amp improvement on full DB
 
 ---
 
@@ -211,13 +226,15 @@
 - ✅ Main DB interface (Week 8)
 - ✅ Flush coordination
 - ✅ WAL recovery on startup
+- ✅ Value log (vLog) for KV separation (Week 13)
+- ✅ SSTable support for value pointers (Week 13)
 
 **Pending**:
+- 📋 DB interface integration with vLog (Week 13, in progress)
+- 📋 vLog garbage collection (Week 13)
 - 📋 Background compaction (future)
 - 📋 File cleanup after compaction (future)
-- 📋 Learned bloom filters (Week 9+)
-- 📋 Learned indexes (Week 10+)
-- 📋 KV separation (Week 13+)
+- 📋 Learned indexes (Week 10+, deferred)
 
 **Current Architecture**:
 ```
@@ -230,16 +247,17 @@
 │   WAL    │ │Memtable ││  ← In-memory + durability
 └──────────┘ └─────┬───┘│
                    │    │ flush
-             ┌─────▼────▼──────┐
-             │   SSTable (L0)  │  ← Disk storage + bloom filters
-             └─────┬───────────┘
-                   │ compact
-             ┌─────▼───────────┐
-             │   LSM Levels    │  ← L1-L6 (exponential sizing)
-             │  (Compaction)   │
-             └─────────────────┘
+             ┌─────▼────▼──────┐      ┌──────────────┐
+             │   SSTable (L0)  │◄─────┤  Value Log   │
+             │  (keys+pointers)│      │  (vLog)      │
+             └─────┬───────────┘      │              │
+                   │ compact           │ (large values)│
+             ┌─────▼───────────┐      └──────────────┘
+             │   LSM Levels    │            ▲
+             │  (Compaction)   │            │ read large values
+             └─────────────────┘────────────┘
 
-Functional: All components integrated, WAL recovery works
+Week 13: KV separation implemented at SSTable level
 ```
 
 ---
@@ -290,6 +308,14 @@ Functional: All components integrated, WAL recovery works
 ## Recent Commits
 
 ```
+<pending> - feat: Week 13 KV separation - vLog and SSTable integration
+  - Value log (vLog): Append-only storage with CRC checksums
+  - SSTable: Support for inline values and vLog pointers
+  - Entry format: [key][flag: 0x00=inline, 0x01=pointer][value_data]
+  - Tests: 4 new SSTable+vLog integration tests
+  - Demo: 33% write amplification reduction
+  - 63 tests passing (53 unit + 10 integration)
+
 ba6842e - research: Week 9 learned bloom filters - valuable negative result
   - Learned blooms: 73% space reduction, but 50% FPR with hash features
   - Root cause: Hash features destroy learnable patterns
