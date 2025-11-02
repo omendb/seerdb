@@ -5,6 +5,7 @@
 use bytes::Bytes;
 use crate::bloom::BloomFilter;
 use crate::vlog::{ValuePointer, VLog};
+use crc32fast::Hasher;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -23,9 +24,39 @@ pub enum SSTableError {
 
     #[error("VLog error: {0}")]
     VLog(String),
+
+    #[error("SSTable corrupted: expected checksum {expected:#x}, got {actual:#x}")]
+    Corruption { expected: u32, actual: u32 },
 }
 
 pub type Result<T> = std::result::Result<T, SSTableError>;
+
+/// SSTable format version
+const SSTABLE_VERSION: u32 = 1;
+
+/// Helper to calculate CRC32 checksum while writing
+struct ChecksumWriter<W: Write> {
+    writer: W,
+    hasher: Hasher,
+}
+
+impl<W: Write> ChecksumWriter<W> {
+    fn new(writer: W) -> Self {
+        Self {
+            writer,
+            hasher: Hasher::new(),
+        }
+    }
+
+    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+        self.hasher.update(buf);
+        self.writer.write_all(buf)
+    }
+
+    fn finalize(self) -> (W, u32) {
+        (self.writer, self.hasher.finalize())
+    }
+}
 
 /// Entry value - either inline or pointer to vLog
 #[derive(Debug, Clone)]
@@ -101,15 +132,17 @@ impl SSTableBuilder {
     ///   flag=0x00: inline  → [value_len: u32][value]
     ///   flag=0x01: pointer → [offset: u64][length: u32]
     /// Index: [num_entries: u32][(key_len: u32, key, offset: u64); num_entries]
-    /// Footer: [index_offset: u64][bloom_offset: u64]
+    /// Footer: [index_offset: u64][bloom_offset: u64][checksum: u32][version: u32]
     pub fn build(self, path: impl AsRef<Path>) -> Result<SSTable> {
         let path = path.as_ref().to_path_buf();
-        let mut file = OpenOptions::new()
+        let file = OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(true)
             .open(&path)?;
 
+        // Wrap file with checksum writer
+        let mut writer = ChecksumWriter::new(file);
         let mut index_entries = Vec::new();
         let mut current_offset = 0u64;
 
@@ -118,30 +151,30 @@ impl SSTableBuilder {
             index_entries.push((key.clone(), current_offset));
 
             // Write key
-            file.write_all(&(key.len() as u32).to_le_bytes())?;
-            file.write_all(key)?;
+            writer.write_all(&(key.len() as u32).to_le_bytes())?;
+            writer.write_all(key)?;
             current_offset += 4 + key.len() as u64;
 
             // Write value (inline or pointer)
             match entry_value {
                 EntryValue::Inline(value) => {
                     // Flag: 0x00 = inline
-                    file.write_all(&[0x00])?;
+                    writer.write_all(&[0x00])?;
                     current_offset += 1;
 
                     // Write value
-                    file.write_all(&(value.len() as u32).to_le_bytes())?;
-                    file.write_all(value)?;
+                    writer.write_all(&(value.len() as u32).to_le_bytes())?;
+                    writer.write_all(value)?;
                     current_offset += 4 + value.len() as u64;
                 }
                 EntryValue::Pointer(pointer) => {
                     // Flag: 0x01 = pointer
-                    file.write_all(&[0x01])?;
+                    writer.write_all(&[0x01])?;
                     current_offset += 1;
 
                     // Write pointer (offset + length)
-                    file.write_all(&pointer.offset.to_le_bytes())?;
-                    file.write_all(&pointer.length.to_le_bytes())?;
+                    writer.write_all(&pointer.offset.to_le_bytes())?;
+                    writer.write_all(&pointer.length.to_le_bytes())?;
                     current_offset += 8 + 4;
                 }
             }
@@ -150,12 +183,12 @@ impl SSTableBuilder {
         let index_offset = current_offset;
 
         // Write index with keys for binary search
-        file.write_all(&(index_entries.len() as u32).to_le_bytes())?;
+        writer.write_all(&(index_entries.len() as u32).to_le_bytes())?;
         current_offset += 4;
         for (key, offset) in &index_entries {
-            file.write_all(&(key.len() as u32).to_le_bytes())?;
-            file.write_all(key)?;
-            file.write_all(&offset.to_le_bytes())?;
+            writer.write_all(&(key.len() as u32).to_le_bytes())?;
+            writer.write_all(key)?;
+            writer.write_all(&offset.to_le_bytes())?;
             current_offset += 4 + key.len() as u64 + 8;
         }
 
@@ -163,12 +196,17 @@ impl SSTableBuilder {
 
         // Write bloom filter
         let bloom_bytes = self.bloom.to_bytes();
-        file.write_all(&(bloom_bytes.len() as u64).to_le_bytes())?;
-        file.write_all(&bloom_bytes)?;
+        writer.write_all(&(bloom_bytes.len() as u64).to_le_bytes())?;
+        writer.write_all(&bloom_bytes)?;
 
         // Write footer (index offset, bloom offset)
-        file.write_all(&index_offset.to_le_bytes())?;
-        file.write_all(&bloom_offset.to_le_bytes())?;
+        writer.write_all(&index_offset.to_le_bytes())?;
+        writer.write_all(&bloom_offset.to_le_bytes())?;
+
+        // Finalize checksum and write it along with version
+        let (mut file, checksum) = writer.finalize();
+        file.write_all(&checksum.to_le_bytes())?;
+        file.write_all(&SSTABLE_VERSION.to_le_bytes())?;
 
         file.sync_all()?;
 
@@ -184,6 +222,7 @@ impl Default for SSTableBuilder {
 }
 
 /// SSTable reader with bloom filter and optional vLog
+#[derive(Debug)]
 pub struct SSTable {
     file: File,
     path: PathBuf,
@@ -199,12 +238,39 @@ impl SSTable {
         let path = path.as_ref().to_path_buf();
         let mut file = OpenOptions::new().read(true).open(&path)?;
 
-        // Read footer (last 16 bytes: index_offset + bloom_offset)
-        file.seek(SeekFrom::End(-16))?;
-        let mut footer_buf = [0u8; 16];
+        // Get file size
+        let file_size = file.metadata()?.len();
+
+        // Read footer (last 24 bytes: index_offset + bloom_offset + checksum + version)
+        file.seek(SeekFrom::End(-24))?;
+        let mut footer_buf = [0u8; 24];
         file.read_exact(&mut footer_buf)?;
         let index_offset = u64::from_le_bytes(footer_buf[0..8].try_into().unwrap());
         let bloom_offset = u64::from_le_bytes(footer_buf[8..16].try_into().unwrap());
+        let stored_checksum = u32::from_le_bytes(footer_buf[16..20].try_into().unwrap());
+        let version = u32::from_le_bytes(footer_buf[20..24].try_into().unwrap());
+
+        // Verify version
+        if version != SSTABLE_VERSION {
+            return Err(SSTableError::InvalidFormat);
+        }
+
+        // Verify checksum by reading all data up to the footer
+        file.seek(SeekFrom::Start(0))?;
+        let data_len = (file_size - 8) as usize; // Everything except checksum and version
+        let mut data = vec![0u8; data_len];
+        file.read_exact(&mut data)?;
+
+        let mut hasher = Hasher::new();
+        hasher.update(&data);
+        let actual_checksum = hasher.finalize();
+
+        if actual_checksum != stored_checksum {
+            return Err(SSTableError::Corruption {
+                expected: stored_checksum,
+                actual: actual_checksum,
+            });
+        }
 
         // Read index
         file.seek(SeekFrom::Start(index_offset))?;
@@ -695,5 +761,62 @@ mod tests {
         let value = sstable.get(b"key1").unwrap().unwrap();
         assert_eq!(value.len(), 100);
         assert_eq!(value[0], b'A');
+    }
+
+    #[test]
+    fn test_sstable_checksum_detection() {
+        use std::fs::OpenOptions;
+        use std::io::{Seek, SeekFrom, Write};
+
+        let dir = tempfile::tempdir().unwrap();
+        let sstable_path = dir.path().join("test.sst");
+
+        // Build an SSTable
+        let mut builder = SSTableBuilder::new();
+        builder.add(Bytes::from("key1"), Bytes::from("value1"));
+        builder.add(Bytes::from("key2"), Bytes::from("value2"));
+        builder.build(&sstable_path).unwrap();
+
+        // Corrupt the file by flipping a bit in the data section
+        {
+            let mut file = OpenOptions::new()
+                .write(true)
+                .open(&sstable_path)
+                .unwrap();
+            file.seek(SeekFrom::Start(10)).unwrap(); // Middle of data
+            file.write_all(&[0xFF]).unwrap(); // Corrupt one byte
+            file.sync_all().unwrap();
+        }
+
+        // Opening should detect corruption
+        let result = SSTable::open(&sstable_path);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SSTableError::Corruption { .. } => {}, // Expected
+            other => panic!("Expected Corruption error, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_sstable_checksum_valid() {
+        let dir = tempfile::tempdir().unwrap();
+        let sstable_path = dir.path().join("test.sst");
+
+        // Build an SSTable
+        let mut builder = SSTableBuilder::new();
+        builder.add(Bytes::from("key1"), Bytes::from("value1"));
+        builder.add(Bytes::from("key2"), Bytes::from("value2"));
+        builder.build(&sstable_path).unwrap();
+
+        // Should open successfully without modification
+        let mut sstable = SSTable::open(&sstable_path).unwrap();
+        assert_eq!(
+            sstable.get(b"key1").unwrap(),
+            Some(Bytes::from("value1"))
+        );
+        assert_eq!(
+            sstable.get(b"key2").unwrap(),
+            Some(Bytes::from("value2"))
+        );
     }
 }

@@ -140,6 +140,7 @@ impl VLogRecord {
 }
 
 /// Value Log - append-only log for storing values
+#[derive(Debug)]
 pub struct VLog {
     file: File,
     path: PathBuf,

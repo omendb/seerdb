@@ -10,6 +10,7 @@ use twox_hash::XxHash64;
 /// Uses k hash functions to set bits in a bit array.
 /// False positive rate: (1 - e^(-kn/m))^k
 /// where k = number of hash functions, n = number of elements, m = bit array size
+#[derive(Debug)]
 pub struct BloomFilter {
     /// Bit array
     bits: Vec<bool>,
