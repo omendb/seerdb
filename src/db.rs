@@ -233,7 +233,10 @@ impl DB {
             key: key.clone(),
             value: value.clone(),
         };
-        self.wal.lock().unwrap().write(&record)?;
+        self.wal
+            .lock()
+            .expect("WAL mutex poisoned")
+            .write(&record)?;
 
         // Write to memtable
         self.memtable.put(key, value);
@@ -257,10 +260,14 @@ impl DB {
 
         // Get vLog if available (need to clone for SSTable attachment)
         let vlog_path = self.options.data_dir.join("values.vlog");
-        let has_vlog = self.vlog.lock().unwrap().is_some();
+        let has_vlog = self
+            .vlog
+            .lock()
+            .expect("vLog mutex poisoned")
+            .is_some();
 
         // Check SSTables in LSM tree (L0 -> L6)
-        let lsm = self.lsm.lock().unwrap();
+        let lsm = self.lsm.lock().expect("LSM mutex poisoned");
         for level_num in 0..lsm.num_levels() {
             if let Some(level) = lsm.level(level_num) {
                 // Check each SSTable in this level
@@ -289,7 +296,10 @@ impl DB {
 
         // Write to WAL (durability)
         let record = Record::Delete { key: key.clone() };
-        self.wal.lock().unwrap().write(&record)?;
+        self.wal
+            .lock()
+            .expect("WAL mutex poisoned")
+            .write(&record)?;
 
         // Write tombstone to memtable
         self.memtable.delete(key);
@@ -308,7 +318,10 @@ impl DB {
         use crate::sstable::SSTableBuilder;
 
         // Generate SSTable filename
-        let mut counter = self.sstable_counter.lock().unwrap();
+        let mut counter = self
+            .sstable_counter
+            .lock()
+            .expect("SSTable counter mutex poisoned");
         let sstable_path = self
             .options
             .data_dir
@@ -317,7 +330,7 @@ impl DB {
         drop(counter);
 
         // Build SSTable with optional vLog support
-        let mut vlog_guard = self.vlog.lock().unwrap();
+        let mut vlog_guard = self.vlog.lock().expect("vLog mutex poisoned");
 
         let _sstable = if let (Some(threshold), Some(ref mut vlog)) =
             (self.options.vlog_threshold, vlog_guard.as_mut())
@@ -346,7 +359,7 @@ impl DB {
         let size = std::fs::metadata(&sstable_path)?.len();
 
         // Add to LSM tree L0
-        let mut lsm = self.lsm.lock().unwrap();
+        let mut lsm = self.lsm.lock().expect("LSM mutex poisoned");
         lsm.add_l0_sstable(sstable_path, size);
 
         // Check if compaction is needed
@@ -382,7 +395,7 @@ impl DB {
         data_dir: &Path,
         level_num: usize,
     ) -> Result<()> {
-        let lsm_lock = lsm.lock().unwrap();
+        let lsm_lock = lsm.lock().expect("LSM mutex poisoned");
 
         // Get SSTables to compact
         let level = lsm_lock.level(level_num).ok_or(DBError::NotOpened)?;
@@ -393,7 +406,9 @@ impl DB {
         }
 
         // Generate output path
-        let mut counter = sstable_counter.lock().unwrap();
+        let mut counter = sstable_counter
+            .lock()
+            .expect("SSTable counter mutex poisoned");
         let output_path = data_dir.join(format!(
             "L{}_{:06}.sst",
             level_num + 1,
@@ -408,7 +423,7 @@ impl DB {
         let (result_path, size) = compact_sstables(&input_paths, &output_path)?;
 
         // Update LSM tree - add to next level and remove from current level
-        let mut lsm = lsm.lock().unwrap();
+        let mut lsm = lsm.lock().expect("LSM mutex poisoned");
         lsm.add_to_level(level_num + 1, result_path, size);
         lsm.remove_sstables_from_level(level_num, &input_paths);
         drop(lsm);
