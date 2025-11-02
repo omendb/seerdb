@@ -245,10 +245,26 @@ impl SSTable {
         file.seek(SeekFrom::End(-24))?;
         let mut footer_buf = [0u8; 24];
         file.read_exact(&mut footer_buf)?;
-        let index_offset = u64::from_le_bytes(footer_buf[0..8].try_into().unwrap());
-        let bloom_offset = u64::from_le_bytes(footer_buf[8..16].try_into().unwrap());
-        let stored_checksum = u32::from_le_bytes(footer_buf[16..20].try_into().unwrap());
-        let version = u32::from_le_bytes(footer_buf[20..24].try_into().unwrap());
+        let index_offset = u64::from_le_bytes(
+            footer_buf[0..8]
+                .try_into()
+                .expect("footer slice [0..8] is exactly 8 bytes"),
+        );
+        let bloom_offset = u64::from_le_bytes(
+            footer_buf[8..16]
+                .try_into()
+                .expect("footer slice [8..16] is exactly 8 bytes"),
+        );
+        let stored_checksum = u32::from_le_bytes(
+            footer_buf[16..20]
+                .try_into()
+                .expect("footer slice [16..20] is exactly 4 bytes"),
+        );
+        let version = u32::from_le_bytes(
+            footer_buf[20..24]
+                .try_into()
+                .expect("footer slice [20..24] is exactly 4 bytes"),
+        );
 
         // Verify version
         if version != SSTABLE_VERSION {

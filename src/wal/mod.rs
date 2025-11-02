@@ -80,7 +80,7 @@ impl WAL {
         let encoded = record.encode();
         let record_offset = self.offset;
 
-        let mut file = self.file.lock().unwrap();
+        let mut file = self.file.lock().expect("WAL file mutex poisoned");
         file.write_all(&encoded)?;
 
         // Sync based on policy
@@ -100,7 +100,7 @@ impl WAL {
         let mut offsets = Vec::with_capacity(records.len());
 
         {
-            let mut file = self.file.lock().unwrap();
+            let mut file = self.file.lock().expect("WAL file mutex poisoned");
             for record in records {
                 let encoded = record.encode();
                 offsets.push(self.offset);
@@ -132,7 +132,7 @@ impl WAL {
 
     /// Sync the WAL to disk
     pub fn sync(&self) -> Result<()> {
-        let file = self.file.lock().unwrap();
+        let file = self.file.lock().expect("WAL file mutex poisoned");
         file.sync_all()?;
         Ok(())
     }
