@@ -134,12 +134,16 @@ impl DB {
         };
 
         // Create LSM tree
-        let lsm = LSMTree::new(
+        let mut lsm = LSMTree::new(
             &options.data_dir,
             options.base_level_size,
             options.size_ratio,
             options.num_levels,
         );
+
+        // Load existing SSTables from disk
+        // This also verifies checksums - will fail if any SSTable is corrupted
+        lsm.load_existing_sstables()?;
 
         let lsm = Arc::new(Mutex::new(lsm));
         let sstable_counter = Arc::new(Mutex::new(0));
@@ -201,21 +205,35 @@ impl DB {
     }
 
     /// Recover memtable from WAL
+    ///
+    /// Reads records one by one and stops gracefully if corruption or truncation is encountered.
+    /// This ensures we recover all valid records before the corruption point.
     fn recover(wal_path: &Path, memtable: &Memtable) -> Result<()> {
         let mut reader = WALReader::open(wal_path)
             .map_err(|e| DBError::Io(std::io::Error::other(e)))?;
 
-        let records = reader
-            .read_all()
-            .map_err(|e| DBError::Io(std::io::Error::other(e)))?;
-
-        for record in records {
-            match record {
-                Record::Put { key, value } => {
-                    memtable.put(key, value);
+        // Read records one by one, stop gracefully on error (corruption/truncation)
+        loop {
+            match reader.read_next() {
+                Ok(Some(record)) => {
+                    match record {
+                        Record::Put { key, value } => {
+                            memtable.put(key, value);
+                        }
+                        Record::Delete { key } => {
+                            memtable.delete(key);
+                        }
+                    }
                 }
-                Record::Delete { key } => {
-                    memtable.delete(key);
+                Ok(None) => {
+                    // End of WAL reached
+                    break;
+                }
+                Err(_) => {
+                    // Corruption or truncation encountered
+                    // Stop reading but don't fail - we've recovered all valid records
+                    eprintln!("Warning: WAL recovery stopped due to corrupt/truncated record");
+                    break;
                 }
             }
         }
@@ -361,6 +379,15 @@ impl DB {
         // Add to LSM tree L0
         let mut lsm = self.lsm.lock().expect("LSM mutex poisoned");
         lsm.add_l0_sstable(sstable_path, size);
+
+        // Clear WAL after successful flush
+        // Data is now safely persisted in SSTable
+        let mut wal = self.wal.lock().expect("WAL mutex poisoned");
+        wal.clear()?;
+        drop(wal);
+
+        // Note: Memtable is not cleared - it will continue to accumulate entries
+        // Future enhancement: Swap memtables (active vs immutable) like RocksDB
 
         // Check if compaction is needed
         if let Some(level_num) = lsm.needs_compaction() {

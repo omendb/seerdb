@@ -242,6 +242,40 @@ impl LSMTree {
             Vec::new()
         }
     }
+
+    /// Load existing SSTables from disk into the LSM tree
+    ///
+    /// Scans the data directory for SSTable files and adds them to L0.
+    /// This is called during DB::open() to recover existing data.
+    pub fn load_existing_sstables(&mut self) -> std::io::Result<()> {
+        use crate::sstable::SSTable;
+
+        // Scan data directory for .sst files
+        let entries = std::fs::read_dir(&self.data_dir)?;
+
+        for entry in entries {
+            let entry = entry?;
+            let path = entry.path();
+
+            // Only process .sst files
+            if path.extension().and_then(|s| s.to_str()) == Some("sst") {
+                // Get file size
+                let metadata = std::fs::metadata(&path)?;
+                let size = metadata.len();
+
+                // Verify SSTable by opening it (validates checksum)
+                // If corrupt, this will return an error
+                SSTable::open(&path).map_err(|e| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, format!("Corrupt SSTable: {}", e))
+                })?;
+
+                // Add to L0 (all recovered SSTables go to L0)
+                self.levels[0].add_sstable(path, size);
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

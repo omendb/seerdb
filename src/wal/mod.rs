@@ -136,6 +136,17 @@ impl WAL {
         file.sync_all()?;
         Ok(())
     }
+
+    /// Clear the WAL (truncate to zero)
+    ///
+    /// This should be called after a successful flush to remove committed data.
+    pub fn clear(&mut self) -> Result<()> {
+        let file = self.file.lock().expect("WAL file mutex poisoned");
+        file.set_len(0)?;
+        file.sync_all()?;
+        self.offset = 0;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
