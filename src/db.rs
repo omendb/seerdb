@@ -313,7 +313,7 @@ impl DB {
     }
 
     /// Flush memtable to L0 SSTable
-    fn flush(&self) -> Result<()> {
+    pub fn flush(&self) -> Result<()> {
         use crate::memtable::Entry;
         use crate::sstable::SSTableBuilder;
 
