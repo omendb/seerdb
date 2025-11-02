@@ -1,8 +1,8 @@
 # STATUS - seerdb
 
 **Last Updated**: November 1, 2025
-**Current Phase**: Week 8 Complete - DB Interface Functional
-**Focus**: Core engine complete with all components integrated
+**Current Phase**: Week 9 Complete - Learned Bloom Research
+**Focus**: Research findings: learned blooms work for specific use cases only
 
 ---
 
@@ -91,7 +91,15 @@
 - ✅ Comprehensive integration tests (10 end-to-end tests)
 - ✅ 63 tests passing
 
-**Next**: Week 9 - Learned Bloom Filters
+**Week 9 Complete**: Learned Bloom Filters (Research)
+- ✅ Implemented learned bloom filter with decision tree
+- ✅ Comprehensive benchmarks and diagnostics
+- ✅ Root cause analysis of 50% FPR
+- ✅ Proof of concept with proper features
+- ⚠️ Finding: Not suitable for general-purpose KV storage
+- ✅ Documented research findings
+
+**Next**: Skip to Week 13 (KV Separation) - more applicable to seerdb
 
 ---
 
@@ -282,6 +290,12 @@ Functional: All components integrated, WAL recovery works
 ## Recent Commits
 
 ```
+ba6842e - research: Week 9 learned bloom filters - valuable negative result
+  - Learned blooms: 73% space reduction, but 50% FPR with hash features
+  - Root cause: Hash features destroy learnable patterns
+  - Proof: Fixed implementation with proper features → 0% FPR
+  - Finding: Not suitable for general-purpose KV storage
+
 3cd8e53 - feat: add comprehensive DB integration tests
   - 10 end-to-end tests covering full DB lifecycle
   - Tests: lifecycle, deletes, overwrites, flushes, recovery, mixed ops
