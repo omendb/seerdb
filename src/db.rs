@@ -8,7 +8,9 @@ use crate::vlog::VLog;
 use crate::wal::{Record, SyncPolicy, WAL, WALReader};
 use bytes::Bytes;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -52,6 +54,9 @@ pub struct DBOptions {
     /// VLog threshold: values larger than this go to vLog (default: None = disabled)
     /// Set to Some(4096) for 4KB threshold (good for embeddings)
     pub vlog_threshold: Option<usize>,
+    /// Enable background compaction (default: false for compatibility)
+    /// When true, compaction runs in background thread (non-blocking writes)
+    pub background_compaction: bool,
 }
 
 impl Default for DBOptions {
@@ -63,9 +68,18 @@ impl Default for DBOptions {
             base_level_size: 10 * 1024 * 1024, // 10MB
             size_ratio: 10,
             num_levels: 7,
-            vlog_threshold: None, // Disabled by default
+            vlog_threshold: None,          // Disabled by default
+            background_compaction: false,  // Disabled by default for compatibility
         }
     }
+}
+
+/// Compaction task message
+enum CompactionTask {
+    /// Compact a specific level
+    CompactLevel(usize),
+    /// Shutdown signal
+    Shutdown,
 }
 
 /// Main database structure
@@ -82,6 +96,10 @@ pub struct DB {
     vlog: Arc<Mutex<Option<VLog>>>,
     /// Counter for generating SSTable filenames
     sstable_counter: Arc<Mutex<u64>>,
+    /// Channel for sending compaction tasks to background thread
+    compaction_tx: Option<Sender<CompactionTask>>,
+    /// Background compaction worker thread
+    compaction_worker: Option<JoinHandle<()>>,
 }
 
 impl DB {
@@ -123,13 +141,55 @@ impl DB {
             options.num_levels,
         );
 
+        let lsm = Arc::new(Mutex::new(lsm));
+        let sstable_counter = Arc::new(Mutex::new(0));
+
+        // Start background compaction worker if enabled
+        let (compaction_tx, compaction_worker) = if options.background_compaction {
+            let (tx, rx) = channel::<CompactionTask>();
+
+            // Clone references for worker thread
+            let lsm_clone = Arc::clone(&lsm);
+            let sstable_counter_clone = Arc::clone(&sstable_counter);
+            let data_dir = options.data_dir.clone();
+
+            // Spawn compaction worker thread
+            let worker = thread::spawn(move || {
+                while let Ok(task) = rx.recv() {
+                    match task {
+                        CompactionTask::CompactLevel(level_num) => {
+                            // Perform compaction
+                            if let Err(e) = Self::run_compaction(
+                                &lsm_clone,
+                                &sstable_counter_clone,
+                                &data_dir,
+                                level_num,
+                            ) {
+                                eprintln!("Background compaction error: {}", e);
+                            }
+                        }
+                        CompactionTask::Shutdown => {
+                            // Exit worker thread
+                            break;
+                        }
+                    }
+                }
+            });
+
+            (Some(tx), Some(worker))
+        } else {
+            (None, None)
+        };
+
         let db = Self {
             options: options.clone(),
             wal: Arc::new(Mutex::new(wal)),
             memtable: Arc::new(memtable),
-            lsm: Arc::new(Mutex::new(lsm)),
+            lsm,
             vlog: Arc::new(Mutex::new(vlog)),
-            sstable_counter: Arc::new(Mutex::new(0)),
+            sstable_counter,
+            compaction_tx,
+            compaction_worker,
         };
 
         // Flush memtable if it filled up during recovery
@@ -292,7 +352,14 @@ impl DB {
         // Check if compaction is needed
         if let Some(level_num) = lsm.needs_compaction() {
             drop(lsm); // Release lock before compaction
-            self.compact_level(level_num)?;
+
+            if let Some(ref tx) = self.compaction_tx {
+                // Background compaction: send signal (non-blocking)
+                let _ = tx.send(CompactionTask::CompactLevel(level_num));
+            } else {
+                // Synchronous compaction: block until done
+                self.compact_level(level_num)?;
+            }
         }
 
         Ok(())
@@ -339,6 +406,53 @@ impl DB {
         Ok(())
     }
 
+    /// Static compaction method for background worker thread
+    /// This is called from the worker thread without &self
+    fn run_compaction(
+        lsm: &Arc<Mutex<LSMTree>>,
+        sstable_counter: &Arc<Mutex<u64>>,
+        data_dir: &Path,
+        level_num: usize,
+    ) -> Result<()> {
+        let lsm_lock = lsm.lock().unwrap();
+
+        // Get SSTables to compact
+        let level = lsm_lock.level(level_num).ok_or(DBError::NotOpened)?;
+        let input_paths: Vec<PathBuf> = level.sstables().to_vec();
+
+        if input_paths.is_empty() {
+            return Ok(());
+        }
+
+        // Generate output path
+        let mut counter = sstable_counter.lock().unwrap();
+        let output_path = data_dir.join(format!(
+            "L{}_{:06}.sst",
+            level_num + 1,
+            *counter
+        ));
+        *counter += 1;
+        drop(counter);
+
+        drop(lsm_lock); // Release lock during compaction
+
+        // Compact SSTables
+        let (_result_path, _size) = compact_sstables(&input_paths, &output_path)?;
+
+        // Update LSM tree
+        // TODO: This is simplified - need proper level management
+        // For now, just add to next level
+        let _lsm = lsm.lock().unwrap();
+        // lsm.add_to_level(level_num + 1, result_path, size);
+
+        // TODO: Delete input SSTables
+        // for path in input_paths {
+        //     std::fs::remove_file(path)?;
+        // }
+
+        Ok(())
+    }
+
     /// Get current memtable size
     pub fn memtable_size(&self) -> usize {
         self.memtable.size()
@@ -347,6 +461,21 @@ impl DB {
     /// Get number of entries in memtable
     pub fn memtable_len(&self) -> usize {
         self.memtable.len()
+    }
+}
+
+/// Graceful shutdown: signal compaction thread to stop and wait for it
+impl Drop for DB {
+    fn drop(&mut self) {
+        if let Some(ref tx) = self.compaction_tx {
+            // Send shutdown signal
+            let _ = tx.send(CompactionTask::Shutdown);
+        }
+
+        // Wait for worker thread to finish
+        if let Some(worker) = self.compaction_worker.take() {
+            let _ = worker.join();
+        }
     }
 }
 
@@ -654,6 +783,94 @@ mod tests {
             );
             let expected_large = vec![b'Y'; 200];
             assert_eq!(db.get(b"key2").unwrap(), Some(Bytes::from(expected_large)));
+        }
+    }
+
+    #[test]
+    fn test_db_background_compaction() {
+        use std::time::Duration;
+
+        let dir = tempdir().unwrap();
+        let options = DBOptions {
+            data_dir: dir.path().to_path_buf(),
+            memtable_capacity: 100, // Small to trigger flushes
+            background_compaction: true, // Enable background compaction
+            ..Default::default()
+        };
+
+        let db = DB::open(options).unwrap();
+
+        // Write enough data to trigger multiple flushes and compaction
+        for i in 0..100 {
+            let key = format!("key_{:03}", i);
+            let value = format!("value_{:03}", i);
+            db.put(key.as_bytes(), value.as_bytes()).unwrap();
+        }
+
+        // Give background thread time to process compactions
+        std::thread::sleep(Duration::from_millis(100));
+
+        // Verify data is still readable
+        for i in 0..100 {
+            let key = format!("key_{:03}", i);
+            let expected = format!("value_{:03}", i);
+            assert_eq!(
+                db.get(key.as_bytes()).unwrap(),
+                Some(Bytes::from(expected))
+            );
+        }
+
+        // DB will be dropped here, triggering graceful shutdown
+    }
+
+    #[test]
+    fn test_db_sync_vs_async_compaction() {
+        use std::time::Duration;
+
+        // Test that both modes produce identical results
+        let dir_sync = tempdir().unwrap();
+        let dir_async = tempdir().unwrap();
+
+        let options_sync = DBOptions {
+            data_dir: dir_sync.path().to_path_buf(),
+            memtable_capacity: 100,
+            background_compaction: false, // Synchronous
+            ..Default::default()
+        };
+
+        let options_async = DBOptions {
+            data_dir: dir_async.path().to_path_buf(),
+            memtable_capacity: 100,
+            background_compaction: true, // Asynchronous
+            ..Default::default()
+        };
+
+        let db_sync = DB::open(options_sync).unwrap();
+        let db_async = DB::open(options_async).unwrap();
+
+        // Write same data to both
+        for i in 0..50 {
+            let key = format!("key_{:03}", i);
+            let value = format!("value_{:03}", i);
+            db_sync.put(key.as_bytes(), value.as_bytes()).unwrap();
+            db_async.put(key.as_bytes(), value.as_bytes()).unwrap();
+        }
+
+        // Give async compaction time to finish
+        std::thread::sleep(Duration::from_millis(100));
+
+        // Verify both return same results
+        for i in 0..50 {
+            let key = format!("key_{:03}", i);
+            let expected = format!("value_{:03}", i);
+            assert_eq!(
+                db_sync.get(key.as_bytes()).unwrap(),
+                Some(Bytes::from(expected.clone()))
+            );
+            assert_eq!(
+                db_async.get(key.as_bytes()).unwrap(),
+                Some(Bytes::from(expected))
+            );
         }
     }
 }
