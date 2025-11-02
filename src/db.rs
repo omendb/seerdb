@@ -367,48 +367,16 @@ impl DB {
 
     /// Compact a level
     fn compact_level(&self, level_num: usize) -> Result<()> {
-        let lsm = self.lsm.lock().unwrap();
-
-        // Get SSTables to compact
-        let level = lsm.level(level_num).ok_or(DBError::NotOpened)?;
-        let input_paths: Vec<PathBuf> = level.sstables().to_vec();
-
-        if input_paths.is_empty() {
-            return Ok(());
-        }
-
-        // Generate output path
-        let mut counter = self.sstable_counter.lock().unwrap();
-        let output_path = self.options.data_dir.join(format!(
-            "L{}_{:06}.sst",
-            level_num + 1,
-            *counter
-        ));
-        *counter += 1;
-        drop(counter);
-
-        drop(lsm); // Release lock during compaction
-
-        // Compact SSTables
-        let (_result_path, _size) = compact_sstables(&input_paths, &output_path)?;
-
-        // Update LSM tree
-        // TODO: This is simplified - need proper level management
-        // For now, just add to next level
-        let _lsm = self.lsm.lock().unwrap();
-        // lsm.add_to_level(level_num + 1, result_path, size);
-
-        // TODO: Delete input SSTables
-        // for path in input_paths {
-        //     std::fs::remove_file(path)?;
-        // }
-
-        Ok(())
+        Self::do_compact_level(
+            &self.lsm,
+            &self.sstable_counter,
+            &self.options.data_dir,
+            level_num,
+        )
     }
 
-    /// Static compaction method for background worker thread
-    /// This is called from the worker thread without &self
-    fn run_compaction(
+    /// Internal compaction implementation (shared by both sync and async paths)
+    fn do_compact_level(
         lsm: &Arc<Mutex<LSMTree>>,
         sstable_counter: &Arc<Mutex<u64>>,
         data_dir: &Path,
@@ -451,6 +419,17 @@ impl DB {
         // }
 
         Ok(())
+    }
+
+    /// Static compaction method for background worker thread
+    /// This is called from the worker thread without &self
+    fn run_compaction(
+        lsm: &Arc<Mutex<LSMTree>>,
+        sstable_counter: &Arc<Mutex<u64>>,
+        data_dir: &Path,
+        level_num: usize,
+    ) -> Result<()> {
+        Self::do_compact_level(lsm, sstable_counter, data_dir, level_num)
     }
 
     /// Get current memtable size

@@ -1,8 +1,9 @@
 # STATUS - seerdb
 
 **Last Updated**: November 1, 2025
-**Current Phase**: Week 15 Complete - Production Hardening
-**Focus**: Background compaction complete (non-blocking writes)
+**Current Phase**: Production Hardening (Phase 1 - Fixing Critical Bugs)
+**Focus**: Making seerdb production-ready (6-8 week effort)
+**Decision**: omen stays with RocksDB until seerdb is production-grade
 
 ---
 
@@ -180,39 +181,56 @@
 
 ---
 
-## Blockers
+## Blockers for Production
 
-### None Currently
-- Compaction system functional
-- Ready for Week 8 (DB interface)
-- All tests passing
+### CRITICAL Issues (3)
+1. **Compaction doesn't update LSM tree** (db.rs:396-401)
+   - Compacted SSTables not registered in level tracking
+   - Reads may miss data or read stale files
+
+2. **SSTables not deleted after compaction** (db.rs:401-405)
+   - Disk space leak (unbounded growth)
+   - Critical for production use
+
+3. **Duplicate compaction code** (db.rs:443-452)
+   - `compact_level()` and `run_compaction()` have same bugs
+   - Fixes must be applied twice
+
+### HIGH Priority Issues (4)
+- 261 `.unwrap()` calls (panics instead of errors)
+- No checksums on SSTables (silent corruption possible)
+- No stress tests (unknown behavior under load)
+- No crash recovery tests (unknown durability guarantees)
+
+**See**: `ai/CRITICAL_BUGS.md` for full list (15 issues total)
 
 ---
 
-## Next Session
+## Next Steps - Production Hardening
 
-**Week 14: SIMD Optimizations** (Performance week)
+**Phase 1: Fix Critical Bugs** (Current - Week 1-2)
 
-**Goal**: Add SIMD acceleration to hot paths for 3-5x speedup
+**This Week**:
+1. ✅ Create ai/PRODUCTION_ROADMAP.md (5-phase plan)
+2. ✅ Create ai/CRITICAL_BUGS.md (15 known issues)
+3. ⏳ Deduplicate compaction code (CRITICAL-3)
+4. ⏳ Fix LSM tree updates (CRITICAL-1)
+5. ⏳ Implement file cleanup (CRITICAL-2)
 
-**Tasks**:
-1. Profile hot paths (identify bottlenecks)
-2. SIMD key comparison in binary search
-3. SIMD bloom filter probing
-4. SIMD CRC32 checksums (hardware acceleration)
-5. Benchmark: measure speedup vs scalar
-6. Tests: Verify SIMD correctness
+**Next Week**:
+1. Fix all 261 .unwrap() calls (HIGH-1)
+2. Add SSTable checksums (HIGH-2)
+3. Run clippy and fix warnings
 
-**Why This Matters**:
-- Hot paths (binary search, bloom filters) called millions of times
-- SIMD can provide 3-5x speedup with modern CPUs
-- x86_64 AVX2 widely available, ARM NEON on M-series Macs
-- Low implementation cost for high performance gain
+**Timeline**:
+- Phase 1 (Critical bugs): 2-3 weeks
+- Phase 2 (Testing): 3-4 weeks
+- Phase 3 (Observability): 1-2 weeks
+- Phase 4 (Code quality): 1 week
+- Phase 5 (Real-world validation): 2-4 weeks
+- **Total: 10-12 weeks to production-ready**
 
-**Architecture Decision**:
-- Use platform-specific intrinsics (x86_64 AVX2, ARM NEON)
-- Fallback to scalar implementation on unsupported platforms
-- Focus on read path first (binary search, bloom filters)
+**See**: `ai/PRODUCTION_ROADMAP.md` for detailed plan
 
 ---
 
