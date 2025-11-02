@@ -14,7 +14,7 @@ pub use db::{DB, DBOptions};
 pub use memtable::Memtable;
 pub use sstable::{SSTable, SSTableBuilder};
 pub use vlog::{ValuePointer, VLog};
-pub use wal::{Record, WAL};
+pub use wal::{Record, SyncPolicy, WAL};
 
 #[cfg(test)]
 mod tests {
