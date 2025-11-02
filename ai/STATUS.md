@@ -161,29 +161,28 @@
 
 ## Next Session
 
-**Week 8: Main DB Interface** (Integration week)
+**Week 14: SIMD Optimizations** (Performance week)
 
-**Goal**: Create unified DB interface that ties everything together
+**Goal**: Add SIMD acceleration to hot paths for 3-5x speedup
 
 **Tasks**:
-1. DB struct (combines WAL, memtable, LSMTree)
-2. Public API: get(), put(), delete(), scan()
-3. Flush logic: Memtable → L0 SSTable
-4. Compaction scheduling: Trigger on flush
-5. File management: Delete old SSTables after compaction
-6. Recovery: WAL replay on startup
-7. Tests: End-to-end DB operations
-8. Benchmark vs fjall (target: match 438k writes/sec)
+1. Profile hot paths (identify bottlenecks)
+2. SIMD key comparison in binary search
+3. SIMD bloom filter probing
+4. SIMD CRC32 checksums (hardware acceleration)
+5. Benchmark: measure speedup vs scalar
+6. Tests: Verify SIMD correctness
 
 **Why This Matters**:
-- Currently have components but no unified interface
-- Need to wire WAL → Memtable → SSTable → Compaction
-- Integration is where bugs often hide
-- Benchmark will validate design decisions
+- Hot paths (binary search, bloom filters) called millions of times
+- SIMD can provide 3-5x speedup with modern CPUs
+- x86_64 AVX2 widely available, ARM NEON on M-series Macs
+- Low implementation cost for high performance gain
 
 **Architecture Decision**:
-- Synchronous compaction first (simple)
-- Background thread later (Week 9+)
+- Use platform-specific intrinsics (x86_64 AVX2, ARM NEON)
+- Fallback to scalar implementation on unsupported platforms
+- Focus on read path first (binary search, bloom filters)
 
 ---
 

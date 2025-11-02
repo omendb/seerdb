@@ -5,7 +5,6 @@ pub mod merge;
 
 use crate::sstable::{SSTable, SSTableBuilder};
 use std::path::{Path, PathBuf};
-use bytes::Bytes;
 use thiserror::Error;
 
 pub use merge::MergeIterator;
@@ -213,6 +212,7 @@ impl LSMTree {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::Bytes;
     use tempfile::tempdir;
 
     #[test]

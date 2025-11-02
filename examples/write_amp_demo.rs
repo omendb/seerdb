@@ -82,8 +82,8 @@ fn main() {
     println!();
 
     // Calculate write amplification benefit
-    let total_traditional = sst_size + vlog_size;
-    let total_wisckey = sst_size_kv + vlog_size_kv;
+    let _total_traditional = sst_size + vlog_size;
+    let _total_wisckey = sst_size_kv + vlog_size_kv;
     let sstable_reduction = (sst_size - sst_size_kv) as f64 / sst_size as f64 * 100.0;
 
     println!("=== Write Amplification Analysis ===");

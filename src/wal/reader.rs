@@ -1,7 +1,7 @@
 // WAL reader for crash recovery
 
 use super::record::{Record, RecordError};
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
@@ -89,6 +89,7 @@ impl WALReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::Bytes;
     use crate::wal::{Record, WAL, SyncPolicy};
     use tempfile::tempdir;
 

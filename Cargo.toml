@@ -50,6 +50,10 @@ default = []
 name = "sstable_bench"
 harness = false
 
+[[bench]]
+name = "simd_profiling"
+harness = false
+
 [profile.release]
 opt-level = 3
 lto = true

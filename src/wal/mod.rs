@@ -4,7 +4,6 @@
 pub mod record;
 pub mod reader;
 
-use bytes::Bytes;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -142,6 +141,7 @@ impl WAL {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::Bytes;
     use tempfile::tempdir;
 
     #[test]
