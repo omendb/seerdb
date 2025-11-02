@@ -48,7 +48,7 @@ impl WAL {
         let path = path.as_ref().to_path_buf();
         let file = OpenOptions::new()
             .create(true)
-            .write(true)
+            
             .append(true)
             .open(&path)?;
 
@@ -63,7 +63,7 @@ impl WAL {
     /// Open an existing WAL file
     pub fn open(path: impl AsRef<Path>, sync_policy: SyncPolicy) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
-        let file = OpenOptions::new().write(true).append(true).open(&path)?;
+        let file = OpenOptions::new().append(true).open(&path)?;
 
         let offset = file.metadata()?.len();
 

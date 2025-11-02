@@ -26,7 +26,7 @@ impl BitPackedBloomFilter {
             .ceil() as usize;
 
         // Round up to nearest multiple of 64 for alignment
-        let num_words = (num_bits + 63) / 64;
+        let num_words = num_bits.div_ceil(64);
 
         Self {
             bits: vec![0u64; num_words],
@@ -120,7 +120,7 @@ impl BitPackedBloomFilter {
         let num_hashes = u32::from_le_bytes(bytes[8..12].try_into().ok()?) as usize;
         let count = u64::from_le_bytes(bytes[12..20].try_into().ok()?) as usize;
 
-        let num_words = (num_bits + 63) / 64;
+        let num_words = num_bits.div_ceil(64);
         let expected_len = 20 + num_words * 8;
 
         if bytes.len() != expected_len {
@@ -145,7 +145,7 @@ impl BitPackedBloomFilter {
 
     /// Compute hash for an item with a given seed
     fn hash<T: Hash>(&self, item: &T, seed: usize) -> u64 {
-        if seed % 2 == 0 {
+        if seed.is_multiple_of(2) {
             // Use DefaultHasher for even seeds
             let mut hasher = DefaultHasher::new();
             seed.hash(&mut hasher);

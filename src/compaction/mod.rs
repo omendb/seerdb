@@ -47,12 +47,12 @@ pub fn compact_sstables(
     }
 
     // Create merge iterator
-    let mut merge = MergeIterator::new(sstables)?;
+    let merge = MergeIterator::new(sstables)?;
 
     // Build new SSTable from merged entries
     let mut builder = SSTableBuilder::new();
 
-    while let Some(result) = merge.next() {
+    for result in merge {
         let (key, value) = result?;
         builder.add(key, value);
     }

@@ -79,7 +79,7 @@ impl BloomFilter {
     /// Get the size in bytes (for benchmarking)
     pub fn size_bytes(&self) -> usize {
         // Bit array size + metadata
-        (self.bits.len() + 7) / 8 + std::mem::size_of::<Self>()
+        self.bits.len().div_ceil(8) + std::mem::size_of::<Self>()
     }
 
     /// Calculate actual false positive rate based on current state
@@ -156,7 +156,7 @@ impl BloomFilter {
 
     /// Hash function with seed
     fn hash<T: Hash>(&self, item: &T, seed: usize) -> u64 {
-        if seed % 2 == 0 {
+        if seed.is_multiple_of(2) {
             // Use DefaultHasher for even seeds
             let mut hasher = DefaultHasher::new();
             seed.hash(&mut hasher);

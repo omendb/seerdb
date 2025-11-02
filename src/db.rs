@@ -203,11 +203,11 @@ impl DB {
     /// Recover memtable from WAL
     fn recover(wal_path: &Path, memtable: &Memtable) -> Result<()> {
         let mut reader = WALReader::open(wal_path)
-            .map_err(|e| DBError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            .map_err(|e| DBError::Io(std::io::Error::other(e)))?;
 
         let records = reader
             .read_all()
-            .map_err(|e| DBError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            .map_err(|e| DBError::Io(std::io::Error::other(e)))?;
 
         for record in records {
             match record {

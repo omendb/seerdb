@@ -153,6 +153,7 @@ impl VLog {
         let path = path.as_ref().to_path_buf();
         let file = OpenOptions::new()
             .create(true)
+            .truncate(true)
             .write(true)
             .read(true)
             .open(&path)?;

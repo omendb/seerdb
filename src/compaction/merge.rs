@@ -22,9 +22,9 @@ impl MergeIterator {
 
         // Collect all entries from all SSTables
         for (source_id, sstable) in sstables.iter_mut().enumerate() {
-            let mut iter = sstable.iter()?;
+            let iter = sstable.iter()?;
 
-            while let Some(result) = iter.next() {
+            for result in iter {
                 let (key, value) = result?;
                 all_entries.push((key, value, source_id));
             }
@@ -44,7 +44,7 @@ impl MergeIterator {
 
         for (key, value, _source_id) in all_entries {
             if let Some(ref last) = last_key {
-                if &key == last {
+                if key == last {
                     continue; // Duplicate, skip
                 }
             }
@@ -59,17 +59,6 @@ impl MergeIterator {
         })
     }
 
-    /// Get next entry from the merge
-    pub fn next(&mut self) -> Option<Result<(Bytes, Bytes), SSTableError>> {
-        if self.position >= self.entries.len() {
-            return None;
-        }
-
-        let entry = self.entries[self.position].clone();
-        self.position += 1;
-        Some(Ok(entry))
-    }
-
     /// Check if iterator is exhausted
     pub fn is_empty(&self) -> bool {
         self.position >= self.entries.len()
@@ -78,6 +67,21 @@ impl MergeIterator {
     /// Get total number of entries
     pub fn len(&self) -> usize {
         self.entries.len()
+    }
+}
+
+/// Iterator implementation for MergeIterator
+impl Iterator for MergeIterator {
+    type Item = Result<(Bytes, Bytes), SSTableError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.position >= self.entries.len() {
+            return None;
+        }
+
+        let entry = self.entries[self.position].clone();
+        self.position += 1;
+        Some(Ok(entry))
     }
 }
 
