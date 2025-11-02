@@ -308,7 +308,7 @@ Week 13: KV separation implemented at SSTable level
 ## Recent Commits
 
 ```
-<pending> - feat: Week 13 KV separation - vLog and SSTable integration
+a0d4229 - feat: Week 13 KV separation - vLog and SSTable integration
   - Value log (vLog): Append-only storage with CRC checksums
   - SSTable: Support for inline values and vLog pointers
   - Entry format: [key][flag: 0x00=inline, 0x01=pointer][value_data]
