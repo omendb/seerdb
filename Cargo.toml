@@ -54,6 +54,10 @@ harness = false
 name = "simd_profiling"
 harness = false
 
+[[bench]]
+name = "background_compaction"
+harness = false
+
 [profile.release]
 opt-level = 3
 lto = true

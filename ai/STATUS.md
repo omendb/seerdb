@@ -1,8 +1,8 @@
 # STATUS - seerdb
 
 **Last Updated**: November 1, 2025
-**Current Phase**: Week 15 In Progress - Production Hardening
-**Focus**: Background compaction for non-blocking writes
+**Current Phase**: Week 15 Complete - Production Hardening
+**Focus**: Background compaction complete (non-blocking writes)
 
 ---
 
@@ -131,7 +131,7 @@
 - 🔍 Finding: Most hot paths already optimized by compiler/libraries
   - Further SIMD work deferred until real bottlenecks identified
 
-**Week 15 In Progress**: Production Hardening
+**Week 15 Complete**: Production Hardening
 - ✅ Background compaction implemented
   - Worker thread with channel-based signaling
   - Non-blocking flush() when enabled
@@ -141,7 +141,10 @@
   - test_db_background_compaction: Async compaction works
   - test_db_sync_vs_async_compaction: Same results as sync
 - ✅ Backward compatible: Default is synchronous (existing behavior)
-- 📊 Next: Benchmark sync vs async throughput improvement
+- ✅ Benchmark: background_compaction benchmark suite
+  - Compares sync vs async throughput
+  - Tests 1k, 5k, 10k write workloads
+  - Demonstrates non-blocking write performance
 
 ---
 
@@ -256,11 +259,11 @@
 - ✅ SSTable support for value pointers (Week 13)
 
 **Pending**:
-- 📋 DB interface integration with vLog (Week 13, in progress)
-- 📋 vLog garbage collection (Week 13)
-- 📋 Background compaction (future)
-- 📋 File cleanup after compaction (future)
-- 📋 Learned indexes (Week 10+, deferred)
+- 📋 vLog garbage collection (deferred)
+- 📋 File cleanup after compaction (deferred)
+- 📋 Compression (LZ4/Zstd) (deferred)
+- 📋 Block cache (LRU) (deferred)
+- 📋 Learned indexes (deferred - limited benefit)
 
 **Current Architecture**:
 ```
