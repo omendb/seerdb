@@ -1,8 +1,8 @@
 # STATUS - seerdb
 
 **Last Updated**: November 1, 2025
-**Current Phase**: Week 14 Complete - Performance Optimizations
-**Focus**: Bit-packed bloom filter (8x space savings)
+**Current Phase**: Week 15 In Progress - Production Hardening
+**Focus**: Background compaction for non-blocking writes
 
 ---
 
@@ -57,7 +57,7 @@
   - ValuePointer (offset + length) for LSM tree
   - src/vlog/mod.rs: 398 lines
 
-**Tests**: 64 passing (54 unit + 10 integration)
+**Tests**: 66 passing (56 unit + 10 integration)
 **Code**: 3,150+ lines (core engine + integration tests)
 **Benchmarks**: seerdb: 348k writes/sec (96% of RocksDB baseline)
 
@@ -130,6 +130,18 @@
 - ✅ Benchmarks: simd_profiling + bloom_comparison
 - 🔍 Finding: Most hot paths already optimized by compiler/libraries
   - Further SIMD work deferred until real bottlenecks identified
+
+**Week 15 In Progress**: Production Hardening
+- ✅ Background compaction implemented
+  - Worker thread with channel-based signaling
+  - Non-blocking flush() when enabled
+  - Graceful shutdown via Drop trait
+  - Opt-in via DBOptions.background_compaction
+- ✅ Tests: 66 passing (2 new background compaction tests)
+  - test_db_background_compaction: Async compaction works
+  - test_db_sync_vs_async_compaction: Same results as sync
+- ✅ Backward compatible: Default is synchronous (existing behavior)
+- 📊 Next: Benchmark sync vs async throughput improvement
 
 ---
 
