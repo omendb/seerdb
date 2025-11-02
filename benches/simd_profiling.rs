@@ -3,7 +3,7 @@
 
 use bytes::Bytes;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use seerdb::{BloomFilter, SSTableBuilder};
+use seerdb::{BitPackedBloomFilter, BloomFilter, SSTableBuilder};
 use std::time::Duration;
 use tempfile::tempdir;
 
@@ -117,12 +117,76 @@ fn benchmark_key_comparison(c: &mut Criterion) {
     group.finish();
 }
 
+fn benchmark_bloom_filter_comparison(c: &mut Criterion) {
+    let mut group = c.benchmark_group("bloom_comparison");
+    group.throughput(Throughput::Elements(1));
+
+    let size = 10_000;
+
+    // Traditional bloom filter
+    let mut bloom_traditional = BloomFilter::new(size, 0.01);
+    for i in 0..size {
+        let key = format!("key_{:08}", i);
+        bloom_traditional.insert(&key);
+    }
+
+    // Bit-packed bloom filter
+    let mut bloom_bitpacked = BitPackedBloomFilter::new(size, 0.01);
+    for i in 0..size {
+        let key = format!("key_{:08}", i);
+        bloom_bitpacked.insert(&key);
+    }
+
+    // Benchmark: Traditional positive lookup
+    let existing_key = format!("key_{:08}", size - 1);
+    group.bench_function("traditional_positive", |b| {
+        b.iter(|| {
+            black_box(bloom_traditional.contains(&existing_key));
+        });
+    });
+
+    // Benchmark: Bit-packed positive lookup
+    group.bench_function("bitpacked_positive", |b| {
+        b.iter(|| {
+            black_box(bloom_bitpacked.contains(&existing_key));
+        });
+    });
+
+    // Benchmark: Traditional negative lookup
+    let missing_key = format!("key_{:08}", size + 1000);
+    group.bench_function("traditional_negative", |b| {
+        b.iter(|| {
+            black_box(bloom_traditional.contains(&missing_key));
+        });
+    });
+
+    // Benchmark: Bit-packed negative lookup
+    group.bench_function("bitpacked_negative", |b| {
+        b.iter(|| {
+            black_box(bloom_bitpacked.contains(&missing_key));
+        });
+    });
+
+    // Space comparison
+    println!("\n=== Bloom Filter Space Comparison ===");
+    println!("Traditional: {} bytes ({:.2} bytes/element)",
+        bloom_traditional.size_bytes(),
+        bloom_traditional.size_bytes() as f64 / size as f64);
+    println!("Bit-packed:  {} bytes ({:.2} bytes/element)",
+        bloom_bitpacked.size_bytes(),
+        bloom_bitpacked.size_bytes() as f64 / size as f64);
+    println!("Space savings: {:.1}x\n",
+        bloom_traditional.size_bytes() as f64 / bloom_bitpacked.size_bytes() as f64);
+
+    group.finish();
+}
+
 criterion_group! {
     name = simd_benches;
     config = Criterion::default()
         .measurement_time(Duration::from_secs(10))
         .sample_size(100);
-    targets = benchmark_binary_search, benchmark_bloom_filter, benchmark_key_comparison
+    targets = benchmark_binary_search, benchmark_bloom_filter, benchmark_key_comparison, benchmark_bloom_filter_comparison
 }
 
 criterion_main!(simd_benches);

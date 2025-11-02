@@ -9,7 +9,7 @@ pub mod sstable;
 pub mod vlog;
 pub mod wal;
 
-pub use bloom::{BloomFilter, LearnedBloomFilter};
+pub use bloom::{BitPackedBloomFilter, BloomFilter, LearnedBloomFilter};
 pub use db::{DB, DBOptions};
 pub use memtable::Memtable;
 pub use sstable::{SSTable, SSTableBuilder};

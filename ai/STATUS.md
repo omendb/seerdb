@@ -1,8 +1,8 @@
 # STATUS - seerdb
 
 **Last Updated**: November 1, 2025
-**Current Phase**: Week 13 Complete - KV Separation (WiscKey)
-**Focus**: WiscKey-style key-value separation fully integrated
+**Current Phase**: Week 14 Complete - Performance Optimizations
+**Focus**: Bit-packed bloom filter (8x space savings)
 
 ---
 
@@ -57,7 +57,7 @@
   - ValuePointer (offset + length) for LSM tree
   - src/vlog/mod.rs: 398 lines
 
-**Tests**: 63 passing (53 unit + 10 integration)
+**Tests**: 64 passing (54 unit + 10 integration)
 **Code**: 3,150+ lines (core engine + integration tests)
 **Benchmarks**: seerdb: 348k writes/sec (96% of RocksDB baseline)
 
@@ -115,6 +115,21 @@
 - ✅ Tests: 61 passing (4 new vLog/SSTable + 2 new DB integration)
 - ✅ Demos: kv_separation_demo.rs (33% write amp reduction)
 - ⏸️ Deferred: GC (future), compaction with vLog (iterator limitation)
+
+**Week 14 Complete**: Performance Optimizations
+- ✅ Profiled hot paths (simd_profiling benchmark)
+  - Binary search: 2-3.6 µs per lookup
+  - Bloom filter: ~65 ns positive, ~8.7 ns negative
+  - Key comparison: 1.3-1.6 ns (already optimized)
+  - CRC32: Hardware-accelerated (crc32fast)
+- ✅ Bit-packed bloom filter (8x space savings)
+  - Storage: Vec<u64> instead of Vec<bool>
+  - Space: ~1.2 bytes/element (vs ~8 bytes for Vec<bool>)
+  - Cache-friendly bitwise operations
+- ✅ Tests: 64 passing (3 new bit-packed tests)
+- ✅ Benchmarks: simd_profiling + bloom_comparison
+- 🔍 Finding: Most hot paths already optimized by compiler/libraries
+  - Further SIMD work deferred until real bottlenecks identified
 
 ---
 
