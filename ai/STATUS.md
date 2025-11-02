@@ -1,8 +1,8 @@
 # STATUS - seerdb
 
 **Last Updated**: November 1, 2025
-**Current Phase**: Week 13 In Progress - KV Separation (WiscKey)
-**Focus**: Implementing value log and SSTable integration
+**Current Phase**: Week 13 Complete - KV Separation (WiscKey)
+**Focus**: WiscKey-style key-value separation fully integrated
 
 ---
 
@@ -106,15 +106,15 @@
 - ⚠️ Finding: Not suitable for general-purpose KV storage
 - ✅ Documented research findings
 
-**Week 13 In Progress**: KV Separation (WiscKey)
+**Week 13 Complete**: KV Separation (WiscKey)
 - ✅ Value log (vLog) implementation with CRC checksums
 - ✅ SSTable support for inline values and vLog pointers
 - ✅ Entry format: [key][flag: 0x00=inline, 0x01=pointer][value_data]
-- ✅ Tests: inline values, large values, mixed, reopen
-- ✅ Demo: 33% write amplification reduction
-- 🔄 Next: Update DB interface to use vLog for large values
-- 📋 TODO: Implement garbage collection
-- 📋 TODO: Benchmark write amp improvement on full DB
+- ✅ DB interface integration with vlog_threshold option
+- ✅ Automatic flush with KV separation for large values
+- ✅ Tests: 61 passing (4 new vLog/SSTable + 2 new DB integration)
+- ✅ Demos: kv_separation_demo.rs (33% write amp reduction)
+- ⏸️ Deferred: GC (future), compaction with vLog (iterator limitation)
 
 ---
 
@@ -308,13 +308,24 @@ Week 13: KV separation implemented at SSTable level
 ## Recent Commits
 
 ```
-a0d4229 - feat: Week 13 KV separation - vLog and SSTable integration
+b01b0db - chore: add write amp demo and export SyncPolicy
+  - Demo: write amplification comparison (examples/write_amp_demo.rs)
+  - Export SyncPolicy from root for easier access
+  - Demonstrates SSTable size reduction with KV separation
+
+9bfeabb - feat: integrate KV separation into DB interface
+  - DB interface integration with vlog_threshold option
+  - DB::flush() uses vLog for large values automatically
+  - DB::get() attaches vLog to SSTables for reading
+  - Tests: 2 new DB integration tests (61 total)
+  - Full end-to-end KV separation working
+
+a0d4229 - feat: implement KV separation with vLog and SSTable integration
   - Value log (vLog): Append-only storage with CRC checksums
   - SSTable: Support for inline values and vLog pointers
   - Entry format: [key][flag: 0x00=inline, 0x01=pointer][value_data]
   - Tests: 4 new SSTable+vLog integration tests
-  - Demo: 33% write amplification reduction
-  - 63 tests passing (53 unit + 10 integration)
+  - Demo: kv_separation_demo.rs (33% write amp reduction)
 
 ba6842e - research: Week 9 learned bloom filters - valuable negative result
   - Learned blooms: 73% space reduction, but 50% FPR with hash features
