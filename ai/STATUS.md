@@ -1,9 +1,25 @@
 # STATUS - seerdb
 
-**Last Updated**: November 1, 2025
-**Current Phase**: Production Hardening (Phase 1 - Fixing Critical Bugs)
-**Focus**: Making seerdb production-ready (6-8 week effort)
+**Last Updated**: November 2, 2025
+**Current Phase**: Phase 2.4 - Leak Detection (BLOCKED - Critical Issues Found)
+**Focus**: Fix critical memory leaks and performance issues
 **Decision**: omen stays with RocksDB until seerdb is production-grade
+
+## 🚨 CURRENT BLOCKERS 🚨
+
+**Phase 2.4 Tests FOUND CRITICAL ISSUES**:
+- ❌ **Severe memory leak**: 100k operations consumed 5.9 GB RAM (should be ~100-200 MB)
+- ❌ **Extreme slowness**: 100k operations took 14+ hours (should take <10 minutes)
+- ❌ **Flush leak**: Each flush cycle takes 60+ seconds (should take 1-2 seconds)
+- 🎯 **Tests working correctly** - successfully detected these issues
+
+**See**: `ai/CRITICAL_LEAK_FINDINGS.md` for full analysis and investigation plan
+
+**Next Steps**:
+1. Profile memory allocation (heaptrack/valgrind)
+2. Profile CPU usage (flamegraph)
+3. Fix memory leaks (likely in flush/compaction path)
+4. Re-run leak detection tests
 
 ---
 
@@ -247,17 +263,45 @@
 
 🎉 **PHASE 1 COMPLETE!** All 7 production blockers fixed!
 
+---
+
+## Phase 2: Testing & Validation (IN PROGRESS - BLOCKED)
+
+**Progress**: 75% (3/4 sub-phases complete)
+
+✅ **Phase 2.1: Stress Tests** (Completed - commit b44e547)
+- 7 comprehensive stress tests (5 active, 2 ignored for CI)
+- Performance metrics: throughput, p50/p99/p999 latency
+- Resource monitoring: memory leak detection
+- Thread safety: concurrent access (4-8 threads)
+
+✅ **Phase 2.2: Crash Recovery Tests** (Completed - commit 0431cb0)
+- 5/5 crash recovery scenarios tested
+- Fixed 3 critical bugs during testing
+- Corruption detection, WAL truncation, graceful recovery
+
+✅ **Phase 2.3: Fuzzing & Property-Based Testing** (Completed - commit a622c9a)
+- **Fuzzing**: 4 targets (sstable_roundtrip: 1.3M execs, 8 mins)
+- **Property Tests**: 8 tests (serialization, ordering, state consistency)
+- **Edge Cases**: 18 tests (empty, single, boundary conditions)
+- All tests passing, no crashes or panics found
+
+❌ **Phase 2.4: Leak Detection** (BLOCKED - Critical Issues Found)
+- ✅ **Tests implemented**: 8 tests (memory, FD, thread leaks)
+- ❌ **Tests found critical bugs**: Severe memory leaks and performance degradation
+- 🔍 **Investigation required**: Profile and fix leaks before proceeding
+- See `ai/CRITICAL_LEAK_FINDINGS.md` for full details
+
 **Timeline**:
 - ✅ Phase 1 (Critical bugs): COMPLETE (100%)
-- Phase 2 (Testing): 3-4 weeks
-- Phase 3 (Observability): 1-2 weeks
-- Phase 4 (Code quality): 1 week
-- Phase 5 (Real-world validation): 2-4 weeks
-- **Estimated remaining: 7-11 weeks to production-ready**
+- ⏳ Phase 2 (Testing): BLOCKED on leak fixes (75% complete)
+- 🔜 Phase 3 (Observability): 1-2 weeks
+- 🔜 Phase 4 (Code quality): 1 week
+- 🔜 Phase 5 (Real-world validation): 2-4 weeks
+- **Estimated remaining: 8-12 weeks to production-ready** (updated for leak fixes)
 
-**Progress**: ✅ All 3 CRITICAL bugs fixed, ✅ All 4 HIGH bugs fixed, 100% Phase 1 complete!
-**Latest**: HIGH-3 stress tests complete (commit b44e547)
-**See**: `ai/PLAN.md` for detailed roadmap
+**Latest**: Phase 2.4 leak detection tests found critical issues (commit a622c9a)
+**See**: `ai/PLAN.md` for detailed roadmap, `ai/CRITICAL_LEAK_FINDINGS.md` for current issues
 
 ---
 

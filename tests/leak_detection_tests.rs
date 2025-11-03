@@ -1,7 +1,7 @@
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::path::PathBuf;
 use std::time::Duration;
-use sysinfo::{System, SystemExt, ProcessExt, Pid};
+use sysinfo::{Pid, ProcessExt, System, SystemExt};
 use tempfile::TempDir;
 
 /// Get current process memory usage in bytes
@@ -10,9 +10,7 @@ fn get_memory_usage() -> u64 {
     sys.refresh_all();
 
     let pid = Pid::from(std::process::id() as usize);
-    sys.process(pid)
-        .map(|p| p.memory())
-        .unwrap_or(0)
+    sys.process(pid).map(|p| p.memory()).unwrap_or(0)
 }
 
 /// Get current process file descriptor count (Unix-like systems)
@@ -24,10 +22,7 @@ fn get_fd_count() -> usize {
     #[cfg(target_os = "macos")]
     {
         use std::process::Command;
-        let output = Command::new("lsof")
-            .arg("-p")
-            .arg(pid.to_string())
-            .output();
+        let output = Command::new("lsof").arg("-p").arg(pid.to_string()).output();
 
         if let Ok(output) = output {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -126,11 +121,7 @@ fn test_no_memory_leak_sequential_writes() {
         if i % 10_000 == 0 {
             let current_memory = get_memory_usage();
             memory_samples.push(current_memory);
-            println!(
-                "After {} ops: {} MB",
-                i,
-                current_memory / 1024 / 1024
-            );
+            println!("After {} ops: {} MB", i, current_memory / 1024 / 1024);
         }
     }
 
@@ -340,7 +331,8 @@ fn test_no_fd_leak_multiple_flushes() {
     // Multiple flushes (creates SSTables)
     for i in 0..30 {
         for j in 0..1000 {
-            db.put(format!("f{}_k{}", i, j).as_bytes(), b"value").unwrap();
+            db.put(format!("f{}_k{}", i, j).as_bytes(), b"value")
+                .unwrap();
         }
         db.flush().unwrap();
 

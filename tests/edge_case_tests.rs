@@ -1,4 +1,4 @@
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -117,7 +117,10 @@ fn test_special_characters() {
 
     // Various special characters
     let test_cases = vec![
-        (b"key\nwith\nnewlines" as &[u8], b"value\nwith\nnewlines" as &[u8]),
+        (
+            b"key\nwith\nnewlines" as &[u8],
+            b"value\nwith\nnewlines" as &[u8],
+        ),
         (b"key\twith\ttabs", b"value\twith\ttabs"),
         (b"key\rwith\rcarriage", b"value\rwith\rcarriage"),
         (b"key with spaces", b"value with spaces"),
@@ -368,9 +371,18 @@ fn test_identical_keys_different_cases() {
     db.put(b"key", b"value2").unwrap();
     db.put(b"KEY", b"value3").unwrap();
 
-    assert_eq!(db.get(b"Key").unwrap().as_ref().map(|v| v.as_ref()), Some(&b"value1"[..]));
-    assert_eq!(db.get(b"key").unwrap().as_ref().map(|v| v.as_ref()), Some(&b"value2"[..]));
-    assert_eq!(db.get(b"KEY").unwrap().as_ref().map(|v| v.as_ref()), Some(&b"value3"[..]));
+    assert_eq!(
+        db.get(b"Key").unwrap().as_ref().map(|v| v.as_ref()),
+        Some(&b"value1"[..])
+    );
+    assert_eq!(
+        db.get(b"key").unwrap().as_ref().map(|v| v.as_ref()),
+        Some(&b"value2"[..])
+    );
+    assert_eq!(
+        db.get(b"KEY").unwrap().as_ref().map(|v| v.as_ref()),
+        Some(&b"value3"[..])
+    );
 }
 
 #[test]
@@ -388,8 +400,20 @@ fn test_similar_keys() {
     db.put(b"user:10", b"charlie").unwrap();
     db.put(b"user:11", b"dave").unwrap();
 
-    assert_eq!(db.get(b"user:1").unwrap().as_ref().map(|v| v.as_ref()), Some(&b"alice"[..]));
-    assert_eq!(db.get(b"user:2").unwrap().as_ref().map(|v| v.as_ref()), Some(&b"bob"[..]));
-    assert_eq!(db.get(b"user:10").unwrap().as_ref().map(|v| v.as_ref()), Some(&b"charlie"[..]));
-    assert_eq!(db.get(b"user:11").unwrap().as_ref().map(|v| v.as_ref()), Some(&b"dave"[..]));
+    assert_eq!(
+        db.get(b"user:1").unwrap().as_ref().map(|v| v.as_ref()),
+        Some(&b"alice"[..])
+    );
+    assert_eq!(
+        db.get(b"user:2").unwrap().as_ref().map(|v| v.as_ref()),
+        Some(&b"bob"[..])
+    );
+    assert_eq!(
+        db.get(b"user:10").unwrap().as_ref().map(|v| v.as_ref()),
+        Some(&b"charlie"[..])
+    );
+    assert_eq!(
+        db.get(b"user:11").unwrap().as_ref().map(|v| v.as_ref()),
+        Some(&b"dave"[..])
+    );
 }

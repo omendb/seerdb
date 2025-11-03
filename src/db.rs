@@ -88,8 +88,8 @@ pub struct DB {
     options: DBOptions,
     /// Write-ahead log
     wal: Arc<Mutex<WAL>>,
-    /// Active memtable
-    memtable: Arc<Memtable>,
+    /// Active memtable (Mutex allows swapping after flush)
+    memtable: Arc<Mutex<Memtable>>,
     /// LSM tree for level management
     lsm: Arc<Mutex<LSMTree>>,
     /// Value log for KV separation (optional)
@@ -188,7 +188,7 @@ impl DB {
         let db = Self {
             options: options.clone(),
             wal: Arc::new(Mutex::new(wal)),
-            memtable: Arc::new(memtable),
+            memtable: Arc::new(Mutex::new(memtable)),
             lsm,
             vlog: Arc::new(Mutex::new(vlog)),
             sstable_counter,
@@ -197,7 +197,8 @@ impl DB {
         };
 
         // Flush memtable if it filled up during recovery
-        if db.memtable.should_flush() {
+        let should_flush = db.memtable.lock().expect("Memtable lock poisoned").should_flush();
+        if should_flush {
             db.flush()?;
         }
 
@@ -257,10 +258,13 @@ impl DB {
             .write(&record)?;
 
         // Write to memtable
-        self.memtable.put(key, value);
+        let mt = self.memtable.lock().expect("Memtable lock poisoned");
+        mt.put(key, value);
+        let should_flush = mt.should_flush();
+        drop(mt); // Release lock
 
         // Check if memtable should be flushed
-        if self.memtable.should_flush() {
+        if should_flush {
             self.flush()?;
         }
 
@@ -272,7 +276,10 @@ impl DB {
         let key = key.as_ref();
 
         // Check memtable first (most recent data)
-        if let Some(value) = self.memtable.get(key) {
+        let mt = self.memtable.lock().expect("Memtable lock poisoned");
+        let result = mt.get(key);
+        drop(mt); // Release lock
+        if let Some(value) = result {
             return Ok(Some(value));
         }
 
@@ -320,10 +327,13 @@ impl DB {
             .write(&record)?;
 
         // Write tombstone to memtable
-        self.memtable.delete(key);
+        let mt = self.memtable.lock().expect("Memtable lock poisoned");
+        mt.delete(key);
+        let should_flush = mt.should_flush();
+        drop(mt); // Release lock
 
         // Check if memtable should be flushed
-        if self.memtable.should_flush() {
+        if should_flush {
             self.flush()?;
         }
 
@@ -348,6 +358,7 @@ impl DB {
         drop(counter);
 
         // Build SSTable with optional vLog support
+        let mt = self.memtable.lock().expect("Memtable lock poisoned");
         let mut vlog_guard = self.vlog.lock().expect("vLog mutex poisoned");
 
         let _sstable = if let (Some(threshold), Some(ref mut vlog)) =
@@ -356,7 +367,7 @@ impl DB {
             // KV separation enabled - use vLog for large values
             let mut builder = SSTableBuilder::new().with_vlog_threshold(threshold);
 
-            for (key, entry) in self.memtable.iter() {
+            for (key, entry) in mt.iter() {
                 match entry {
                     Entry::Value(value) => {
                         builder.add_with_vlog(key, value, vlog)?;
@@ -371,8 +382,9 @@ impl DB {
         } else {
             // No KV separation - traditional flush
             drop(vlog_guard); // Release lock
-            self.memtable.flush(&sstable_path)?
+            mt.flush(&sstable_path)?
         };
+        drop(mt); // Release memtable lock
 
         let size = std::fs::metadata(&sstable_path)?.len();
 
@@ -386,8 +398,10 @@ impl DB {
         wal.clear()?;
         drop(wal);
 
-        // Note: Memtable is not cleared - it will continue to accumulate entries
-        // Future enhancement: Swap memtables (active vs immutable) like RocksDB
+        // **CRITICAL FIX**: Replace memtable with a new empty one to free memory
+        let mut mt_guard = self.memtable.lock().expect("Memtable lock poisoned");
+        *mt_guard = Memtable::new(self.options.memtable_capacity);
+        drop(mt_guard);
 
         // Check if compaction is needed
         if let Some(level_num) = lsm.needs_compaction() {
@@ -478,12 +492,12 @@ impl DB {
 
     /// Get current memtable size
     pub fn memtable_size(&self) -> usize {
-        self.memtable.size()
+        self.memtable.lock().expect("Memtable lock poisoned").size()
     }
 
     /// Get number of entries in memtable
     pub fn memtable_len(&self) -> usize {
-        self.memtable.len()
+        self.memtable.lock().expect("Memtable lock poisoned").len()
     }
 }
 

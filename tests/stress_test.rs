@@ -166,10 +166,7 @@ fn test_stress_sequential_writes() {
         let key = format!("key_{:010}", i);
         let expected_value = format!("value_{:010}", i);
 
-        let value = db
-            .get(key.as_bytes())
-            .unwrap()
-            .expect("Key should exist");
+        let value = db.get(key.as_bytes()).unwrap().expect("Key should exist");
         assert_eq!(value, Bytes::from(expected_value));
     }
 
@@ -481,9 +478,21 @@ fn test_stress_mixed_workload() {
     metrics.check_memory_stable();
 
     println!("Operation distribution:");
-    println!("  Reads:   {} ({:.1}%)", read_count, read_count as f64 / test_size as f64 * 100.0);
-    println!("  Writes:  {} ({:.1}%)", write_count, write_count as f64 / test_size as f64 * 100.0);
-    println!("  Deletes: {} ({:.1}%)", delete_count, delete_count as f64 / test_size as f64 * 100.0);
+    println!(
+        "  Reads:   {} ({:.1}%)",
+        read_count,
+        read_count as f64 / test_size as f64 * 100.0
+    );
+    println!(
+        "  Writes:  {} ({:.1}%)",
+        write_count,
+        write_count as f64 / test_size as f64 * 100.0
+    );
+    println!(
+        "  Deletes: {} ({:.1}%)",
+        delete_count,
+        delete_count as f64 / test_size as f64 * 100.0
+    );
 
     // Verify writes persisted
     println!("Verifying written data...");
@@ -526,7 +535,12 @@ fn test_stress_1m_sequential_writes() {
         if i % 100_000 == 0 {
             let elapsed = start.elapsed();
             let rate = i as f64 / elapsed.as_secs_f64();
-            println!("Progress: {}k / {}k ({:.0} ops/sec)", i / 1000, test_size / 1000, rate);
+            println!(
+                "Progress: {}k / {}k ({:.0} ops/sec)",
+                i / 1000,
+                test_size / 1000,
+                rate
+            );
         }
     }
 
@@ -588,7 +602,12 @@ fn test_stress_1m_concurrent_8_threads() {
                 }
 
                 if i % 50_000 == 0 && i > 0 {
-                    println!("Thread {} progress: {}k / {}k", thread_id, i / 1000, ops_per_thread / 1000);
+                    println!(
+                        "Thread {} progress: {}k / {}k",
+                        thread_id,
+                        i / 1000,
+                        ops_per_thread / 1000
+                    );
                 }
             }
 

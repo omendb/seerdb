@@ -73,7 +73,10 @@ fn test_corrupted_sstable_detected() {
     let result = DB::open(opts);
 
     // Verify corruption was detected
-    assert!(result.is_err(), "Expected error when opening corrupted SSTable");
+    assert!(
+        result.is_err(),
+        "Expected error when opening corrupted SSTable"
+    );
 }
 
 #[test]
@@ -120,11 +123,7 @@ fn test_corrupted_wal_detected() {
             // If recovery succeeded, verify we got some data (before corruption)
             // but not all data (after corruption)
             let count = (0..100)
-                .filter(|i| {
-                    db.get(format!("key{:04}", i).as_bytes())
-                        .unwrap()
-                        .is_some()
-                })
+                .filter(|i| db.get(format!("key{:04}", i).as_bytes()).unwrap().is_some())
                 .count();
             assert!(
                 count < 100,
@@ -177,11 +176,7 @@ fn test_truncated_wal_recovery() {
 
     // Should recover most data (incomplete last record ignored)
     let count = (0..50)
-        .filter(|i| {
-            db.get(format!("key{:04}", i).as_bytes())
-                .unwrap()
-                .is_some()
-        })
+        .filter(|i| db.get(format!("key{:04}", i).as_bytes()).unwrap().is_some())
         .count();
 
     assert!(

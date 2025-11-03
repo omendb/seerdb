@@ -2,8 +2,8 @@
 // Tests full lifecycle: open, write, read, flush, compact, close, recover
 
 use bytes::Bytes;
-use seerdb::{DBOptions, DB};
 use seerdb::wal::SyncPolicy;
+use seerdb::{DBOptions, DB};
 use tempfile::tempdir;
 
 #[test]
@@ -29,10 +29,7 @@ fn test_db_full_lifecycle() {
         for i in 0..1000 {
             let key = format!("key_{:04}", i);
             let value = format!("value_{:04}", i);
-            assert_eq!(
-                db.get(key.as_bytes()).unwrap(),
-                Some(Bytes::from(value))
-            );
+            assert_eq!(db.get(key.as_bytes()).unwrap(), Some(Bytes::from(value)));
         }
     }
 
@@ -44,10 +41,7 @@ fn test_db_full_lifecycle() {
         for i in 0..1000 {
             let key = format!("key_{:04}", i);
             let value = format!("value_{:04}", i);
-            assert_eq!(
-                db.get(key.as_bytes()).unwrap(),
-                Some(Bytes::from(value))
-            );
+            assert_eq!(db.get(key.as_bytes()).unwrap(), Some(Bytes::from(value)));
         }
     }
 }
@@ -171,10 +165,7 @@ fn test_db_multiple_flushes() {
         for i in 0..200 {
             let key = format!("key_{:04}", i);
             let value = vec![b'x'; 100];
-            assert_eq!(
-                db.get(key.as_bytes()).unwrap(),
-                Some(Bytes::from(value))
-            );
+            assert_eq!(db.get(key.as_bytes()).unwrap(), Some(Bytes::from(value)));
         }
     }
 
@@ -185,10 +176,7 @@ fn test_db_multiple_flushes() {
         for i in 0..200 {
             let key = format!("key_{:04}", i);
             let value = vec![b'x'; 100];
-            assert_eq!(
-                db.get(key.as_bytes()).unwrap(),
-                Some(Bytes::from(value))
-            );
+            assert_eq!(db.get(key.as_bytes()).unwrap(), Some(Bytes::from(value)));
         }
     }
 }
@@ -215,10 +203,7 @@ fn test_db_large_values() {
         for i in 0..100 {
             let key = format!("doc_{}", i);
             let value = vec![i as u8; 4096];
-            assert_eq!(
-                db.get(key.as_bytes()).unwrap(),
-                Some(Bytes::from(value))
-            );
+            assert_eq!(db.get(key.as_bytes()).unwrap(), Some(Bytes::from(value)));
         }
     }
 }
@@ -257,7 +242,8 @@ fn test_db_crash_recovery_with_uncommitted_data() {
             assert_eq!(
                 db.get(key.as_bytes()).unwrap(),
                 Some(Bytes::from(value)),
-                "Failed to recover key_{} after crash", i
+                "Failed to recover key_{} after crash",
+                i
             );
         }
     }
@@ -350,7 +336,9 @@ fn test_db_reopen_multiple_times() {
                 assert_eq!(
                     db.get(key.as_bytes()).unwrap(),
                     Some(Bytes::from(value)),
-                    "Failed at round {} checking data from round {}", round, prev_round
+                    "Failed at round {} checking data from round {}",
+                    round,
+                    prev_round
                 );
             }
         }
@@ -362,10 +350,7 @@ fn test_db_reopen_multiple_times() {
         for i in 0..20 {
             let key = format!("round_{}_{}", round, i);
             let value = format!("value_{}_{}", round, i);
-            assert_eq!(
-                db.get(key.as_bytes()).unwrap(),
-                Some(Bytes::from(value))
-            );
+            assert_eq!(db.get(key.as_bytes()).unwrap(), Some(Bytes::from(value)));
         }
     }
 }
@@ -395,7 +380,10 @@ fn test_db_sequential_vs_random_keys() {
     // Verify sequential
     for i in 0..100 {
         let key = format!("seq_{:04}", i);
-        assert_eq!(db.get(key.as_bytes()).unwrap(), Some(Bytes::from("sequential")));
+        assert_eq!(
+            db.get(key.as_bytes()).unwrap(),
+            Some(Bytes::from("sequential"))
+        );
     }
 
     // Verify random

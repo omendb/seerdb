@@ -2,8 +2,8 @@
 // Tests the complete write → flush → recovery flow
 
 use bytes::Bytes;
-use seerdb::{Memtable, Record, WAL, SSTable};
-use seerdb::wal::{SyncPolicy, reader::WALReader};
+use seerdb::wal::{reader::WALReader, SyncPolicy};
+use seerdb::{Memtable, Record, SSTable, WAL};
 use tempfile::tempdir;
 
 #[test]
@@ -113,18 +113,12 @@ fn test_crash_recovery() {
     for i in 0..100 {
         let key = format!("key_{}", i);
         let value = format!("value_{}", i);
-        assert_eq!(
-            memtable.get(key.as_bytes()),
-            Some(Bytes::from(value))
-        );
+        assert_eq!(memtable.get(key.as_bytes()), Some(Bytes::from(value)));
     }
 
     // Verify SSTable still has data
     let mut sstable = SSTable::open(&sstable_path).unwrap();
-    assert_eq!(
-        sstable.get(b"key_0").unwrap(),
-        Some(Bytes::from("value_0"))
-    );
+    assert_eq!(sstable.get(b"key_0").unwrap(), Some(Bytes::from("value_0")));
 }
 
 #[test]
