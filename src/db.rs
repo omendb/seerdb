@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
 use thiserror::Error;
+use tracing::{debug, error, info, warn};
 
 #[derive(Debug, Error)]
 pub enum DBError {
@@ -109,6 +110,13 @@ pub struct DB {
 impl DB {
     /// Open or create a database
     pub fn open(options: DBOptions) -> Result<Self> {
+        info!(
+            path = ?options.data_dir,
+            memtable_capacity_mb = options.memtable_capacity / (1024 * 1024),
+            background_compaction = options.background_compaction,
+            "Opening database"
+        );
+
         // Create data directory if it doesn't exist
         std::fs::create_dir_all(&options.data_dir)?;
 
@@ -120,7 +128,13 @@ impl DB {
 
         // Recover from WAL if it exists
         if wal_path.exists() {
+            info!("Recovering from WAL");
+            let entries = memtable.len();
             Self::recover(&wal_path, &memtable)?;
+            let recovered = memtable.len() - entries;
+            info!(entries = recovered, "WAL recovery complete");
+        } else {
+            info!("No existing WAL found, starting fresh");
         }
 
         // Create new WAL (overwrites old one after recovery)
@@ -148,6 +162,11 @@ impl DB {
         // Load existing SSTables from disk
         // This also verifies checksums - will fail if any SSTable is corrupted
         lsm.load_existing_sstables()?;
+        let total_sstables: usize = (0..lsm.num_levels())
+            .filter_map(|i| lsm.level(i))
+            .map(|level| level.sstables().len())
+            .sum();
+        info!(sstables = total_sstables, levels = lsm.num_levels(), "LSM tree loaded");
 
         let lsm = Arc::new(Mutex::new(lsm));
         let sstable_counter = Arc::new(Mutex::new(0));
@@ -173,7 +192,7 @@ impl DB {
                                 &data_dir,
                                 level_num,
                             ) {
-                                eprintln!("Background compaction error: {}", e);
+                                error!(error = %e, level = level_num, "Background compaction failed");
                             }
                         }
                         CompactionTask::Shutdown => {
@@ -204,8 +223,11 @@ impl DB {
         // Flush memtable if it filled up during recovery
         let should_flush = db.memtable.lock().expect("Memtable lock poisoned").should_flush();
         if should_flush {
+            info!("Memtable full after recovery, flushing");
             db.flush()?;
         }
+
+        info!("Database opened successfully");
 
         Ok(db)
     }
@@ -235,10 +257,10 @@ impl DB {
                     // End of WAL reached
                     break;
                 }
-                Err(_) => {
+                Err(e) => {
                     // Corruption or truncation encountered
                     // Stop reading but don't fail - we've recovered all valid records
-                    eprintln!("Warning: WAL recovery stopped due to corrupt/truncated record");
+                    warn!(error = %e, "WAL recovery stopped due to corrupt/truncated record");
                     break;
                 }
             }
@@ -363,6 +385,11 @@ impl DB {
         use crate::memtable::Entry;
         use crate::sstable::SSTableBuilder;
 
+        let flush_start = Instant::now();
+        let mt_size_before = self.memtable.lock().expect("Memtable lock poisoned").size();
+
+        info!(memtable_size_bytes = mt_size_before, "Starting memtable flush");
+
         // Generate SSTable filename
         let mut counter = self
             .sstable_counter
@@ -408,6 +435,7 @@ impl DB {
 
         // Add to LSM tree L0
         let mut lsm = self.lsm.lock().expect("LSM mutex poisoned");
+        let sstable_path_for_log = sstable_path.clone();
         lsm.add_l0_sstable(sstable_path, size);
 
         // Clear WAL after successful flush
@@ -421,15 +449,26 @@ impl DB {
         *mt_guard = Memtable::new(self.options.memtable_capacity);
         drop(mt_guard);
 
+        let flush_duration_ms = flush_start.elapsed().as_millis();
+        info!(
+            duration_ms = flush_duration_ms,
+            sstable_path = ?sstable_path_for_log,
+            sstable_size_bytes = size,
+            "Memtable flush complete"
+        );
+
         // Check if compaction is needed
         if let Some(level_num) = lsm.needs_compaction() {
+            debug!(level = level_num, "Compaction triggered");
             drop(lsm); // Release lock before compaction
 
             if let Some(ref tx) = self.compaction_tx {
                 // Background compaction: send signal (non-blocking)
+                debug!(level = level_num, "Sending background compaction signal");
                 let _ = tx.send(CompactionTask::CompactLevel(level_num));
             } else {
                 // Synchronous compaction: block until done
+                debug!(level = level_num, "Starting synchronous compaction");
                 self.compact_level(level_num)?;
             }
         }
@@ -457,6 +496,7 @@ impl DB {
         data_dir: &Path,
         level_num: usize,
     ) -> Result<()> {
+        let compaction_start = Instant::now();
         let lsm_lock = lsm.lock().expect("LSM mutex poisoned");
 
         // Get SSTables to compact
@@ -466,6 +506,13 @@ impl DB {
         if input_paths.is_empty() {
             return Ok(());
         }
+
+        let input_count = input_paths.len();
+        debug!(
+            level = level_num,
+            input_sstables = input_count,
+            "Starting compaction"
+        );
 
         // Generate output path
         let mut counter = sstable_counter
@@ -493,9 +540,18 @@ impl DB {
         // Delete input SSTables from disk
         for path in input_paths {
             if let Err(e) = std::fs::remove_file(&path) {
-                eprintln!("Warning: Failed to delete SSTable {:?}: {}", path, e);
+                warn!(path = ?path, error = %e, "Failed to delete SSTable after compaction");
             }
         }
+
+        let compaction_duration_ms = compaction_start.elapsed().as_millis();
+        info!(
+            level = level_num,
+            input_sstables = input_count,
+            output_size_bytes = size,
+            duration_ms = compaction_duration_ms,
+            "Compaction complete"
+        );
 
         Ok(())
     }
@@ -631,15 +687,21 @@ impl DB {
 /// Graceful shutdown: signal compaction thread to stop and wait for it
 impl Drop for DB {
     fn drop(&mut self) {
+        info!("Closing database");
+
         if let Some(ref tx) = self.compaction_tx {
             // Send shutdown signal
+            debug!("Signaling background compaction thread to shut down");
             let _ = tx.send(CompactionTask::Shutdown);
         }
 
         // Wait for worker thread to finish
         if let Some(worker) = self.compaction_worker.take() {
+            debug!("Waiting for background compaction thread to finish");
             let _ = worker.join();
         }
+
+        info!("Database closed");
     }
 }
 
