@@ -100,6 +100,7 @@ fn test_no_memory_leak_sequential_writes() {
     let opts = DBOptions {
         data_dir: PathBuf::from(temp_dir.path()),
         memtable_capacity: 4 * 1024 * 1024, // 4MB memtable
+        background_compaction: true, // Enable to avoid blocking on compaction
         ..Default::default()
     };
     let db = DB::open(opts).unwrap();
@@ -158,6 +159,7 @@ fn test_no_memory_leak_repeated_flushes() {
     let opts = DBOptions {
         data_dir: PathBuf::from(temp_dir.path()),
         memtable_capacity: 1024 * 1024, // 1MB memtable (small, triggers frequent flushes)
+        background_compaction: true, // Enable to avoid blocking on each flush
         ..Default::default()
     };
     let db = DB::open(opts).unwrap();
@@ -217,6 +219,7 @@ fn test_no_memory_leak_put_delete_cycles() {
     let temp_dir = TempDir::new().unwrap();
     let opts = DBOptions {
         data_dir: PathBuf::from(temp_dir.path()),
+        background_compaction: true, // Enable to avoid blocking
         ..Default::default()
     };
     let db = DB::open(opts).unwrap();
