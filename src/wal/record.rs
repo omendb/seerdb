@@ -1,7 +1,7 @@
 // WAL record format
 // Each record contains: [length][type][data][crc32]
 
-use bytes::{Bytes, BytesMut, Buf, BufMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::io;
 use thiserror::Error;
 

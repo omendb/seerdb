@@ -210,11 +210,7 @@ mod tests {
             }
         }
 
-        println!(
-            "False positives: {}/{}",
-            false_positives,
-            negative.len()
-        );
+        println!("False positives: {}/{}", false_positives, negative.len());
         assert!(
             false_positives < 5,
             "Too many false positives: {}",

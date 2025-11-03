@@ -248,7 +248,7 @@ fn test_crash_during_flush_incomplete_sstable() {
         let value = db
             .get(format!("key{:04}", i).as_bytes())
             .unwrap()
-            .expect(&format!("key{:04} should exist", i));
+            .unwrap_or_else(|| panic!("key{:04} should exist", i));
         assert_eq!(
             value,
             Bytes::from(format!("value{:04}", i)),
@@ -312,7 +312,7 @@ fn test_crash_during_compaction_incomplete() {
                 let value = db
                     .get(key.as_bytes())
                     .unwrap()
-                    .expect(&format!("{} should exist", key));
+                    .unwrap_or_else(|| panic!("{} should exist", key));
                 assert_eq!(
                     value,
                     Bytes::from(expected_value),
@@ -337,7 +337,7 @@ fn test_crash_during_compaction_incomplete() {
             let value = db
                 .get(key.as_bytes())
                 .unwrap()
-                .expect(&format!("{} should exist after recovery", key));
+                .unwrap_or_else(|| panic!("{} should exist after recovery", key));
             assert_eq!(
                 value,
                 Bytes::from(expected_value),

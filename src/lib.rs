@@ -12,12 +12,12 @@ pub mod vlog;
 pub mod wal;
 
 pub use bloom::{BitPackedBloomFilter, BloomFilter, LearnedBloomFilter};
-pub use db::{DB, DBOptions};
+pub use db::{DBOptions, DB};
 pub use health::{CheckStatus, HealthCheck, HealthStatus};
 pub use memtable::Memtable;
 pub use metrics::DBStats;
 pub use sstable::{SSTable, SSTableBuilder};
-pub use vlog::{ValuePointer, VLog};
+pub use vlog::{VLog, ValuePointer};
 pub use wal::{Record, SyncPolicy, WAL};
 
 #[cfg(test)]

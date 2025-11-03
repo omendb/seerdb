@@ -8,10 +8,10 @@ use twox_hash::XxHash64;
 
 /// Bit-packed bloom filter (8x more space-efficient than traditional)
 pub struct BitPackedBloomFilter {
-    bits: Vec<u64>,      // Bit-packed storage (64 bits per u64)
-    num_bits: usize,     // Total number of bits
-    num_hashes: usize,   // Number of hash functions
-    count: usize,        // Number of elements inserted
+    bits: Vec<u64>,    // Bit-packed storage (64 bits per u64)
+    num_bits: usize,   // Total number of bits
+    num_hashes: usize, // Number of hash functions
+    count: usize,      // Number of elements inserted
 }
 
 impl BitPackedBloomFilter {
@@ -19,11 +19,12 @@ impl BitPackedBloomFilter {
     pub fn new(expected_elements: usize, false_positive_rate: f64) -> Self {
         // Calculate optimal number of bits: m = -n*ln(p) / (ln(2)^2)
         let num_bits = (-(expected_elements as f64) * false_positive_rate.ln()
-            / (2.0_f64.ln().powi(2))).ceil() as usize;
+            / (2.0_f64.ln().powi(2)))
+        .ceil() as usize;
 
         // Calculate optimal number of hash functions: k = (m/n) * ln(2)
-        let num_hashes = ((num_bits as f64 / expected_elements as f64) * 2.0_f64.ln())
-            .ceil() as usize;
+        let num_hashes =
+            ((num_bits as f64 / expected_elements as f64) * 2.0_f64.ln()).ceil() as usize;
 
         // Round up to nearest multiple of 64 for alignment
         let num_words = num_bits.div_ceil(64);
@@ -197,6 +198,10 @@ mod tests {
         // Bit-packed should use ~1/8 the space of Vec<bool>
         // Expected: ~1.2 bytes per element for 1% FPR
         let bytes_per_element = bloom.size_bytes() as f64 / 10000.0;
-        assert!(bytes_per_element < 2.0, "Space efficiency check: {} bytes/elem", bytes_per_element);
+        assert!(
+            bytes_per_element < 2.0,
+            "Space efficiency check: {} bytes/elem",
+            bytes_per_element
+        );
     }
 }

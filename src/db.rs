@@ -7,7 +7,7 @@ use crate::memtable::Memtable;
 use crate::metrics::{DBStats, MetricsCollector};
 use crate::sstable::SSTable;
 use crate::vlog::VLog;
-use crate::wal::{Record, SyncPolicy, WAL, WALReader};
+use crate::wal::{Record, SyncPolicy, WALReader, WAL};
 use bytes::Bytes;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Sender};
@@ -72,8 +72,8 @@ impl Default for DBOptions {
             base_level_size: 10 * 1024 * 1024, // 10MB
             size_ratio: 10,
             num_levels: 7,
-            vlog_threshold: None,          // Disabled by default
-            background_compaction: false,  // Disabled by default for compatibility
+            vlog_threshold: None,         // Disabled by default
+            background_compaction: false, // Disabled by default for compatibility
         }
     }
 }
@@ -167,7 +167,11 @@ impl DB {
             .filter_map(|i| lsm.level(i))
             .map(|level| level.sstables().len())
             .sum();
-        info!(sstables = total_sstables, levels = lsm.num_levels(), "LSM tree loaded");
+        info!(
+            sstables = total_sstables,
+            levels = lsm.num_levels(),
+            "LSM tree loaded"
+        );
 
         let lsm = Arc::new(Mutex::new(lsm));
         let sstable_counter = Arc::new(Mutex::new(0));
@@ -222,7 +226,11 @@ impl DB {
         };
 
         // Flush memtable if it filled up during recovery
-        let should_flush = db.memtable.lock().expect("Memtable lock poisoned").should_flush();
+        let should_flush = db
+            .memtable
+            .lock()
+            .expect("Memtable lock poisoned")
+            .should_flush();
         if should_flush {
             info!("Memtable full after recovery, flushing");
             db.flush()?;
@@ -238,22 +246,20 @@ impl DB {
     /// Reads records one by one and stops gracefully if corruption or truncation is encountered.
     /// This ensures we recover all valid records before the corruption point.
     fn recover(wal_path: &Path, memtable: &Memtable) -> Result<()> {
-        let mut reader = WALReader::open(wal_path)
-            .map_err(|e| DBError::Io(std::io::Error::other(e)))?;
+        let mut reader =
+            WALReader::open(wal_path).map_err(|e| DBError::Io(std::io::Error::other(e)))?;
 
         // Read records one by one, stop gracefully on error (corruption/truncation)
         loop {
             match reader.read_next() {
-                Ok(Some(record)) => {
-                    match record {
-                        Record::Put { key, value } => {
-                            memtable.put(key, value);
-                        }
-                        Record::Delete { key } => {
-                            memtable.delete(key);
-                        }
+                Ok(Some(record)) => match record {
+                    Record::Put { key, value } => {
+                        memtable.put(key, value);
                     }
-                }
+                    Record::Delete { key } => {
+                        memtable.delete(key);
+                    }
+                },
                 Ok(None) => {
                     // End of WAL reached
                     break;
@@ -320,11 +326,7 @@ impl DB {
 
         // Get vLog if available (need to clone for SSTable attachment)
         let vlog_path = self.options.data_dir.join("values.vlog");
-        let has_vlog = self
-            .vlog
-            .lock()
-            .expect("vLog mutex poisoned")
-            .is_some();
+        let has_vlog = self.vlog.lock().expect("vLog mutex poisoned").is_some();
 
         // Check SSTables in LSM tree (L0 -> L6)
         let lsm = self.lsm.lock().expect("LSM mutex poisoned");
@@ -389,7 +391,10 @@ impl DB {
         let flush_start = Instant::now();
         let mt_size_before = self.memtable.lock().expect("Memtable lock poisoned").size();
 
-        info!(memtable_size_bytes = mt_size_before, "Starting memtable flush");
+        info!(
+            memtable_size_bytes = mt_size_before,
+            "Starting memtable flush"
+        );
 
         // Generate SSTable filename
         let mut counter = self
@@ -519,11 +524,7 @@ impl DB {
         let mut counter = sstable_counter
             .lock()
             .expect("SSTable counter mutex poisoned");
-        let output_path = data_dir.join(format!(
-            "L{}_{:06}.sst",
-            level_num + 1,
-            *counter
-        ));
+        let output_path = data_dir.join(format!("L{}_{:06}.sst", level_num + 1, *counter));
         *counter += 1;
         drop(counter);
 
@@ -598,7 +599,10 @@ impl DB {
         drop(mt);
 
         // Get WAL size
-        let wal_size_bytes = self.options.data_dir.join("wal.log")
+        let wal_size_bytes = self
+            .options
+            .data_dir
+            .join("wal.log")
             .metadata()
             .map(|m| m.len())
             .unwrap_or(0);
@@ -932,10 +936,7 @@ mod tests {
         for i in 0..10 {
             let key = format!("key_{}", i);
             let value = format!("value_with_long_data_{}", i);
-            assert_eq!(
-                db.get(key.as_bytes()).unwrap(),
-                Some(Bytes::from(value))
-            );
+            assert_eq!(db.get(key.as_bytes()).unwrap(), Some(Bytes::from(value)));
         }
 
         // Check that SSTable files were created
@@ -951,7 +952,7 @@ mod tests {
             })
             .collect();
 
-        assert!(sst_files.len() > 0, "No SSTable files created");
+        assert!(!sst_files.is_empty(), "No SSTable files created");
     }
 
     #[test]
@@ -1053,10 +1054,7 @@ mod tests {
             for i in 0..20 {
                 let key = format!("key_{}", i);
                 let value = format!("value_with_long_data_{}", i);
-                assert_eq!(
-                    db.get(key.as_bytes()).unwrap(),
-                    Some(Bytes::from(value))
-                );
+                assert_eq!(db.get(key.as_bytes()).unwrap(), Some(Bytes::from(value)));
             }
         }
     }
@@ -1086,7 +1084,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let options = DBOptions {
             data_dir: dir.path().to_path_buf(),
-            memtable_capacity: 200, // Small enough to trigger flush
+            memtable_capacity: 200,   // Small enough to trigger flush
             vlog_threshold: Some(50), // 50 byte threshold
             ..Default::default()
         };
@@ -1108,7 +1106,10 @@ mod tests {
         }
 
         // Verify all values can be read (from memtable or flushed SSTable)
-        assert_eq!(db.get(b"small_key").unwrap(), Some(Bytes::from("tiny_value")));
+        assert_eq!(
+            db.get(b"small_key").unwrap(),
+            Some(Bytes::from("tiny_value"))
+        );
         assert_eq!(
             db.get(b"large_key").unwrap(),
             Some(Bytes::from(large_value))
@@ -1116,7 +1117,10 @@ mod tests {
 
         // Verify vLog file was created
         let vlog_path = dir.path().join("values.vlog");
-        assert!(vlog_path.exists(), "vLog file should exist with vlog_threshold enabled");
+        assert!(
+            vlog_path.exists(),
+            "vLog file should exist with vlog_threshold enabled"
+        );
     }
 
     #[test]
@@ -1139,10 +1143,7 @@ mod tests {
         // Reopen and verify recovery works with vLog
         {
             let db = DB::open(options.clone()).unwrap();
-            assert_eq!(
-                db.get(b"key1").unwrap(),
-                Some(Bytes::from("small_value"))
-            );
+            assert_eq!(db.get(b"key1").unwrap(), Some(Bytes::from("small_value")));
             let expected_large = vec![b'Y'; 200];
             assert_eq!(db.get(b"key2").unwrap(), Some(Bytes::from(expected_large)));
         }
@@ -1155,7 +1156,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let options = DBOptions {
             data_dir: dir.path().to_path_buf(),
-            memtable_capacity: 100, // Small to trigger flushes
+            memtable_capacity: 100,      // Small to trigger flushes
             background_compaction: true, // Enable background compaction
             ..Default::default()
         };
@@ -1176,10 +1177,7 @@ mod tests {
         for i in 0..100 {
             let key = format!("key_{:03}", i);
             let expected = format!("value_{:03}", i);
-            assert_eq!(
-                db.get(key.as_bytes()).unwrap(),
-                Some(Bytes::from(expected))
-            );
+            assert_eq!(db.get(key.as_bytes()).unwrap(), Some(Bytes::from(expected)));
         }
 
         // DB will be dropped here, triggering graceful shutdown

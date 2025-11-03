@@ -32,7 +32,8 @@ fn benchmark_sync_compaction(c: &mut Criterion) {
                         for i in 0..num_writes {
                             let key = format!("key_{:06}", i);
                             let value = format!("value_{:06}", i);
-                            black_box(db.put(key.as_bytes(), value.as_bytes()).unwrap());
+                            db.put(key.as_bytes(), value.as_bytes()).unwrap();
+                            black_box(());
                         }
                     },
                 );
@@ -103,7 +104,8 @@ fn benchmark_comparison(c: &mut Criterion) {
                 for i in 0..5000 {
                     let key = format!("key_{:06}", i);
                     let value = format!("value_{:06}", i);
-                    black_box(db.put(key.as_bytes(), value.as_bytes()).unwrap());
+                    db.put(key.as_bytes(), value.as_bytes()).unwrap();
+                    black_box(());
                 }
             },
         );
@@ -127,7 +129,8 @@ fn benchmark_comparison(c: &mut Criterion) {
                 for i in 0..5000 {
                     let key = format!("key_{:06}", i);
                     let value = format!("value_{:06}", i);
-                    black_box(db.put(key.as_bytes(), value.as_bytes()).unwrap());
+                    db.put(key.as_bytes(), value.as_bytes()).unwrap();
+                    black_box(());
                 }
             },
         );

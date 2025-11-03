@@ -5,6 +5,9 @@ use hdrhistogram::Histogram;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+/// Type alias for latency percentile tuples (p50, p95, p99, p999)
+type LatencyPercentiles = ((u64, u64, u64, u64), (u64, u64, u64, u64), (u64, u64, u64));
+
 /// Database statistics for monitoring and observability
 #[derive(Debug, Clone)]
 pub struct DBStats {
@@ -176,13 +179,7 @@ impl MetricsCollector {
     }
 
     /// Get latency percentiles (microseconds)
-    pub fn get_latency_percentiles(
-        &self,
-    ) -> (
-        (u64, u64, u64, u64),
-        (u64, u64, u64, u64),
-        (u64, u64, u64),
-    ) {
+    pub fn get_latency_percentiles(&self) -> LatencyPercentiles {
         let put_hist = self.put_latencies.lock().unwrap();
         let get_hist = self.get_latencies.lock().unwrap();
         let delete_hist = self.delete_latencies.lock().unwrap();
@@ -254,13 +251,13 @@ mod tests {
         let (p50, p95, p99, _p999) = put_stats;
 
         // p50 should be around 500us (50th value is 500us)
-        assert!(p50 >= 400 && p50 <= 600, "p50: {}", p50);
+        assert!((400..=600).contains(&p50), "p50: {}", p50);
 
         // p95 should be around 950us
-        assert!(p95 >= 900 && p95 <= 1000, "p95: {}", p95);
+        assert!((900..=1000).contains(&p95), "p95: {}", p95);
 
         // p99 should be around 990us
-        assert!(p99 >= 980 && p99 <= 1010, "p99: {}", p99);
+        assert!((980..=1010).contains(&p99), "p99: {}", p99);
     }
 
     #[test]
@@ -324,6 +321,6 @@ mod tests {
         thread::sleep(Duration::from_secs(1));
 
         let uptime = collector.uptime_seconds();
-        assert!(uptime >= 1 && uptime <= 2);
+        assert!((1..=2).contains(&uptime));
     }
 }

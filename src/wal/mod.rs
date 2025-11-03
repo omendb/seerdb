@@ -1,8 +1,8 @@
 // Write-Ahead Log (WAL) implementation
 // Provides durability guarantees for memtable operations
 
-pub mod record;
 pub mod reader;
+pub mod record;
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
-pub use record::Record;
 pub use reader::WALReader;
+pub use record::Record;
 
 #[derive(Debug, Error)]
 pub enum WALError {
@@ -46,11 +46,7 @@ impl WAL {
     /// Create a new WAL file
     pub fn create(path: impl AsRef<Path>, sync_policy: SyncPolicy) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
-        let file = OpenOptions::new()
-            .create(true)
-            
-            .append(true)
-            .open(&path)?;
+        let file = OpenOptions::new().create(true).append(true).open(&path)?;
 
         Ok(Self {
             file: Arc::new(Mutex::new(file)),

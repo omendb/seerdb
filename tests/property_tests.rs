@@ -196,7 +196,7 @@ proptest! {
         };
         let db = DB::open(opts).unwrap();
 
-        db.put(&key, &[]).unwrap();
+        db.put(&key, []).unwrap();
         let result = db.get(&key).unwrap();
 
         prop_assert_eq!(result, Some(Bytes::from(vec![])));

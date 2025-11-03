@@ -496,7 +496,7 @@ fn test_stress_mixed_workload() {
 
     // Verify writes persisted
     println!("Verifying written data...");
-    for i in (0..write_count).step_by(write_count / 100.max(1)) {
+    for i in (0..write_count).step_by(write_count / 100) {
         let key = format!("key_{:010}", i);
         let value = db.get(key.as_bytes()).unwrap();
         // May or may not exist (could have been deleted), but shouldn't error

@@ -2,9 +2,9 @@
 // Week 6: Enhanced with bloom filters, compression, and binary search
 // Week 13: KV separation - stores value pointers for large values
 
-use bytes::Bytes;
 use crate::bloom::BloomFilter;
-use crate::vlog::{ValuePointer, VLog};
+use crate::vlog::{VLog, ValuePointer};
+use bytes::Bytes;
 use crc32fast::Hasher;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -226,7 +226,7 @@ impl Default for SSTableBuilder {
 pub struct SSTable {
     file: File,
     path: PathBuf,
-    index: Vec<(Bytes, u64)>,  // (Key, offset) pairs for binary search
+    index: Vec<(Bytes, u64)>, // (Key, offset) pairs for binary search
     bloom: BloomFilter,
     num_entries: usize,
     vlog: Option<VLog>, // Optional vLog for reading value pointers
@@ -322,8 +322,7 @@ impl SSTable {
         let mut bloom_bytes = vec![0u8; bloom_len];
         file.read_exact(&mut bloom_bytes)?;
 
-        let bloom = BloomFilter::from_bytes(&bloom_bytes)
-            .ok_or(SSTableError::InvalidFormat)?;
+        let bloom = BloomFilter::from_bytes(&bloom_bytes).ok_or(SSTableError::InvalidFormat)?;
 
         Ok(Self {
             file,
@@ -542,18 +541,9 @@ mod tests {
         assert_eq!(sstable.len(), 3);
 
         // Read values
-        assert_eq!(
-            sstable.get(b"key1").unwrap(),
-            Some(Bytes::from("value1"))
-        );
-        assert_eq!(
-            sstable.get(b"key2").unwrap(),
-            Some(Bytes::from("value2"))
-        );
-        assert_eq!(
-            sstable.get(b"key3").unwrap(),
-            Some(Bytes::from("value3"))
-        );
+        assert_eq!(sstable.get(b"key1").unwrap(), Some(Bytes::from("value1")));
+        assert_eq!(sstable.get(b"key2").unwrap(), Some(Bytes::from("value2")));
+        assert_eq!(sstable.get(b"key3").unwrap(), Some(Bytes::from("value3")));
         assert_eq!(sstable.get(b"key4").unwrap(), None);
     }
 
@@ -570,11 +560,7 @@ mod tests {
         let mut sstable = builder.build(&sstable_path).unwrap();
 
         // Iterate
-        let entries: Vec<_> = sstable
-            .iter()
-            .unwrap()
-            .map(|r| r.unwrap())
-            .collect();
+        let entries: Vec<_> = sstable.iter().unwrap().map(|r| r.unwrap()).collect();
 
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].0, Bytes::from("key1"));
@@ -595,10 +581,7 @@ mod tests {
 
         // Reopen
         let mut sstable = SSTable::open(&sstable_path).unwrap();
-        assert_eq!(
-            sstable.get(b"key1").unwrap(),
-            Some(Bytes::from("value1"))
-        );
+        assert_eq!(sstable.get(b"key1").unwrap(), Some(Bytes::from("value1")));
     }
 
     #[test]
@@ -650,8 +633,12 @@ mod tests {
 
         // Build SSTable with small values (will be stored inline)
         let mut builder = SSTableBuilder::new().with_vlog_threshold(100); // 100 byte threshold
-        builder.add_with_vlog(Bytes::from("key1"), Bytes::from("small_value"), &mut vlog).unwrap();
-        builder.add_with_vlog(Bytes::from("key2"), Bytes::from("tiny"), &mut vlog).unwrap();
+        builder
+            .add_with_vlog(Bytes::from("key1"), Bytes::from("small_value"), &mut vlog)
+            .unwrap();
+        builder
+            .add_with_vlog(Bytes::from("key2"), Bytes::from("tiny"), &mut vlog)
+            .unwrap();
 
         let mut sstable = builder.build(&sstable_path).unwrap();
 
@@ -660,10 +647,7 @@ mod tests {
             sstable.get(b"key1").unwrap(),
             Some(Bytes::from("small_value"))
         );
-        assert_eq!(
-            sstable.get(b"key2").unwrap(),
-            Some(Bytes::from("tiny"))
-        );
+        assert_eq!(sstable.get(b"key2").unwrap(), Some(Bytes::from("tiny")));
     }
 
     #[test]
@@ -680,7 +664,13 @@ mod tests {
         // Build SSTable with large values (will be stored in vLog)
         let mut builder = SSTableBuilder::new().with_vlog_threshold(10); // 10 byte threshold
         let large_value = vec![b'x'; 100];
-        builder.add_with_vlog(Bytes::from("key1"), Bytes::from(large_value.clone()), &mut vlog).unwrap();
+        builder
+            .add_with_vlog(
+                Bytes::from("key1"),
+                Bytes::from(large_value.clone()),
+                &mut vlog,
+            )
+            .unwrap();
 
         let mut sstable = builder.build(&sstable_path).unwrap();
 
@@ -712,18 +702,25 @@ mod tests {
 
         // Build SSTable with mixed small and large values
         let mut builder = SSTableBuilder::new().with_vlog_threshold(50); // 50 byte threshold
-        builder.add_with_vlog(Bytes::from("key1"), Bytes::from("small"), &mut vlog).unwrap();
+        builder
+            .add_with_vlog(Bytes::from("key1"), Bytes::from("small"), &mut vlog)
+            .unwrap();
         let large_value = vec![b'x'; 100];
-        builder.add_with_vlog(Bytes::from("key2"), Bytes::from(large_value.clone()), &mut vlog).unwrap();
-        builder.add_with_vlog(Bytes::from("key3"), Bytes::from("also_small"), &mut vlog).unwrap();
+        builder
+            .add_with_vlog(
+                Bytes::from("key2"),
+                Bytes::from(large_value.clone()),
+                &mut vlog,
+            )
+            .unwrap();
+        builder
+            .add_with_vlog(Bytes::from("key3"), Bytes::from("also_small"), &mut vlog)
+            .unwrap();
 
         let mut sstable = builder.build(&sstable_path).unwrap();
 
         // Small values work without vLog
-        assert_eq!(
-            sstable.get(b"key1").unwrap(),
-            Some(Bytes::from("small"))
-        );
+        assert_eq!(sstable.get(b"key1").unwrap(), Some(Bytes::from("small")));
         assert_eq!(
             sstable.get(b"key3").unwrap(),
             Some(Bytes::from("also_small"))
@@ -738,10 +735,7 @@ mod tests {
         let mut sstable = SSTable::open(&sstable_path).unwrap().with_vlog(vlog);
 
         // All values should work now
-        assert_eq!(
-            sstable.get(b"key1").unwrap(),
-            Some(Bytes::from("small"))
-        );
+        assert_eq!(sstable.get(b"key1").unwrap(), Some(Bytes::from("small")));
         assert_eq!(
             sstable.get(b"key2").unwrap(),
             Some(Bytes::from(large_value))
@@ -766,7 +760,9 @@ mod tests {
             let mut builder = SSTableBuilder::new().with_vlog_threshold(20);
 
             let large_value = vec![b'A'; 100];
-            builder.add_with_vlog(Bytes::from("key1"), Bytes::from(large_value), &mut vlog).unwrap();
+            builder
+                .add_with_vlog(Bytes::from("key1"), Bytes::from(large_value), &mut vlog)
+                .unwrap();
             builder.build(&sstable_path).unwrap();
         }
 
@@ -795,10 +791,7 @@ mod tests {
 
         // Corrupt the file by flipping a bit in the data section
         {
-            let mut file = OpenOptions::new()
-                .write(true)
-                .open(&sstable_path)
-                .unwrap();
+            let mut file = OpenOptions::new().write(true).open(&sstable_path).unwrap();
             file.seek(SeekFrom::Start(10)).unwrap(); // Middle of data
             file.write_all(&[0xFF]).unwrap(); // Corrupt one byte
             file.sync_all().unwrap();
@@ -808,7 +801,7 @@ mod tests {
         let result = SSTable::open(&sstable_path);
         assert!(result.is_err());
         match result.unwrap_err() {
-            SSTableError::Corruption { .. } => {}, // Expected
+            SSTableError::Corruption { .. } => {} // Expected
             other => panic!("Expected Corruption error, got: {:?}", other),
         }
     }
@@ -826,13 +819,7 @@ mod tests {
 
         // Should open successfully without modification
         let mut sstable = SSTable::open(&sstable_path).unwrap();
-        assert_eq!(
-            sstable.get(b"key1").unwrap(),
-            Some(Bytes::from("value1"))
-        );
-        assert_eq!(
-            sstable.get(b"key2").unwrap(),
-            Some(Bytes::from("value2"))
-        );
+        assert_eq!(sstable.get(b"key1").unwrap(), Some(Bytes::from("value1")));
+        assert_eq!(sstable.get(b"key2").unwrap(), Some(Bytes::from("value2")));
     }
 }

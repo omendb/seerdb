@@ -28,13 +28,13 @@ impl BloomFilter {
     /// * `false_positive_rate` - Target false positive rate (e.g., 0.01 for 1%)
     pub fn new(expected_elements: usize, false_positive_rate: f64) -> Self {
         // Optimal bit array size: m = -n * ln(p) / (ln(2)^2)
-        let num_bits =
-            (-(expected_elements as f64) * false_positive_rate.ln() / (2.0_f64.ln().powi(2)))
-                .ceil() as usize;
+        let num_bits = (-(expected_elements as f64) * false_positive_rate.ln()
+            / (2.0_f64.ln().powi(2)))
+        .ceil() as usize;
 
         // Optimal number of hash functions: k = (m/n) * ln(2)
-        let num_hashes = ((num_bits as f64 / expected_elements as f64) * 2.0_f64.ln()).ceil()
-            as usize;
+        let num_hashes =
+            ((num_bits as f64 / expected_elements as f64) * 2.0_f64.ln()).ceil() as usize;
         let num_hashes = num_hashes.max(1); // At least one hash function
 
         Self {

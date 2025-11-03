@@ -266,7 +266,10 @@ impl LSMTree {
                 // Verify SSTable by opening it (validates checksum)
                 // If corrupt, this will return an error
                 SSTable::open(&path).map_err(|e| {
-                    std::io::Error::new(std::io::ErrorKind::InvalidData, format!("Corrupt SSTable: {}", e))
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("Corrupt SSTable: {}", e),
+                    )
                 })?;
 
                 // Add to L0 (all recovered SSTables go to L0)

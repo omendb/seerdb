@@ -89,8 +89,8 @@ impl WALReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wal::{Record, SyncPolicy, WAL};
     use bytes::Bytes;
-    use crate::wal::{Record, WAL, SyncPolicy};
     use tempfile::tempdir;
 
     #[test]

@@ -103,9 +103,12 @@ impl VLogRecord {
         }
 
         // Read value length
-        let value_len =
-            u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]])
-                as usize;
+        let value_len = u32::from_le_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]) as usize;
         offset += 4;
 
         if offset + value_len + 4 > data.len() {
@@ -117,8 +120,12 @@ impl VLogRecord {
         offset += value_len;
 
         // Read CRC
-        let stored_crc =
-            u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]);
+        let stored_crc = u32::from_le_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]);
 
         // Verify CRC
         let mut hasher = Hasher::new();

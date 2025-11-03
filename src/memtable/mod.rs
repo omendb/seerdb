@@ -154,14 +154,8 @@ mod tests {
         memtable.put(Bytes::from("key1"), Bytes::from("value1"));
         memtable.put(Bytes::from("key2"), Bytes::from("value2"));
 
-        assert_eq!(
-            memtable.get(b"key1"),
-            Some(Bytes::from("value1"))
-        );
-        assert_eq!(
-            memtable.get(b"key2"),
-            Some(Bytes::from("value2"))
-        );
+        assert_eq!(memtable.get(b"key1"), Some(Bytes::from("value1")));
+        assert_eq!(memtable.get(b"key2"), Some(Bytes::from("value2")));
         assert_eq!(memtable.get(b"key3"), None);
     }
 
@@ -170,10 +164,7 @@ mod tests {
         let memtable = Memtable::new(1024);
 
         memtable.put(Bytes::from("key1"), Bytes::from("value1"));
-        assert_eq!(
-            memtable.get(b"key1"),
-            Some(Bytes::from("value1"))
-        );
+        assert_eq!(memtable.get(b"key1"), Some(Bytes::from("value1")));
 
         memtable.delete(Bytes::from("key1"));
         assert_eq!(memtable.get(b"key1"), None);
@@ -284,14 +275,8 @@ mod tests {
 
         // Verify data was written correctly
         assert_eq!(sstable.len(), 3);
-        assert_eq!(
-            sstable.get(b"key1").unwrap(),
-            Some(Bytes::from("value1"))
-        );
-        assert_eq!(
-            sstable.get(b"key2").unwrap(),
-            Some(Bytes::from("value2"))
-        );
+        assert_eq!(sstable.get(b"key1").unwrap(), Some(Bytes::from("value1")));
+        assert_eq!(sstable.get(b"key2").unwrap(), Some(Bytes::from("value2")));
     }
 
     #[test]

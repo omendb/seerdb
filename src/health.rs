@@ -21,12 +21,16 @@ impl HealthStatus {
 
     /// Check if any check is unhealthy
     pub fn has_unhealthy(&self) -> bool {
-        self.checks.iter().any(|c| c.status == CheckStatus::Unhealthy)
+        self.checks
+            .iter()
+            .any(|c| c.status == CheckStatus::Unhealthy)
     }
 
     /// Check if any check is degraded
     pub fn has_degraded(&self) -> bool {
-        self.checks.iter().any(|c| c.status == CheckStatus::Degraded)
+        self.checks
+            .iter()
+            .any(|c| c.status == CheckStatus::Degraded)
     }
 }
 

@@ -203,9 +203,8 @@ fn benchmark_sled() {
     for i in 0..1000 {
         let start_key = format!("key_{:08}", i * 100);
         let iter = db.range(start_key.as_bytes()..);
-        let mut _count = 0;
         for _ in iter.take(100) {
-            _count += 1;
+            // Iterate through items
         }
     }
     let elapsed = start.elapsed();
@@ -309,9 +308,8 @@ fn benchmark_fjall() {
     for i in 0..1000 {
         let start_key = format!("key_{:08}", i * 100);
         let iter = partition.range(start_key.as_bytes()..);
-        let mut _count = 0;
         for _ in iter.take(100) {
-            _count += 1;
+            // Iterate through items
         }
     }
     let elapsed = start.elapsed();
