@@ -5,7 +5,9 @@ use seerdb::bloom::{BloomFilter, LearnedBloomFilter};
 use std::time::Instant;
 
 fn generate_keys(n: usize, start: usize) -> Vec<String> {
-    (start..start + n).map(|i| format!("key_{:010}", i)).collect()
+    (start..start + n)
+        .map(|i| format!("key_{:010}", i))
+        .collect()
 }
 
 fn main() {
@@ -48,8 +50,17 @@ fn main() {
 
         println!("  Build time:  {:?}", trad_build_time);
         println!("  Size:        {} bytes", trad_size);
-        println!("  FPR:         {:.2}% ({}/{})", trad_fpr * 100.0, trad_fp, test_keys.len());
-        println!("  Query time:  {:?} ({} queries)", trad_query_time, keys.len());
+        println!(
+            "  FPR:         {:.2}% ({}/{})",
+            trad_fpr * 100.0,
+            trad_fp,
+            test_keys.len()
+        );
+        println!(
+            "  Query time:  {:?} ({} queries)",
+            trad_query_time,
+            keys.len()
+        );
         println!();
 
         // Learned Bloom Filter
@@ -78,8 +89,17 @@ fn main() {
 
         println!("  Build time:  {:?}", learned_build_time);
         println!("  Size:        {} bytes", learned_size);
-        println!("  FPR:         {:.2}% ({}/{})", learned_fpr * 100.0, learned_fp, test_keys.len());
-        println!("  Query time:  {:?} ({} queries)", learned_query_time, keys.len());
+        println!(
+            "  FPR:         {:.2}% ({}/{})",
+            learned_fpr * 100.0,
+            learned_fp,
+            test_keys.len()
+        );
+        println!(
+            "  Query time:  {:?} ({} queries)",
+            learned_query_time,
+            keys.len()
+        );
         println!();
 
         // Comparison
@@ -94,9 +114,13 @@ fn main() {
             println!("  ❌ Learned is {:.1}% LARGER", -space_reduction);
         }
 
-        let query_speedup = trad_query_time.as_nanos() as f64 / learned_query_time.as_nanos() as f64;
+        let query_speedup =
+            trad_query_time.as_nanos() as f64 / learned_query_time.as_nanos() as f64;
         if query_speedup > 1.0 {
-            println!("  ⚠️  Learned is {:.2}x SLOWER for queries", 1.0 / query_speedup);
+            println!(
+                "  ⚠️  Learned is {:.2}x SLOWER for queries",
+                1.0 / query_speedup
+            );
         } else {
             println!("  ✅ Learned is {:.2}x faster for queries", query_speedup);
         }
@@ -130,7 +154,12 @@ fn main() {
         }
         let fpr = fp as f64 / test_keys.len() as f64;
 
-        println!("{:<12.1} {:<15} {:<15.2}%", threshold, learned_size, fpr * 100.0);
+        println!(
+            "{:<12.1} {:<15} {:<15.2}%",
+            threshold,
+            learned_size,
+            fpr * 100.0
+        );
     }
 
     println!("\n=== Summary ===\n");

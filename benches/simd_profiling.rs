@@ -27,27 +27,19 @@ fn benchmark_binary_search(c: &mut Criterion) {
 
         // Benchmark: existing keys (worst case - at end)
         let target_key = format!("key_{:08}", size - 1);
-        group.bench_with_input(
-            BenchmarkId::new("existing_key", size),
-            &size,
-            |b, _| {
-                b.iter(|| {
-                    black_box(sstable.get(target_key.as_bytes()).unwrap());
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("existing_key", size), &size, |b, _| {
+            b.iter(|| {
+                black_box(sstable.get(target_key.as_bytes()).unwrap());
+            });
+        });
 
         // Benchmark: missing keys
         let missing_key = format!("key_{:08}", size + 1000);
-        group.bench_with_input(
-            BenchmarkId::new("missing_key", size),
-            &size,
-            |b, _| {
-                b.iter(|| {
-                    black_box(sstable.get(missing_key.as_bytes()).unwrap());
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("missing_key", size), &size, |b, _| {
+            b.iter(|| {
+                black_box(sstable.get(missing_key.as_bytes()).unwrap());
+            });
+        });
     }
 
     group.finish();
@@ -68,27 +60,19 @@ fn benchmark_bloom_filter(c: &mut Criterion) {
 
         // Benchmark: positive lookups
         let existing_key = format!("key_{:08}", size - 1);
-        group.bench_with_input(
-            BenchmarkId::new("positive_lookup", size),
-            &size,
-            |b, _| {
-                b.iter(|| {
-                    black_box(bloom.contains(&existing_key));
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("positive_lookup", size), &size, |b, _| {
+            b.iter(|| {
+                black_box(bloom.contains(&existing_key));
+            });
+        });
 
         // Benchmark: negative lookups
         let missing_key = format!("key_{:08}", size + 1000);
-        group.bench_with_input(
-            BenchmarkId::new("negative_lookup", size),
-            &size,
-            |b, _| {
-                b.iter(|| {
-                    black_box(bloom.contains(&missing_key));
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("negative_lookup", size), &size, |b, _| {
+            b.iter(|| {
+                black_box(bloom.contains(&missing_key));
+            });
+        });
     }
 
     group.finish();
@@ -169,14 +153,20 @@ fn benchmark_bloom_filter_comparison(c: &mut Criterion) {
 
     // Space comparison
     println!("\n=== Bloom Filter Space Comparison ===");
-    println!("Traditional: {} bytes ({:.2} bytes/element)",
+    println!(
+        "Traditional: {} bytes ({:.2} bytes/element)",
         bloom_traditional.size_bytes(),
-        bloom_traditional.size_bytes() as f64 / size as f64);
-    println!("Bit-packed:  {} bytes ({:.2} bytes/element)",
+        bloom_traditional.size_bytes() as f64 / size as f64
+    );
+    println!(
+        "Bit-packed:  {} bytes ({:.2} bytes/element)",
         bloom_bitpacked.size_bytes(),
-        bloom_bitpacked.size_bytes() as f64 / size as f64);
-    println!("Space savings: {:.1}x\n",
-        bloom_traditional.size_bytes() as f64 / bloom_bitpacked.size_bytes() as f64);
+        bloom_bitpacked.size_bytes() as f64 / size as f64
+    );
+    println!(
+        "Space savings: {:.1}x\n",
+        bloom_traditional.size_bytes() as f64 / bloom_bitpacked.size_bytes() as f64
+    );
 
     group.finish();
 }

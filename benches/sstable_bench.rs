@@ -1,9 +1,9 @@
 // SSTable performance benchmark
 // Measures binary search and bloom filter improvements
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use seerdb::{SSTableBuilder, SSTable};
 use bytes::Bytes;
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use seerdb::{SSTable, SSTableBuilder};
 use tempfile::tempdir;
 
 fn build_sstable(num_entries: usize) -> (tempfile::TempDir, std::path::PathBuf) {
@@ -68,21 +68,17 @@ fn bench_sequential_scan(c: &mut Criterion) {
     for size in [1000, 10000] {
         let (_dir, path) = build_sstable(size);
 
-        group.bench_with_input(
-            BenchmarkId::new("full_scan", size),
-            &size,
-            |b, &_size| {
-                b.iter(|| {
-                    let mut sstable = SSTable::open(&path).unwrap();
-                    let mut iter = sstable.iter().unwrap();
-                    let mut count = 0;
-                    while let Some(Ok(_entry)) = iter.next() {
-                        count += 1;
-                    }
-                    black_box(count);
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("full_scan", size), &size, |b, &_size| {
+            b.iter(|| {
+                let mut sstable = SSTable::open(&path).unwrap();
+                let mut iter = sstable.iter().unwrap();
+                let mut count = 0;
+                while let Some(Ok(_entry)) = iter.next() {
+                    count += 1;
+                }
+                black_box(count);
+            });
+        });
     }
 
     group.finish();

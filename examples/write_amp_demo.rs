@@ -10,7 +10,7 @@ fn measure_writes(use_vlog: bool, num_entries: usize, value_size: usize) -> (u64
 
     let mut options = DBOptions {
         data_dir: dir.path().to_path_buf(),
-        memtable_capacity: 1024 * 1024, // 1MB memtable
+        memtable_capacity: 1024 * 1024,    // 1MB memtable
         wal_sync_policy: SyncPolicy::None, // Disable sync for faster demo
         ..Default::default()
     };
@@ -56,7 +56,8 @@ fn main() {
     let num_entries = 1000; // Reduced for faster demo
     let value_size = 4096; // 4KB (typical embedding size)
 
-    println!("Dataset: {} entries × {} bytes = {:.2} MB total",
+    println!(
+        "Dataset: {} entries × {} bytes = {:.2} MB total",
         num_entries,
         value_size,
         (num_entries * value_size) as f64 / (1024.0 * 1024.0)
@@ -66,18 +67,36 @@ fn main() {
     // Traditional LSM (no separation)
     println!("Traditional LSM (all in SSTable):");
     let (sst_size, vlog_size, throughput) = measure_writes(false, num_entries, value_size);
-    println!("  SSTable size: {:.2} MB", sst_size as f64 / (1024.0 * 1024.0));
-    println!("  VLog size:    {:.2} MB", vlog_size as f64 / (1024.0 * 1024.0));
-    println!("  Total:        {:.2} MB", (sst_size + vlog_size) as f64 / (1024.0 * 1024.0));
+    println!(
+        "  SSTable size: {:.2} MB",
+        sst_size as f64 / (1024.0 * 1024.0)
+    );
+    println!(
+        "  VLog size:    {:.2} MB",
+        vlog_size as f64 / (1024.0 * 1024.0)
+    );
+    println!(
+        "  Total:        {:.2} MB",
+        (sst_size + vlog_size) as f64 / (1024.0 * 1024.0)
+    );
     println!("  Throughput:   {:.0} writes/sec", throughput);
     println!();
 
     // WiscKey (KV separation)
     println!("WiscKey (KV separation, threshold=1KB):");
     let (sst_size_kv, vlog_size_kv, throughput_kv) = measure_writes(true, num_entries, value_size);
-    println!("  SSTable size: {:.2} MB (keys + pointers)", sst_size_kv as f64 / (1024.0 * 1024.0));
-    println!("  VLog size:    {:.2} MB (values)", vlog_size_kv as f64 / (1024.0 * 1024.0));
-    println!("  Total:        {:.2} MB", (sst_size_kv + vlog_size_kv) as f64 / (1024.0 * 1024.0));
+    println!(
+        "  SSTable size: {:.2} MB (keys + pointers)",
+        sst_size_kv as f64 / (1024.0 * 1024.0)
+    );
+    println!(
+        "  VLog size:    {:.2} MB (values)",
+        vlog_size_kv as f64 / (1024.0 * 1024.0)
+    );
+    println!(
+        "  Total:        {:.2} MB",
+        (sst_size_kv + vlog_size_kv) as f64 / (1024.0 * 1024.0)
+    );
     println!("  Throughput:   {:.0} writes/sec", throughput_kv);
     println!();
 
@@ -89,20 +108,41 @@ fn main() {
     println!("=== Write Amplification Analysis ===");
     println!();
     println!("During Compaction:");
-    println!("  Traditional LSM rewrites: {:.2} MB (entire SSTable)", sst_size as f64 / (1024.0 * 1024.0));
-    println!("  WiscKey rewrites:         {:.2} MB (only keys + pointers)", sst_size_kv as f64 / (1024.0 * 1024.0));
+    println!(
+        "  Traditional LSM rewrites: {:.2} MB (entire SSTable)",
+        sst_size as f64 / (1024.0 * 1024.0)
+    );
+    println!(
+        "  WiscKey rewrites:         {:.2} MB (only keys + pointers)",
+        sst_size_kv as f64 / (1024.0 * 1024.0)
+    );
     println!("  Reduction:                {:.1}%", sstable_reduction);
     println!();
 
     println!("Write Amplification Factor:");
-    println!("  Traditional: Compaction rewrites {:.2} MB per flush", sst_size as f64 / (1024.0 * 1024.0));
-    println!("  WiscKey:     Compaction rewrites {:.2} MB per flush", sst_size_kv as f64 / (1024.0 * 1024.0));
-    println!("  Improvement: {:.1}x less data written", sst_size as f64 / sst_size_kv as f64);
+    println!(
+        "  Traditional: Compaction rewrites {:.2} MB per flush",
+        sst_size as f64 / (1024.0 * 1024.0)
+    );
+    println!(
+        "  WiscKey:     Compaction rewrites {:.2} MB per flush",
+        sst_size_kv as f64 / (1024.0 * 1024.0)
+    );
+    println!(
+        "  Improvement: {:.1}x less data written",
+        sst_size as f64 / sst_size_kv as f64
+    );
     println!();
 
     println!("Benefits:");
-    println!("  • Large values ({} KB) never rewritten during compaction", value_size / 1024);
-    println!("  • SSTable compaction {:.1}x faster (smaller files)", sst_size as f64 / sst_size_kv as f64);
+    println!(
+        "  • Large values ({} KB) never rewritten during compaction",
+        value_size / 1024
+    );
+    println!(
+        "  • SSTable compaction {:.1}x faster (smaller files)",
+        sst_size as f64 / sst_size_kv as f64
+    );
     println!("  • Lower SSD wear (fewer writes)");
     println!("  • Better throughput for large-value workloads");
     println!();

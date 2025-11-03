@@ -6,7 +6,9 @@ use seerdb::bloom::{BloomFilter, LearnedBloomFilter};
 use std::collections::HashSet;
 
 fn generate_keys(n: usize, start: usize) -> Vec<String> {
-    (start..start + n).map(|i| format!("key_{:010}", i)).collect()
+    (start..start + n)
+        .map(|i| format!("key_{:010}", i))
+        .collect()
 }
 
 fn benchmark_space_savings(c: &mut Criterion) {
@@ -73,8 +75,18 @@ fn benchmark_false_positive_rate(c: &mut Criterion) {
     let learned_fpr = learned_fp as f64 / test_keys.len() as f64;
 
     println!("\n=== False Positive Rate (target: 1%) ===");
-    println!("Traditional: {:.2}% ({}/{})", trad_fpr * 100.0, trad_fp, test_keys.len());
-    println!("Learned:     {:.2}% ({}/{})", learned_fpr * 100.0, learned_fp, test_keys.len());
+    println!(
+        "Traditional: {:.2}% ({}/{})",
+        trad_fpr * 100.0,
+        trad_fp,
+        test_keys.len()
+    );
+    println!(
+        "Learned:     {:.2}% ({}/{})",
+        learned_fpr * 100.0,
+        learned_fp,
+        test_keys.len()
+    );
 
     group.finish();
 }
@@ -109,17 +121,13 @@ fn benchmark_query_time(c: &mut Criterion) {
         },
     );
 
-    group.bench_with_input(
-        BenchmarkId::new("learned_positive", size),
-        &size,
-        |b, _| {
-            b.iter(|| {
-                for key in &keys {
-                    black_box(lbf.contains(black_box(key)));
-                }
-            });
-        },
-    );
+    group.bench_with_input(BenchmarkId::new("learned_positive", size), &size, |b, _| {
+        b.iter(|| {
+            for key in &keys {
+                black_box(lbf.contains(black_box(key)));
+            }
+        });
+    });
 
     // Benchmark negative lookups (keys NOT in set)
     let test_keys = generate_keys(size, 2_000_000);
@@ -136,17 +144,13 @@ fn benchmark_query_time(c: &mut Criterion) {
         },
     );
 
-    group.bench_with_input(
-        BenchmarkId::new("learned_negative", size),
-        &size,
-        |b, _| {
-            b.iter(|| {
-                for key in &test_keys {
-                    black_box(lbf.contains(black_box(key)));
-                }
-            });
-        },
-    );
+    group.bench_with_input(BenchmarkId::new("learned_negative", size), &size, |b, _| {
+        b.iter(|| {
+            for key in &test_keys {
+                black_box(lbf.contains(black_box(key)));
+            }
+        });
+    });
 
     group.finish();
 }
@@ -173,8 +177,10 @@ fn benchmark_scaling(c: &mut Criterion) {
 
         let reduction = ((trad_size - learned_size) as f64 / trad_size as f64) * 100.0;
 
-        println!("{:>10} keys | Trad: {:>8} bytes | Learned: {:>8} bytes | Reduction: {:>5.1}%",
-            size, trad_size, learned_size, reduction);
+        println!(
+            "{:>10} keys | Trad: {:>8} bytes | Learned: {:>8} bytes | Reduction: {:>5.1}%",
+            size, trad_size, learned_size, reduction
+        );
     }
 
     group.finish();
@@ -203,8 +209,12 @@ fn benchmark_threshold_impact(c: &mut Criterion) {
         let fpr = fp_count as f64 / test_keys.len() as f64;
         let size_bytes = lbf.size_bytes();
 
-        println!("Threshold {:.1} | Size: {:>8} bytes | FPR: {:.2}%",
-            threshold, size_bytes, fpr * 100.0);
+        println!(
+            "Threshold {:.1} | Size: {:>8} bytes | FPR: {:.2}%",
+            threshold,
+            size_bytes,
+            fpr * 100.0
+        );
     }
 
     group.finish();

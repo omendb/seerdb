@@ -39,7 +39,7 @@ fn main() {
 }
 
 fn benchmark_rocksdb() {
-    use rocksdb::{DB, Options};
+    use rocksdb::{Options, DB};
 
     let path = "/tmp/bench_rocksdb";
     let mut opts = Options::default();
@@ -60,7 +60,10 @@ fn benchmark_rocksdb() {
     let throughput = NUM_OPERATIONS as f64 / elapsed.as_secs_f64();
     println!("  Time: {:.2}s", elapsed.as_secs_f64());
     println!("  Throughput: {:.0} ops/sec", throughput);
-    println!("  Latency: {:.2} us/op", elapsed.as_micros() as f64 / NUM_OPERATIONS as f64);
+    println!(
+        "  Latency: {:.2} us/op",
+        elapsed.as_micros() as f64 / NUM_OPERATIONS as f64
+    );
 
     // Workload 2: Random Reads
     println!("\nWorkload 2: Random Reads ({} ops)", NUM_OPERATIONS);
@@ -73,7 +76,10 @@ fn benchmark_rocksdb() {
     let throughput = NUM_OPERATIONS as f64 / elapsed.as_secs_f64();
     println!("  Time: {:.2}s", elapsed.as_secs_f64());
     println!("  Throughput: {:.0} ops/sec", throughput);
-    println!("  Latency: {:.2} us/op", elapsed.as_micros() as f64 / NUM_OPERATIONS as f64);
+    println!(
+        "  Latency: {:.2} us/op",
+        elapsed.as_micros() as f64 / NUM_OPERATIONS as f64
+    );
 
     // Workload 3: Mixed (50% read, 50% write)
     println!("\nWorkload 3: Mixed 50/50 ({} ops)", NUM_OPERATIONS);
@@ -93,7 +99,10 @@ fn benchmark_rocksdb() {
     let throughput = NUM_OPERATIONS as f64 / elapsed.as_secs_f64();
     println!("  Time: {:.2}s", elapsed.as_secs_f64());
     println!("  Throughput: {:.0} ops/sec", throughput);
-    println!("  Latency: {:.2} us/op", elapsed.as_micros() as f64 / NUM_OPERATIONS as f64);
+    println!(
+        "  Latency: {:.2} us/op",
+        elapsed.as_micros() as f64 / NUM_OPERATIONS as f64
+    );
 
     // Workload 4: Range Scans
     println!("\nWorkload 4: Range Scans (1000 scans, 100 keys each)");
@@ -112,8 +121,14 @@ fn benchmark_rocksdb() {
     }
     let elapsed = start.elapsed();
     println!("  Time: {:.2}s", elapsed.as_secs_f64());
-    println!("  Throughput: {:.0} scans/sec", 1000.0 / elapsed.as_secs_f64());
-    println!("  Latency: {:.2} ms/scan", elapsed.as_millis() as f64 / 1000.0);
+    println!(
+        "  Throughput: {:.0} scans/sec",
+        1000.0 / elapsed.as_secs_f64()
+    );
+    println!(
+        "  Latency: {:.2} ms/scan",
+        elapsed.as_millis() as f64 / 1000.0
+    );
 
     drop(db);
 }
@@ -128,14 +143,18 @@ fn benchmark_sled() {
     let start = Instant::now();
     for i in 0..NUM_OPERATIONS {
         let key = format!("key_{:08}", i);
-        db.insert(key.as_bytes(), value.as_slice()).expect("Insert failed");
+        db.insert(key.as_bytes(), value.as_slice())
+            .expect("Insert failed");
     }
     db.flush().expect("Flush failed");
     let elapsed = start.elapsed();
     let throughput = NUM_OPERATIONS as f64 / elapsed.as_secs_f64();
     println!("  Time: {:.2}s", elapsed.as_secs_f64());
     println!("  Throughput: {:.0} ops/sec", throughput);
-    println!("  Latency: {:.2} us/op", elapsed.as_micros() as f64 / NUM_OPERATIONS as f64);
+    println!(
+        "  Latency: {:.2} us/op",
+        elapsed.as_micros() as f64 / NUM_OPERATIONS as f64
+    );
 
     // Workload 2: Random Reads
     println!("\nWorkload 2: Random Reads ({} ops)", NUM_OPERATIONS);
@@ -148,7 +167,10 @@ fn benchmark_sled() {
     let throughput = NUM_OPERATIONS as f64 / elapsed.as_secs_f64();
     println!("  Time: {:.2}s", elapsed.as_secs_f64());
     println!("  Throughput: {:.0} ops/sec", throughput);
-    println!("  Latency: {:.2} us/op", elapsed.as_micros() as f64 / NUM_OPERATIONS as f64);
+    println!(
+        "  Latency: {:.2} us/op",
+        elapsed.as_micros() as f64 / NUM_OPERATIONS as f64
+    );
 
     // Workload 3: Mixed (50% read, 50% write)
     println!("\nWorkload 3: Mixed 50/50 ({} ops)", NUM_OPERATIONS);
@@ -157,7 +179,8 @@ fn benchmark_sled() {
         if i % 2 == 0 {
             // Write
             let key = format!("key_{:08}", i + NUM_OPERATIONS);
-            db.insert(key.as_bytes(), value.as_slice()).expect("Insert failed");
+            db.insert(key.as_bytes(), value.as_slice())
+                .expect("Insert failed");
         } else {
             // Read
             let key = format!("key_{:08}", i);
@@ -169,7 +192,10 @@ fn benchmark_sled() {
     let throughput = NUM_OPERATIONS as f64 / elapsed.as_secs_f64();
     println!("  Time: {:.2}s", elapsed.as_secs_f64());
     println!("  Throughput: {:.0} ops/sec", throughput);
-    println!("  Latency: {:.2} us/op", elapsed.as_micros() as f64 / NUM_OPERATIONS as f64);
+    println!(
+        "  Latency: {:.2} us/op",
+        elapsed.as_micros() as f64 / NUM_OPERATIONS as f64
+    );
 
     // Workload 4: Range Scans
     println!("\nWorkload 4: Range Scans (1000 scans, 100 keys each)");
@@ -184,8 +210,14 @@ fn benchmark_sled() {
     }
     let elapsed = start.elapsed();
     println!("  Time: {:.2}s", elapsed.as_secs_f64());
-    println!("  Throughput: {:.0} scans/sec", 1000.0 / elapsed.as_secs_f64());
-    println!("  Latency: {:.2} ms/scan", elapsed.as_millis() as f64 / 1000.0);
+    println!(
+        "  Throughput: {:.0} scans/sec",
+        1000.0 / elapsed.as_secs_f64()
+    );
+    println!(
+        "  Latency: {:.2} ms/scan",
+        elapsed.as_millis() as f64 / 1000.0
+    );
 
     drop(db);
 }
@@ -222,7 +254,10 @@ fn benchmark_fjall() {
     let throughput = NUM_OPERATIONS as f64 / elapsed.as_secs_f64();
     println!("  Time: {:.2}s", elapsed.as_secs_f64());
     println!("  Throughput: {:.0} ops/sec", throughput);
-    println!("  Latency: {:.2} us/op", elapsed.as_micros() as f64 / NUM_OPERATIONS as f64);
+    println!(
+        "  Latency: {:.2} us/op",
+        elapsed.as_micros() as f64 / NUM_OPERATIONS as f64
+    );
 
     // Workload 2: Random Reads
     println!("\nWorkload 2: Random Reads ({} ops)", NUM_OPERATIONS);
@@ -235,7 +270,10 @@ fn benchmark_fjall() {
     let throughput = NUM_OPERATIONS as f64 / elapsed.as_secs_f64();
     println!("  Time: {:.2}s", elapsed.as_secs_f64());
     println!("  Throughput: {:.0} ops/sec", throughput);
-    println!("  Latency: {:.2} us/op", elapsed.as_micros() as f64 / NUM_OPERATIONS as f64);
+    println!(
+        "  Latency: {:.2} us/op",
+        elapsed.as_micros() as f64 / NUM_OPERATIONS as f64
+    );
 
     // Workload 3: Mixed (50% read, 50% write) - batch writes, individual reads
     println!("\nWorkload 3: Mixed 50/50 ({} ops)", NUM_OPERATIONS);
@@ -260,7 +298,10 @@ fn benchmark_fjall() {
     let throughput = NUM_OPERATIONS as f64 / elapsed.as_secs_f64();
     println!("  Time: {:.2}s", elapsed.as_secs_f64());
     println!("  Throughput: {:.0} ops/sec", throughput);
-    println!("  Latency: {:.2} us/op", elapsed.as_micros() as f64 / NUM_OPERATIONS as f64);
+    println!(
+        "  Latency: {:.2} us/op",
+        elapsed.as_micros() as f64 / NUM_OPERATIONS as f64
+    );
 
     // Workload 4: Range Scans
     println!("\nWorkload 4: Range Scans (1000 scans, 100 keys each)");
@@ -275,8 +316,14 @@ fn benchmark_fjall() {
     }
     let elapsed = start.elapsed();
     println!("  Time: {:.2}s", elapsed.as_secs_f64());
-    println!("  Throughput: {:.0} scans/sec", 1000.0 / elapsed.as_secs_f64());
-    println!("  Latency: {:.2} ms/scan", elapsed.as_millis() as f64 / 1000.0);
+    println!(
+        "  Throughput: {:.0} scans/sec",
+        1000.0 / elapsed.as_secs_f64()
+    );
+    println!(
+        "  Latency: {:.2} ms/scan",
+        elapsed.as_millis() as f64 / 1000.0
+    );
 
     drop(partition);
     drop(keyspace);
