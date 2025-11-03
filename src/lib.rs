@@ -4,6 +4,7 @@
 pub mod bloom;
 pub mod compaction;
 pub mod db;
+pub mod health;
 pub mod memtable;
 pub mod metrics;
 pub mod sstable;
@@ -12,6 +13,7 @@ pub mod wal;
 
 pub use bloom::{BitPackedBloomFilter, BloomFilter, LearnedBloomFilter};
 pub use db::{DB, DBOptions};
+pub use health::{CheckStatus, HealthCheck, HealthStatus};
 pub use memtable::Memtable;
 pub use metrics::DBStats;
 pub use sstable::{SSTable, SSTableBuilder};

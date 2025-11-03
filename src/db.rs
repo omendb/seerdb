@@ -2,6 +2,7 @@
 // Integrates WAL, Memtable, SSTable, Compaction, and VLog
 
 use crate::compaction::{compact_sstables, LSMTree};
+use crate::health::{HealthCheck, HealthStatus};
 use crate::memtable::Memtable;
 use crate::metrics::{DBStats, MetricsCollector};
 use crate::sstable::SSTable;
@@ -682,6 +683,141 @@ impl DB {
             uptime_seconds: self.metrics.uptime_seconds(),
         }
     }
+
+    /// Get database health status for monitoring
+    ///
+    /// Performs various health checks to detect degraded performance or critical conditions.
+    /// Returns a HealthStatus with individual check results.
+    ///
+    /// Health check thresholds:
+    /// - Compaction lag: L0 >10 SSTables = degraded, >20 = unhealthy
+    /// - WAL size: >100MB = degraded, >500MB = unhealthy
+    /// - Memtable: >80% full = degraded, >95% = unhealthy
+    /// - Put latency p99: >100ms = degraded, >1s = unhealthy
+    /// - Get latency p99: >50ms = degraded, >500ms = unhealthy
+    pub fn health(&self) -> HealthStatus {
+        let mut checks = Vec::new();
+
+        // Check 1: Compaction lag (L0 SSTable count)
+        let lsm = self.lsm.lock().expect("LSM mutex poisoned");
+        let l0_count = if let Some(level) = lsm.level(0) {
+            level.sstables().len()
+        } else {
+            0
+        };
+        drop(lsm);
+
+        if l0_count > 20 {
+            checks.push(HealthCheck::unhealthy(
+                "compaction_lag",
+                format!("L0 has {} SSTables (threshold: 20)", l0_count),
+            ));
+        } else if l0_count > 10 {
+            checks.push(HealthCheck::degraded(
+                "compaction_lag",
+                format!("L0 has {} SSTables (threshold: 10)", l0_count),
+            ));
+        } else {
+            checks.push(HealthCheck::healthy_with_message(
+                "compaction_lag",
+                format!("L0 has {} SSTables", l0_count),
+            ));
+        }
+
+        // Check 2: WAL size
+        let wal_size_bytes = self
+            .options
+            .data_dir
+            .join("wal.log")
+            .metadata()
+            .map(|m| m.len())
+            .unwrap_or(0);
+        let wal_size_mb = wal_size_bytes / (1024 * 1024);
+
+        if wal_size_mb > 500 {
+            checks.push(HealthCheck::unhealthy(
+                "wal_size",
+                format!("WAL is {} MB (threshold: 500 MB)", wal_size_mb),
+            ));
+        } else if wal_size_mb > 100 {
+            checks.push(HealthCheck::degraded(
+                "wal_size",
+                format!("WAL is {} MB (threshold: 100 MB)", wal_size_mb),
+            ));
+        } else {
+            checks.push(HealthCheck::healthy_with_message(
+                "wal_size",
+                format!("WAL is {} MB", wal_size_mb),
+            ));
+        }
+
+        // Check 3: Memtable utilization
+        let mt = self.memtable.lock().expect("Memtable lock poisoned");
+        let memtable_size = mt.size();
+        let memtable_capacity = mt.capacity();
+        drop(mt);
+        let utilization_pct = (memtable_size as f64 / memtable_capacity as f64) * 100.0;
+
+        if utilization_pct > 95.0 {
+            checks.push(HealthCheck::unhealthy(
+                "memtable_utilization",
+                format!("Memtable is {:.1}% full (threshold: 95%)", utilization_pct),
+            ));
+        } else if utilization_pct > 80.0 {
+            checks.push(HealthCheck::degraded(
+                "memtable_utilization",
+                format!("Memtable is {:.1}% full (threshold: 80%)", utilization_pct),
+            ));
+        } else {
+            checks.push(HealthCheck::healthy_with_message(
+                "memtable_utilization",
+                format!("Memtable is {:.1}% full", utilization_pct),
+            ));
+        }
+
+        // Check 4: Put latency (p99)
+        let (put_latencies, get_latencies, _) = self.metrics.get_latency_percentiles();
+        let put_p99_ms = put_latencies.2 / 1000; // Convert microseconds to milliseconds
+
+        if put_p99_ms > 1000 {
+            checks.push(HealthCheck::unhealthy(
+                "put_latency_p99",
+                format!("Put p99 is {} ms (threshold: 1000 ms)", put_p99_ms),
+            ));
+        } else if put_p99_ms > 100 {
+            checks.push(HealthCheck::degraded(
+                "put_latency_p99",
+                format!("Put p99 is {} ms (threshold: 100 ms)", put_p99_ms),
+            ));
+        } else {
+            checks.push(HealthCheck::healthy_with_message(
+                "put_latency_p99",
+                format!("Put p99 is {} ms", put_p99_ms),
+            ));
+        }
+
+        // Check 5: Get latency (p99)
+        let get_p99_ms = get_latencies.2 / 1000; // Convert microseconds to milliseconds
+
+        if get_p99_ms > 500 {
+            checks.push(HealthCheck::unhealthy(
+                "get_latency_p99",
+                format!("Get p99 is {} ms (threshold: 500 ms)", get_p99_ms),
+            ));
+        } else if get_p99_ms > 50 {
+            checks.push(HealthCheck::degraded(
+                "get_latency_p99",
+                format!("Get p99 is {} ms (threshold: 50 ms)", get_p99_ms),
+            ));
+        } else {
+            checks.push(HealthCheck::healthy_with_message(
+                "get_latency_p99",
+                format!("Get p99 is {} ms", get_p99_ms),
+            ));
+        }
+
+        HealthStatus::new(checks)
+    }
 }
 
 /// Graceful shutdown: signal compaction thread to stop and wait for it
@@ -1098,5 +1234,39 @@ mod tests {
                 Some(Bytes::from(expected))
             );
         }
+    }
+
+    #[test]
+    fn test_db_health_checks() {
+        let dir = tempdir().unwrap();
+        let options = DBOptions {
+            data_dir: dir.path().to_path_buf(),
+            ..Default::default()
+        };
+
+        let db = DB::open(options).unwrap();
+
+        // Perform some operations
+        for i in 0..10 {
+            db.put(format!("key{}", i).as_bytes(), b"value").unwrap();
+        }
+
+        // Get health status
+        let health = db.health();
+
+        // Should be healthy (low utilization, low L0 count, etc.)
+        assert!(health.healthy);
+        assert_eq!(health.checks.len(), 5); // 5 health checks
+
+        // Verify check names
+        let check_names: Vec<&str> = health.checks.iter().map(|c| c.name.as_str()).collect();
+        assert!(check_names.contains(&"compaction_lag"));
+        assert!(check_names.contains(&"wal_size"));
+        assert!(check_names.contains(&"memtable_utilization"));
+        assert!(check_names.contains(&"put_latency_p99"));
+        assert!(check_names.contains(&"get_latency_p99"));
+
+        // Test display formatting (doesn't panic)
+        let _display = format!("{}", health);
     }
 }
