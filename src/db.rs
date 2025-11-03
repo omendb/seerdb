@@ -3,6 +3,7 @@
 
 use crate::compaction::{compact_sstables, LSMTree};
 use crate::memtable::Memtable;
+use crate::metrics::{DBStats, MetricsCollector};
 use crate::sstable::SSTable;
 use crate::vlog::VLog;
 use crate::wal::{Record, SyncPolicy, WAL, WALReader};
@@ -11,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
+use std::time::Instant;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -96,6 +98,8 @@ pub struct DB {
     vlog: Arc<Mutex<Option<VLog>>>,
     /// Counter for generating SSTable filenames
     sstable_counter: Arc<Mutex<u64>>,
+    /// Metrics collector for observability
+    metrics: Arc<MetricsCollector>,
     /// Channel for sending compaction tasks to background thread
     compaction_tx: Option<Sender<CompactionTask>>,
     /// Background compaction worker thread
@@ -192,6 +196,7 @@ impl DB {
             lsm,
             vlog: Arc::new(Mutex::new(vlog)),
             sstable_counter,
+            metrics: Arc::new(MetricsCollector::new()),
             compaction_tx,
             compaction_worker,
         };
@@ -244,6 +249,8 @@ impl DB {
 
     /// Put a key-value pair
     pub fn put(&self, key: impl AsRef<[u8]>, value: impl AsRef<[u8]>) -> Result<()> {
+        let start = Instant::now();
+
         let key = Bytes::copy_from_slice(key.as_ref());
         let value = Bytes::copy_from_slice(value.as_ref());
 
@@ -268,11 +275,15 @@ impl DB {
             self.flush()?;
         }
 
+        // Record latency
+        self.metrics.record_put(start.elapsed());
+
         Ok(())
     }
 
     /// Get a value by key
     pub fn get(&self, key: impl AsRef<[u8]>) -> Result<Option<Bytes>> {
+        let start = Instant::now();
         let key = key.as_ref();
 
         // Check memtable first (most recent data)
@@ -280,6 +291,7 @@ impl DB {
         let result = mt.get(key);
         drop(mt); // Release lock
         if let Some(value) = result {
+            self.metrics.record_get(start.elapsed());
             return Ok(Some(value));
         }
 
@@ -306,17 +318,20 @@ impl DB {
                     };
 
                     if let Some(value) = sstable.get(key)? {
+                        self.metrics.record_get(start.elapsed());
                         return Ok(Some(value));
                     }
                 }
             }
         }
 
+        self.metrics.record_get(start.elapsed());
         Ok(None)
     }
 
     /// Delete a key
     pub fn delete(&self, key: impl AsRef<[u8]>) -> Result<()> {
+        let start = Instant::now();
         let key = Bytes::copy_from_slice(key.as_ref());
 
         // Write to WAL (durability)
@@ -336,6 +351,9 @@ impl DB {
         if should_flush {
             self.flush()?;
         }
+
+        // Record latency
+        self.metrics.record_delete(start.elapsed());
 
         Ok(())
     }
@@ -415,6 +433,9 @@ impl DB {
                 self.compact_level(level_num)?;
             }
         }
+
+        // Record flush
+        self.metrics.record_flush();
 
         Ok(())
     }
@@ -498,6 +519,112 @@ impl DB {
     /// Get number of entries in memtable
     pub fn memtable_len(&self) -> usize {
         self.memtable.lock().expect("Memtable lock poisoned").len()
+    }
+
+    /// Get database statistics for monitoring and observability
+    pub fn stats(&self) -> DBStats {
+        // Get operation counts and throughput
+        let (total_puts, total_gets, total_deletes, total_flushes, total_compactions) =
+            self.metrics.get_counts();
+        let (writes_per_sec, reads_per_sec, deletes_per_sec) = self.metrics.calculate_throughput();
+
+        // Get latency percentiles
+        let (put_latencies, get_latencies, delete_latencies) =
+            self.metrics.get_latency_percentiles();
+
+        // Get memtable stats
+        let mt = self.memtable.lock().expect("Memtable lock poisoned");
+        let memtable_size_bytes = mt.size();
+        let memtable_capacity_bytes = mt.capacity();
+        let memtable_utilization_pct =
+            (memtable_size_bytes as f64 / memtable_capacity_bytes as f64) * 100.0;
+        drop(mt);
+
+        // Get WAL size
+        let wal_size_bytes = self.options.data_dir.join("wal.log")
+            .metadata()
+            .map(|m| m.len())
+            .unwrap_or(0);
+
+        // Get LSM tree structure
+        let lsm = self.lsm.lock().expect("LSM mutex poisoned");
+        let mut sstables_per_level = Vec::new();
+        let mut level_sizes_bytes = Vec::new();
+        let mut total_disk_bytes = 0u64;
+        let mut total_sstables = 0usize;
+
+        for level_num in 0..lsm.num_levels() {
+            if let Some(level) = lsm.level(level_num) {
+                let sstables = level.sstables();
+                sstables_per_level.push(sstables.len());
+                total_sstables += sstables.len();
+
+                let level_size: u64 = sstables
+                    .iter()
+                    .filter_map(|path| path.metadata().ok().map(|m| m.len()))
+                    .sum();
+                level_sizes_bytes.push(level_size);
+                total_disk_bytes += level_size;
+            } else {
+                sstables_per_level.push(0);
+                level_sizes_bytes.push(0);
+            }
+        }
+        drop(lsm);
+
+        // Add vLog size if present
+        let vlog_size = self
+            .options
+            .data_dir
+            .join("values.vlog")
+            .metadata()
+            .map(|m| m.len())
+            .unwrap_or(0);
+        total_disk_bytes += vlog_size;
+
+        DBStats {
+            // Throughput
+            writes_per_sec,
+            reads_per_sec,
+            deletes_per_sec,
+
+            // Operation counts
+            total_puts,
+            total_gets,
+            total_deletes,
+            total_flushes,
+            total_compactions,
+
+            // Latency percentiles
+            put_latency_p50_us: put_latencies.0,
+            put_latency_p95_us: put_latencies.1,
+            put_latency_p99_us: put_latencies.2,
+            put_latency_p999_us: put_latencies.3,
+
+            get_latency_p50_us: get_latencies.0,
+            get_latency_p95_us: get_latencies.1,
+            get_latency_p99_us: get_latencies.2,
+            get_latency_p999_us: get_latencies.3,
+
+            delete_latency_p50_us: delete_latencies.0,
+            delete_latency_p95_us: delete_latencies.1,
+            delete_latency_p99_us: delete_latencies.2,
+
+            // Resource usage
+            memtable_size_bytes,
+            memtable_capacity_bytes,
+            memtable_utilization_pct,
+            wal_size_bytes,
+            total_disk_bytes,
+
+            // LSM structure
+            sstables_per_level,
+            level_sizes_bytes,
+            total_sstables,
+
+            // Uptime
+            uptime_seconds: self.metrics.uptime_seconds(),
+        }
     }
 }
 
