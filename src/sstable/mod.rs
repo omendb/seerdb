@@ -1,6 +1,9 @@
 // SSTable: Sorted String Table on disk
 // Week 6: Enhanced with bloom filters, compression, and binary search
 // Week 13: KV separation - stores value pointers for large values
+// Week 14: Block-based index for memory efficiency
+
+pub mod block;
 
 use crate::bloom::BloomFilter;
 use crate::vlog::{VLog, ValuePointer};
