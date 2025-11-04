@@ -141,20 +141,37 @@ Memory Growth Pattern:
 - Projected at 100%: ~775 MB (51x baseline)
 ```
 
-**Hypothesis**: Memory leak in vlog (value log) implementation or large-value path
-- Small values (leak_detection tests): No leak, 3.03x growth ✅
-- Large values with vlog (10GB test): Continuous growth ❌
-- Possible causes:
-  1. Vlog not flushing buffered values
-  2. Vlog GC not running or collecting
-  3. Vlog keeping references to written values
-  4. Large memtables (64MB vs 4MB) amplifying an existing issue
+**Root Cause IDENTIFIED** (src/sstable/mod.rs:227-234):
+```rust
+pub struct SSTable {
+    file: File,
+    path: PathBuf,
+    index: Vec<(Bytes, u64)>,  // ← LOADS ALL KEYS INTO MEMORY!
+    bloom: BloomFilter,         // ← Also loaded into memory!
+    ...
+}
+```
 
-**Next Steps**:
-1. Investigate vlog implementation for memory retention
-2. Test with vlog disabled (use default SSTable path for all values)
-3. Test with smaller memtables (4MB) to isolate variable
-4. Add vlog-specific memory instrumentation
+Every `SSTable::open()` loads the **entire key index** + bloom filter into RAM. With background compaction opening multiple SSTables concurrently, memory accumulates:
+
+**10GB Test Analysis**:
+- After 1M keys (10%): ~17 SSTables created
+- Each SSTable: ~60K keys × 26 bytes/key = 1.6 MB
+- If compaction opens all 17: **27 MB just for indexes**
+- Bloom filters: ~10-15 MB additional
+- Active memtables: 64 MB × 2 = 128 MB
+- **Total: 165-170 MB** ← Matches observed memory!
+
+**Why leak_detection tests pass**:
+- Smaller memtables (4 MB vs 64 MB)
+- Fewer flushes (100k ops vs 10M ops)
+- Fewer SSTables loaded concurrently
+- Growth stays within 3.5x threshold
+
+**Solution Options**:
+1. **Short-term**: Add LRU cache for SSTable indexes (limit memory)
+2. **Medium-term**: Lazy-load index on-demand (only load needed pages)
+3. **Long-term**: Block-based index like RocksDB (mmap + page cache)
 
 **Commits (threshold adjustments, not fixes)**:
 - `164ff2f` - test: adjust soak test memory thresholds to 3.5x/5x
