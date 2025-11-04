@@ -51,6 +51,7 @@
 - **Test Coverage**: 11 tests passing (5 metrics + 6 health)
 - **Dependencies**: tracing, tracing-subscriber (with JSON), hdrhistogram
 - **Performance**: Atomic operations, minimal locking, HDR histograms designed for <1% overhead
+- **Example**: `examples/observability_demo.rs` - Comprehensive demo of metrics, logging, and health checks (199 lines)
 
 ### Phase 3: Observability & Instrumentation ✅
 - ✅ Metrics collection (throughput, latency, memory, disk)
