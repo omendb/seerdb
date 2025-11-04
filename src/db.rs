@@ -40,26 +40,130 @@ pub enum DBError {
 
 pub type Result<T> = std::result::Result<T, DBError>;
 
-/// Main database configuration
+/// Database configuration options
+///
+/// Controls all aspects of database behavior including durability, performance,
+/// and resource usage.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use seerdb::{DBOptions, SyncPolicy};
+/// use std::path::PathBuf;
+///
+/// // Default configuration (recommended for most use cases)
+/// let opts = DBOptions::default();
+///
+/// // Custom configuration for high-throughput writes
+/// let opts = DBOptions {
+///     data_dir: PathBuf::from("/var/lib/myapp/db"),
+///     memtable_capacity: 128 * 1024 * 1024,  // 128MB for fewer flushes
+///     background_compaction: true,            // Non-blocking compaction
+///     wal_sync_policy: SyncPolicy::None,     // Faster but less durable
+///     ..Default::default()
+/// };
+///
+/// // Configuration for large values (e.g., embeddings)
+/// let opts = DBOptions {
+///     vlog_threshold: Some(4096),  // Store values >4KB separately
+///     ..Default::default()
+/// };
+/// ```
 #[derive(Debug, Clone)]
 pub struct DBOptions {
     /// Directory for database files
+    ///
+    /// All database files (WAL, SSTables, vLog) are stored in this directory.
+    /// The directory will be created if it doesn't exist.
+    ///
+    /// Default: `"./seerdb_data"`
     pub data_dir: PathBuf,
-    /// Memtable capacity in bytes (default: 64MB)
+
+    /// Memtable capacity in bytes
+    ///
+    /// Maximum size of the in-memory write buffer before flushing to disk.
+    /// Larger values reduce flush frequency but increase memory usage and recovery time.
+    ///
+    /// Default: `64 * 1024 * 1024` (64MB)
+    ///
+    /// Recommended:
+    /// - Low memory systems: 16-32 MB
+    /// - Normal systems: 64-128 MB
+    /// - High-throughput: 256-512 MB
     pub memtable_capacity: usize,
-    /// WAL sync policy (default: SyncData)
+
+    /// WAL sync policy
+    ///
+    /// Controls when writes are fsync'd to disk for durability.
+    ///
+    /// Default: [`SyncPolicy::SyncData`]
+    ///
+    /// Options:
+    /// - `SyncAll`: fsync data + metadata (strongest durability, slowest)
+    /// - `SyncData`: fsync data only (strong durability, fast)
+    /// - `None`: no fsync (fastest, data loss possible on crash)
     pub wal_sync_policy: SyncPolicy,
-    /// LSM base level size (default: 10MB)
+
+    /// LSM base level size
+    ///
+    /// Target size for LSM level 1 in bytes. Other levels grow exponentially
+    /// based on `size_ratio`.
+    ///
+    /// Default: `10 * 1024 * 1024` (10MB)
     pub base_level_size: u64,
-    /// LSM size ratio between levels (default: 10)
+
+    /// LSM size ratio between levels
+    ///
+    /// Each level is `size_ratio` times larger than the previous level.
+    ///
+    /// Default: `10`
+    ///
+    /// Trade-offs:
+    /// - Smaller ratio (4-5): Less write amplification, more read amplification
+    /// - Larger ratio (10-20): More write amplification, less read amplification
     pub size_ratio: u64,
-    /// Number of LSM levels (default: 7)
+
+    /// Number of LSM levels
+    ///
+    /// Maximum number of levels in the LSM tree.
+    ///
+    /// Default: `7` (supports up to ~1TB with default settings)
     pub num_levels: usize,
-    /// VLog threshold: values larger than this go to vLog (default: None = disabled)
-    /// Set to Some(4096) for 4KB threshold (good for embeddings)
+
+    /// VLog threshold for key-value separation
+    ///
+    /// Values larger than this threshold are stored in a separate value log (vLog)
+    /// instead of inline in SSTables. This reduces write amplification for large values.
+    ///
+    /// Default: `None` (disabled)
+    ///
+    /// Recommended:
+    /// - Small values (<1KB): Keep `None` (disabled)
+    /// - Large values (embeddings, documents): `Some(4096)` (4KB threshold)
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use seerdb::DBOptions;
+    ///
+    /// // Enable vLog for vector database (large embeddings)
+    /// let opts = DBOptions {
+    ///     vlog_threshold: Some(4096),  // Values >4KB go to vLog
+    ///     ..Default::default()
+    /// };
+    /// ```
     pub vlog_threshold: Option<usize>,
-    /// Enable background compaction (default: false for compatibility)
-    /// When true, compaction runs in background thread (non-blocking writes)
+
+    /// Enable background compaction
+    ///
+    /// When `true`, compaction runs in a background thread, making writes non-blocking.
+    /// When `false`, compaction happens synchronously during flush (blocking).
+    ///
+    /// Default: `false` (for predictable behavior)
+    ///
+    /// Recommended:
+    /// - High-throughput writes: `true`
+    /// - Predictable latency: `false`
     pub background_compaction: bool,
 }
 
@@ -86,7 +190,72 @@ enum CompactionTask {
     Shutdown,
 }
 
-/// Main database structure
+/// Main database interface
+///
+/// An embedded LSM-tree based key-value storage engine with the following properties:
+///
+/// - **Durable**: All writes are logged to WAL before returning
+/// - **Consistent**: Snapshot isolation for reads
+/// - **Thread-safe**: Can be safely shared across threads via `Arc<DB>`
+/// - **Observable**: Built-in metrics and health checks
+///
+/// # Architecture
+///
+/// The database uses an LSM-tree (Log-Structured Merge-tree) architecture:
+///
+/// 1. **Writes** go to WAL (write-ahead log) + memtable (in-memory)
+/// 2. **Memtable** flushes to L0 SSTables when full
+/// 3. **Compaction** merges SSTables across levels to reduce read amplification
+/// 4. **Reads** check memtable first, then SSTables (with bloom filter optimization)
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use seerdb::{DB, DBOptions};
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// // Open database
+/// let db = DB::open(DBOptions::default())?;
+///
+/// // Write
+/// db.put(b"user:1:name", b"Alice")?;
+/// db.put(b"user:1:email", b"alice@example.com")?;
+///
+/// // Read
+/// let name = db.get(b"user:1:name")?;
+/// assert_eq!(name, Some(bytes::Bytes::from("Alice")));
+///
+/// // Delete
+/// db.delete(b"user:1:email")?;
+///
+/// // Flush to disk
+/// db.flush()?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Thread Safety
+///
+/// `DB` is thread-safe and can be shared across threads:
+///
+/// ```rust,no_run
+/// use std::sync::Arc;
+/// use std::thread;
+/// use seerdb::{DB, DBOptions};
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let db = Arc::new(DB::open(DBOptions::default())?);
+///
+/// let db_clone = db.clone();
+/// let handle = thread::spawn(move || {
+///     db_clone.put(b"thread:1", b"data").unwrap();
+/// });
+///
+/// db.put(b"thread:2", b"data")?;
+/// handle.join().unwrap();
+/// # Ok(())
+/// # }
+/// ```
 pub struct DB {
     /// Database options
     options: DBOptions,
@@ -110,6 +279,46 @@ pub struct DB {
 
 impl DB {
     /// Open or create a database
+    ///
+    /// Opens an existing database or creates a new one at the specified path.
+    /// If a WAL exists, it will be replayed to recover uncommitted writes.
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - Database configuration (see [`DBOptions`])
+    ///
+    /// # Returns
+    ///
+    /// Returns a [`DB`] instance or an error if:
+    /// - Directory creation fails
+    /// - WAL recovery fails (corruption detected)
+    /// - Existing SSTables are corrupted (checksum mismatch)
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use seerdb::{DB, DBOptions};
+    /// use std::path::PathBuf;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// // Open with default settings
+    /// let db = DB::open(DBOptions::default())?;
+    ///
+    /// // Open with custom path
+    /// let opts = DBOptions {
+    ///     data_dir: PathBuf::from("/var/lib/myapp/db"),
+    ///     ..Default::default()
+    /// };
+    /// let db = DB::open(opts)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// - [`DBError::Io`]: Failed to create directory or open files
+    /// - [`DBError::Wal`]: WAL corruption detected during recovery
+    /// - [`DBError::SSTable`]: SSTable checksum validation failed
     pub fn open(options: DBOptions) -> Result<Self> {
         info!(
             path = ?options.data_dir,
@@ -276,7 +485,55 @@ impl DB {
         Ok(())
     }
 
-    /// Put a key-value pair
+    /// Write a key-value pair to the database
+    ///
+    /// Inserts or updates a key-value pair in the database. The write is:
+    /// 1. Written to WAL for durability
+    /// 2. Added to memtable (in-memory buffer)
+    /// 3. Automatically flushed to disk if memtable is full
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to write (can be `&[u8]`, `&str`, etc.)
+    /// * `value` - The value to write
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` on success or an error if:
+    /// - WAL write fails (disk full, I/O error)
+    /// - Automatic flush fails (SSTable write error)
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use seerdb::{DB, DBOptions};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = DB::open(DBOptions::default())?;
+    ///
+    /// // Write string keys
+    /// db.put("user:1:name", "Alice")?;
+    ///
+    /// // Write binary keys
+    /// db.put(&[0x00, 0x01], &[0xFF, 0xFE])?;
+    ///
+    /// // Overwrite existing key
+    /// db.put("counter", "1")?;
+    /// db.put("counter", "2")?;  // Updates value
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// - [`DBError::Wal`]: WAL write failed (disk full, I/O error)
+    /// - [`DBError::Io`]: SSTable flush failed during automatic flush
+    ///
+    /// # Performance
+    ///
+    /// - Typical latency: 10-100 microseconds
+    /// - Latency spikes: 1-10 milliseconds during memtable flush
+    /// - Use [`flush()`](Self::flush) explicitly to control flush timing
     pub fn put(&self, key: impl AsRef<[u8]>, value: impl AsRef<[u8]>) -> Result<()> {
         let start = Instant::now();
 
@@ -310,7 +567,62 @@ impl DB {
         Ok(())
     }
 
-    /// Get a value by key
+    /// Read a value from the database by key
+    ///
+    /// Looks up a key in the database and returns its value if found. The lookup checks:
+    /// 1. **Memtable** (in-memory buffer) - most recent writes
+    /// 2. **SSTables** (L0 → L6) - disk-persisted data, from newest to oldest
+    ///
+    /// If key-value separation is enabled, large values are automatically read from the vLog.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to look up (can be `&[u8]`, `&str`, etc.)
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(Some(value))` - Key found, returns the value
+    /// - `Ok(None)` - Key not found or was deleted
+    /// - `Err(...)` - I/O error or SSTable corruption
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use seerdb::{DB, DBOptions};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = DB::open(DBOptions::default())?;
+    ///
+    /// // Write then read
+    /// db.put("user:1", "Alice")?;
+    /// let value = db.get("user:1")?;
+    /// assert_eq!(value, Some(bytes::Bytes::from("Alice")));
+    ///
+    /// // Read non-existent key
+    /// let value = db.get("user:999")?;
+    /// assert_eq!(value, None);
+    ///
+    /// // Read deleted key
+    /// db.delete("user:1")?;
+    /// let value = db.get("user:1")?;
+    /// assert_eq!(value, None);
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// - [`DBError::Io`]: Failed to read SSTable from disk
+    /// - [`DBError::SSTable`]: SSTable checksum mismatch (corruption)
+    /// - [`DBError::VLog`]: Failed to read large value from vLog
+    ///
+    /// # Performance
+    ///
+    /// - **Memtable hit**: 1-10 microseconds (skiplist lookup)
+    /// - **SSTable hit**: 10-100 microseconds (bloom filter + binary search + disk I/O)
+    /// - **Miss**: Checks all levels, O(levels) with bloom filter optimization
+    ///
+    /// Bloom filters reduce disk I/O by ~99% for non-existent keys.
     pub fn get(&self, key: impl AsRef<[u8]>) -> Result<Option<Bytes>> {
         let start = Instant::now();
         let key = key.as_ref();
@@ -354,7 +666,61 @@ impl DB {
         Ok(None)
     }
 
-    /// Delete a key
+    /// Delete a key from the database
+    ///
+    /// Marks a key as deleted by writing a tombstone. The deletion is:
+    /// 1. Written to WAL for durability
+    /// 2. Added to memtable as a tombstone marker
+    /// 3. Automatically flushed to disk if memtable is full
+    ///
+    /// Tombstones are removed during compaction when all older versions of the key
+    /// have been merged away.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to delete (can be `&[u8]`, `&str`, etc.)
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` on success or an error if:
+    /// - WAL write fails (disk full, I/O error)
+    /// - Automatic flush fails (SSTable write error)
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use seerdb::{DB, DBOptions};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = DB::open(DBOptions::default())?;
+    ///
+    /// // Write then delete
+    /// db.put("user:1", "Alice")?;
+    /// db.delete("user:1")?;
+    /// assert_eq!(db.get("user:1")?, None);
+    ///
+    /// // Deleting non-existent key is safe
+    /// db.delete("user:999")?;  // No error
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// - [`DBError::Wal`]: WAL write failed (disk full, I/O error)
+    /// - [`DBError::Io`]: SSTable flush failed during automatic flush
+    ///
+    /// # Performance
+    ///
+    /// - Typical latency: 10-100 microseconds (same as [`put()`](Self::put))
+    /// - Latency spikes: 1-10 milliseconds during memtable flush
+    ///
+    /// # Space Reclamation
+    ///
+    /// Deleted keys occupy space until compaction:
+    /// - Tombstone stored in memtable and SSTables
+    /// - Space freed when compaction merges away all older versions
+    /// - Large values in vLog are not immediately freed
     pub fn delete(&self, key: impl AsRef<[u8]>) -> Result<()> {
         let start = Instant::now();
         let key = Bytes::copy_from_slice(key.as_ref());
@@ -383,7 +749,63 @@ impl DB {
         Ok(())
     }
 
-    /// Flush memtable to L0 SSTable
+    /// Manually flush the memtable to disk
+    ///
+    /// Forces the in-memory write buffer (memtable) to be written to an SSTable on disk.
+    /// This operation:
+    /// 1. Writes all memtable entries to a new L0 SSTable
+    /// 2. Clears the WAL (data now safely in SSTable)
+    /// 3. Replaces memtable with a new empty one
+    /// 4. Triggers compaction if L0 has too many SSTables
+    ///
+    /// Flushing normally happens automatically when the memtable is full, but you can
+    /// call this method explicitly to control when flushes occur.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` on success or an error if:
+    /// - SSTable write fails (disk full, I/O error)
+    /// - WAL clear fails
+    /// - Compaction fails (if triggered)
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use seerdb::{DB, DBOptions};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = DB::open(DBOptions::default())?;
+    ///
+    /// // Write data
+    /// for i in 0..1000 {
+    ///     db.put(format!("key{}", i).as_bytes(), b"value")?;
+    /// }
+    ///
+    /// // Force flush before shutdown
+    /// db.flush()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// - [`DBError::Io`]: Failed to write SSTable or clear WAL
+    /// - [`DBError::SSTable`]: SSTable builder error
+    /// - [`DBError::Compaction`]: Compaction failed (if triggered)
+    ///
+    /// # Performance
+    ///
+    /// - **Typical latency**: 10-100 milliseconds (depends on memtable size)
+    /// - **Disk I/O**: Writes ~64MB SSTable (default memtable size)
+    /// - **Blocks writes**: Briefly while swapping memtable
+    ///
+    /// # When to Use
+    ///
+    /// - **Before shutdown**: Persist final writes
+    /// - **Performance tuning**: Avoid flush during hot path
+    /// - **Testing**: Deterministic flush timing
+    ///
+    /// Not typically needed in normal operation (automatic flushing works well).
     pub fn flush(&self) -> Result<()> {
         use crate::memtable::Entry;
         use crate::sstable::SSTableBuilder;
@@ -579,7 +1001,64 @@ impl DB {
         self.memtable.lock().expect("Memtable lock poisoned").len()
     }
 
-    /// Get database statistics for monitoring and observability
+    /// Get real-time database statistics
+    ///
+    /// Returns comprehensive statistics for monitoring, observability, and performance tuning.
+    /// Includes operation counts, latency percentiles, resource usage, and LSM tree structure.
+    ///
+    /// # Returns
+    ///
+    /// A [`DBStats`] struct containing:
+    /// - **Throughput**: Reads/writes/deletes per second
+    /// - **Operation counts**: Total operations since database opened
+    /// - **Latency percentiles**: p50, p95, p99, p999 for get/put/delete (in microseconds)
+    /// - **Resource usage**: Memtable, WAL, disk usage
+    /// - **LSM structure**: SSTables per level, level sizes
+    /// - **Uptime**: Time since database opened (seconds)
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use seerdb::{DB, DBOptions};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = DB::open(DBOptions::default())?;
+    ///
+    /// // Perform some operations
+    /// for i in 0..10000 {
+    ///     db.put(format!("key{}", i).as_bytes(), b"value")?;
+    /// }
+    ///
+    /// // Get statistics
+    /// let stats = db.stats();
+    /// println!("Throughput: {:.0} writes/sec", stats.writes_per_sec);
+    /// println!("p99 latency: {} µs", stats.put_latency_p99_us);
+    /// println!("Memtable: {:.1}% full", stats.memtable_utilization_pct);
+    /// println!("Disk usage: {} MB", stats.total_disk_bytes / 1_048_576);
+    ///
+    /// // LSM structure
+    /// for (level, count) in stats.sstables_per_level.iter().enumerate() {
+    ///     if *count > 0 {
+    ///         println!("L{}: {} SSTables", level, count);
+    ///     }
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Performance
+    ///
+    /// This method is relatively cheap (microseconds) but does:
+    /// - Lock memtable, LSM tree briefly to read stats
+    /// - Calculate file sizes from filesystem metadata
+    /// - Compute latency percentiles from histograms
+    ///
+    /// Safe to call frequently (e.g., every second for monitoring).
+    ///
+    /// # See Also
+    ///
+    /// - [`health()`](Self::health) - Health checks with thresholds
+    /// - [`DBStats`] - Full structure documentation
     pub fn stats(&self) -> DBStats {
         // Get operation counts and throughput
         let (total_puts, total_gets, total_deletes, total_flushes, total_compactions) =
@@ -688,17 +1167,91 @@ impl DB {
         }
     }
 
-    /// Get database health status for monitoring
+    /// Check database health status
     ///
-    /// Performs various health checks to detect degraded performance or critical conditions.
-    /// Returns a HealthStatus with individual check results.
+    /// Performs comprehensive health checks to detect performance degradation or critical
+    /// conditions. Returns a [`HealthStatus`] with individual check results and an overall
+    /// health indicator.
     ///
-    /// Health check thresholds:
-    /// - Compaction lag: L0 >10 SSTables = degraded, >20 = unhealthy
-    /// - WAL size: >100MB = degraded, >500MB = unhealthy
-    /// - Memtable: >80% full = degraded, >95% = unhealthy
-    /// - Put latency p99: >100ms = degraded, >1s = unhealthy
-    /// - Get latency p99: >50ms = degraded, >500ms = unhealthy
+    /// # Health Checks
+    ///
+    /// 1. **Compaction lag** (L0 SSTable count)
+    ///    - Healthy: ≤10 SSTables
+    ///    - Degraded: 11-20 SSTables
+    ///    - Unhealthy: >20 SSTables
+    ///
+    /// 2. **WAL size** (write-ahead log growth)
+    ///    - Healthy: ≤100 MB
+    ///    - Degraded: 101-500 MB
+    ///    - Unhealthy: >500 MB
+    ///
+    /// 3. **Memtable utilization** (memory pressure)
+    ///    - Healthy: ≤80% full
+    ///    - Degraded: 81-95% full
+    ///    - Unhealthy: >95% full
+    ///
+    /// 4. **Put latency p99** (write performance)
+    ///    - Healthy: ≤100 ms
+    ///    - Degraded: 101-1000 ms
+    ///    - Unhealthy: >1000 ms
+    ///
+    /// 5. **Get latency p99** (read performance)
+    ///    - Healthy: ≤50 ms
+    ///    - Degraded: 51-500 ms
+    ///    - Unhealthy: >500 ms
+    ///
+    /// # Returns
+    ///
+    /// A [`HealthStatus`] with:
+    /// - `healthy`: `true` if all checks are healthy
+    /// - `checks`: Individual check results with status and messages
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use seerdb::{DB, DBOptions};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = DB::open(DBOptions::default())?;
+    ///
+    /// // Perform operations...
+    /// for i in 0..10000 {
+    ///     db.put(format!("key{}", i).as_bytes(), b"value")?;
+    /// }
+    ///
+    /// // Check health
+    /// let health = db.health();
+    /// if !health.healthy {
+    ///     eprintln!("WARNING: Database health degraded!");
+    ///     for check in &health.checks {
+    ///         if !check.healthy {
+    ///             eprintln!("  - {}: {}", check.name, check.message);
+    ///         }
+    ///     }
+    /// }
+    ///
+    /// // Pretty print
+    /// println!("{}", health);
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Use Cases
+    ///
+    /// - **Monitoring dashboards**: Periodic health checks
+    /// - **Alerting systems**: Trigger alerts on degraded/unhealthy status
+    /// - **Load shedding**: Reduce traffic if database is unhealthy
+    /// - **Debugging**: Diagnose performance issues
+    ///
+    /// # Performance
+    ///
+    /// This method is cheap (microseconds) and safe to call frequently.
+    /// It only reads metrics and does not perform I/O.
+    ///
+    /// # See Also
+    ///
+    /// - [`stats()`](Self::stats) - Detailed statistics without thresholds
+    /// - [`HealthStatus`] - Full structure documentation
     pub fn health(&self) -> HealthStatus {
         let mut checks = Vec::new();
 

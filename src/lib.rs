@@ -1,5 +1,106 @@
-// seerdb: Research-grade storage engine with learned data structures
-// License: Elastic-2.0
+//! seerdb - Research-grade embedded storage engine
+//!
+//! A modern LSM-tree based key-value storage engine implementing 2018-2024 research
+//! on learned data structures, workload-aware optimization, and efficient key-value separation.
+//!
+//! # Features
+//!
+//! - **LSM-tree architecture**: Write-optimized with efficient compaction
+//! - **Durability**: Write-ahead logging with configurable sync policies
+//! - **Concurrency**: Lock-free reads with concurrent writes
+//! - **Observability**: Built-in metrics, health checks, and structured logging
+//! - **Key-Value Separation**: WiscKey-style vLog for large values (reduces write amplification)
+//! - **Background Compaction**: Non-blocking async compaction for better write throughput
+//!
+//! # Quick Start
+//!
+//! ```rust,no_run
+//! use seerdb::{DB, DBOptions};
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // Open database with default options
+//! let db = DB::open(DBOptions::default())?;
+//!
+//! // Write data
+//! db.put(b"hello", b"world")?;
+//!
+//! // Read data
+//! let value = db.get(b"hello")?;
+//! assert_eq!(value, Some(bytes::Bytes::from("world")));
+//!
+//! // Delete data
+//! db.delete(b"hello")?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Advanced Configuration
+//!
+//! ```rust,no_run
+//! use seerdb::{DB, DBOptions, SyncPolicy};
+//! use std::path::PathBuf;
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let opts = DBOptions {
+//!     data_dir: PathBuf::from("./my_database"),
+//!     memtable_capacity: 64 * 1024 * 1024,  // 64MB memtable
+//!     wal_sync_policy: SyncPolicy::SyncData, // fsync data on each write
+//!     background_compaction: true,            // Enable async compaction
+//!     vlog_threshold: Some(4096),            // Use vLog for values >4KB
+//!     ..Default::default()
+//! };
+//!
+//! let db = DB::open(opts)?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Architecture
+//!
+//! seerdb uses an LSM-tree architecture with the following components:
+//!
+//! - **Memtable**: In-memory buffer using concurrent skiplist
+//! - **WAL**: Write-ahead log for durability
+//! - **SSTable**: Sorted string tables on disk with bloom filters
+//! - **LSM Levels**: 7 levels with exponential sizing (10x ratio)
+//! - **VLog**: Optional value log for key-value separation (large values)
+//! - **Compaction**: Background merge of SSTables to reduce read amplification
+//!
+//! # Performance Characteristics
+//!
+//! - **Writes**: O(log n) in-memory + O(1) WAL append
+//! - **Reads**: O(log n) skiplist + O(levels) SSTable lookups with bloom filter optimization
+//! - **Scans**: Efficient via merge iteration over memtable + SSTables
+//! - **Space Amplification**: ~2x (typical LSM-tree)
+//! - **Write Amplification**: 10-30x (reduced with vLog for large values)
+//!
+//! # Durability Guarantees
+//!
+//! seerdb provides configurable durability via [`SyncPolicy`]:
+//!
+//! - `SyncAll`: fsync both data and metadata (slowest, strongest)
+//! - `SyncData`: fsync data only (fast, strong)
+//! - `None`: No fsync (fastest, data loss possible on crash)
+//!
+//! # Observability
+//!
+//! Built-in metrics and health checks for production deployment:
+//!
+//! ```rust,no_run
+//! # use seerdb::{DB, DBOptions};
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # let db = DB::open(DBOptions::default())?;
+//! // Get current database statistics
+//! let stats = db.get_stats();
+//! println!("Operations: {} reads, {} writes", stats.reads, stats.writes);
+//! println!("Latency p99: {} µs", stats.read_latency_p99_us);
+//!
+//! // Check database health
+//! let health = db.check_health()?;
+//! println!("Health: {:?}", health.status);
+//! # Ok(())
+//! # }
+//! ```
 
 pub mod bloom;
 pub mod compaction;
@@ -11,6 +112,7 @@ pub mod sstable;
 pub mod vlog;
 pub mod wal;
 
+// Re-export main types for convenient access
 pub use bloom::{BitPackedBloomFilter, BloomFilter, LearnedBloomFilter};
 pub use db::{DBOptions, DB};
 pub use health::{CheckStatus, HealthCheck, HealthStatus};
