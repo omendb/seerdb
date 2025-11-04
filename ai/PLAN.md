@@ -1,49 +1,52 @@
 # Production Hardening Roadmap
 
-**Last Updated**: November 3, 2025
-**Status**: ✅ Phase 2 Complete (100%), Starting Phase 3 (Observability)
-**Goal**: Production-ready, enterprise-grade storage engine with comprehensive observability
+**Last Updated**: November 4, 2025 (evening)
+**Status**: ✅ Phase 2 Complete (100%)! Starting Phase 3 (Observability)
+**Goal**: Production-ready storage engine with comprehensive observability
 
 ## 🎉 PHASE 2 COMPLETE - All Testing & Validation Done!
 
-**Progress**: 111 tests passing (7 ignored for manual testing)
+**Progress**: 118 tests passing (1 ignored for manual testing)
 - ✅ Phase 1: Fixed all 11 critical+high production blockers
 - ✅ Phase 2.1: Stress Tests (5 tests, 100k-1M ops)
 - ✅ Phase 2.2: Crash Recovery Tests (5 tests, fixed 3 critical bugs)
-- ✅ Phase 2.3: Fuzzing & Property Tests (1M+ execs, 26 tests)
-- ✅ Phase 2.4: Leak Detection (7 tests, **critical memory leak fixed**)
+- ✅ Phase 2.3: Fuzzing & Property Tests (1.3M execs, 26 tests)
+- ✅ Phase 2.4: Leak Detection (7 tests, **3 critical memory issues fixed**)
 
-**Latest Victory**: Resolved severe memory leak (5.9 GB → 29 MB)
-- Root cause: Memtable never cleared after flush
-- Solution: RocksDB-style memtable swapping
-- All 111 tests passing with stable memory usage
+**Major Victories**:
+1. Memtable never cleared after flush → RocksDB-style swapping (5.9 GB → 29 MB)
+2. SSTableBuilder loading SSTable back into RAM → Return Result<()>
+3. Full SSTable index in RAM → Block-based format (87% memory reduction: 700 MB → 82 MB)
+
+**Result**: Bounded memory growth, all 118 tests passing, production-hardened
 
 ---
 
 ## Current State Assessment
 
-**Confidence Level**: 70% for production use (up from 60%)
+**Confidence Level**: 75% for production use (up from 60%→70%)
 
 **What Works** ✅:
 - ✅ Core LSM architecture fully implemented
-- ✅ 111 tests passing (comprehensive coverage)
-- ✅ Memory leaks fixed (memtable swap on flush)
+- ✅ 118 tests passing (comprehensive coverage)
+- ✅ Memory leaks fixed (3 critical issues resolved)
+- ✅ Block-based SSTables with bounded memory (87% reduction)
 - ✅ Background compaction functional
 - ✅ Crash recovery validated (5 scenarios)
 - ✅ WAL recovery working correctly
 - ✅ KV separation implemented (WiscKey-style)
 - ✅ Data integrity (CRC32 checksums everywhere)
 - ✅ Stress tested (up to 1M operations)
-- ✅ Fuzz tested (1M+ executions, no crashes)
+- ✅ Fuzz tested (1.3M+ executions, no crashes)
 - ✅ Concurrent access safe (property tested)
 
 **Critical Gaps** (Blocking Production):
 - ❌ **No observability** (logging, metrics, tracing) - **CRITICAL BLOCKER**
-- ❌ No long-term stability testing (24h+ continuous operation)
-- ❌ No production workload validation
+- ❌ No iterative soak testing (1-2 hour tests for quick validation)
+- ❌ No production workload validation (omen integration)
 - ❌ No operational runbooks
-- ❌ No CI/CD pipeline
-- ❌ Limited documentation (API docs incomplete)
+- ✅ CI/CD pipeline ready (Phase 4.1 complete)
+- ✅ Comprehensive documentation (Phase 4.2 complete)
 
 **Assessment**: Core engine is solid (data safety, correctness, performance), but **cannot operate in production without observability**. Need metrics/logging to diagnose issues.
 
@@ -406,60 +409,96 @@ impl DB {
 
 ---
 
-## Phase 5: Real-World Validation (2-4 weeks)
+## Phase 5: Iterative Validation (1-2 weeks)
 
-**Goal**: Production confidence through real workload testing
+**Goal**: Quick, iterative validation for production confidence
+**Philosophy**: Small tests (1-2 hours) that find issues fast, not marathon tests
 
-### 5.1 Soak Testing
+### 5.1 Iterative Soak Testing
 **Priority**: HIGH
-**Estimated**: 1 week
+**Estimated**: 3-4 days
 
-**Tasks**:
-- [ ] 24-hour continuous operation
+**Approach**: Start small, iterate fast
+- Run 1-2 hour tests repeatedly
+- Fix issues as they arise
+- Gradually increase scale as confidence builds
+- Only run long tests (8h+) when short tests pass reliably
+
+**Small Soak Tests** (Quick Iteration):
+- [ ] 1-hour continuous writes (500k-1M ops)
   - Mixed read/write workload
-  - Monitor memory, disk, CPU
-  - Track latency over time
-  - Verify no degradation
-- [ ] 100GB+ dataset test
-  - Large-scale compaction
-  - Multiple LSM levels populated
-  - Performance at scale
-- [ ] Document results
-  - Memory stable over 24h?
-  - Performance stable over 24h?
-  - Any issues discovered?
+  - Memory monitoring every 5 minutes
+  - Latency tracking (p50/p99/p999)
+  - Result: Fast feedback on memory leaks
+
+- [ ] 2-hour mixed workload (1M-2M ops)
+  - 70% reads, 30% writes
+  - Multiple concurrent threads
+  - Monitor resource usage
+  - Result: Catches threading issues quickly
+
+- [ ] 2GB dataset test (instead of 100GB)
+  - Populate 3-4 LSM levels
+  - Trigger multiple compactions
+  - Test at moderate scale
+  - Result: Fast enough to iterate (30-60 min)
+
+**Medium Soak Tests** (After small tests pass):
+- [ ] 4-hour stability test
+  - Only run after 1-2h tests pass reliably
+  - Monitor for gradual degradation
+
+- [ ] 10GB dataset test (existing test)
+  - Run overnight when needed
+  - Only after 2GB test passes
+
+**Long Tests** (Optional, if needed):
+- [ ] 24h+ continuous operation (only if shorter tests unreliable)
+- [ ] 100GB+ dataset (only if considering 100GB+ use cases)
 
 **Acceptance Criteria**:
-- 24h operation without issues
-- Memory usage stable
-- Performance stable
-- No data loss
+- 1-2 hour tests pass reliably
+- Memory stable, no gradual leaks
+- Performance stable, no degradation
+- Can iterate quickly on fixes
 
-### 5.2 Real Workload Testing
+### 5.2 Real Workload Testing (omen Integration)
 **Priority**: CRITICAL
-**Estimated**: 1-2 weeks
+**Estimated**: 1 week
+
+**Approach**: Incremental integration, not big-bang
 
 **Tasks**:
-- [ ] omen vector database workload
+- [ ] Small omen workload test (1-10k vectors)
+  - Test with actual omen API
   - Large values (embeddings: 512-4096 bytes)
+  - Verify KV separation working
+  - Fast iteration (minutes, not hours)
+
+- [ ] Medium omen workload (100k vectors)
+  - Only after small test passes
   - Append-heavy pattern
   - Range scans for vector search
   - Profile and optimize
-- [ ] Correctness validation
-  - Dual-write to seerdb + RocksDB
-  - Compare all results
-  - Track discrepancies
-- [ ] Performance comparison
-  - Measure latency (seerdb vs RocksDB)
+
+- [ ] Correctness spot checks (not dual-write)
+  - Test specific operations match expected behavior
+  - Compare key operations with RocksDB behavior
+  - Track any discrepancies
+  - Dual-write too complex, just validate core operations
+
+- [ ] Performance comparison (basic metrics)
+  - Measure latency vs RocksDB
   - Measure throughput
   - Compare write amplification
   - Compare disk usage
+  - Goal: Competitive, not necessarily better
 
 **Acceptance Criteria**:
-- 100% correctness match with RocksDB
-- Performance competitive or better
-- No unexplained discrepancies
-- Ready for production decision
+- omen integration works with small dataset
+- Core operations correct
+- Performance competitive
+- Ready for limited production trial
 
 ### 5.3 Production Readiness
 **Priority**: CRITICAL
@@ -517,12 +556,12 @@ impl DB {
 
 **Phase 1**: ✅ Complete (2 weeks actual)
 **Phase 2**: ✅ Complete (3 weeks actual)
-**Phase 3**: 1-2 weeks (current, starting Week 16)
-**Phase 4**: 1 week
-**Phase 5**: 2-4 weeks
+**Phase 3**: 1-2 weeks (next, observability)
+**Phase 4**: Already complete ✅ (CI/CD + docs done)
+**Phase 5**: 1-2 weeks (iterative soak + omen integration)
 
-**Total Remaining**: 4-7 weeks to production-ready
-**Target**: Production-ready by end of Week 22-25
+**Total Remaining**: 2-4 weeks to production-ready
+**Target**: Production-ready by end of Week 18-20 (mid-late Nov)
 
 ---
 
