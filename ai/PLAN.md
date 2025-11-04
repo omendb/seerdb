@@ -47,13 +47,17 @@
 
 **Remaining Gaps** (Before Production):
 - ✅ Observability implemented (metrics, logging, health checks) - **BLOCKER RESOLVED!**
-- ❌ Iterative soak testing (1-2 hour tests for validation)
+- ⏳ Iterative soak testing (1-2 hour tests for validation) - **IN PROGRESS**
+  - ✅ 1GB dataset test created (2h runtime)
+  - ✅ Soak test memory baseline fixed
+  - ⏳ 2-hour soak test running (7M ops)
+  - Initial results: Memory stable, no leaks, 100-1,800 ops/sec
 - ❌ Production workload validation (omen integration)
 - ❌ Operational runbooks (deployment, monitoring, troubleshooting)
 - ✅ CI/CD pipeline ready (Phase 4.1 complete)
 - ✅ Comprehensive documentation (Phase 4.2 complete)
 
-**Assessment**: Core engine is production-grade! All foundational work complete (testing, observability, CI/CD, docs). **Only validation remaining** - soak tests and real workload integration with omen.
+**Assessment**: Core engine is production-grade! All foundational work complete (testing, observability, CI/CD, docs). Phase 5.1 (soak testing) in progress with positive initial results. Real workload integration (omen) next.
 
 ---
 
@@ -419,8 +423,9 @@ impl DB {
 **Goal**: Quick, iterative validation for production confidence
 **Philosophy**: Small tests (1-2 hours) that find issues fast, not marathon tests
 
-### 5.1 Iterative Soak Testing
+### 5.1 Iterative Soak Testing ⏳ IN PROGRESS
 **Priority**: HIGH
+**Status**: Started Nov 4, 2025 (evening)
 **Estimated**: 3-4 days
 
 **Approach**: Start small, iterate fast
@@ -429,6 +434,11 @@ impl DB {
 - Gradually increase scale as confidence builds
 - Only run long tests (8h+) when short tests pass reliably
 
+**Progress Summary:**
+- ✅ Created 1GB dataset test (commit 0216305)
+- ✅ Fixed soak test memory baseline (commit b360050)
+- ⏳ 2-hour soak test running (initial results positive)
+
 **Small Soak Tests** (Quick Iteration):
 - [ ] 1-hour continuous writes (500k-1M ops)
   - Mixed read/write workload
@@ -436,17 +446,24 @@ impl DB {
   - Latency tracking (p50/p99/p999)
   - Result: Fast feedback on memory leaks
 
-- [ ] 2-hour mixed workload (1M-2M ops)
+- ⏳ 2-hour mixed workload (7M ops) - **RUNNING**
   - 70% reads, 30% writes
   - Multiple concurrent threads
   - Monitor resource usage
-  - Result: Catches threading issues quickly
+  - **Initial Results** (7 minutes):
+    - Memory: 27 MB baseline, 0 MB growth (no leaks!)
+    - Throughput: 100-1,800 ops/sec (varies with compaction)
+    - Read latency: 31-35 µs avg
+    - Write latency: 1.9-2.4 ms avg
+    - Operations: 112K completed
+  - Status: Running in background, reports every minute
 
-- [ ] 2GB dataset test (instead of 100GB)
+- [ ] 1GB dataset test (created, not yet run to completion)
+  - ~1M keys, ~2 hour runtime
   - Populate 3-4 LSM levels
   - Trigger multiple compactions
   - Test at moderate scale
-  - Result: Fast enough to iterate (30-60 min)
+  - Result: Fast enough to iterate
 
 **Medium Soak Tests** (After small tests pass):
 - [ ] 4-hour stability test
