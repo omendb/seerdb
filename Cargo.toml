@@ -41,6 +41,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1.6"
 tempfile = "3.14"
+rand = "0.8"              # Random data generation for soak tests
 
 # Baseline systems for benchmarking
 rocksdb = "0.22"
