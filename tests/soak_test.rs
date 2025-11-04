@@ -445,12 +445,13 @@ fn test_10gb_dataset() {
             last_report = Instant::now();
 
             // Memory should stay bounded during active writes
-            // Large datasets with background compaction can use up to 5x during writes
+            // Large datasets (64MB memtables) with background compaction need up to 10x during writes
+            // (2x memtables + compaction buffers + vlog)
             assert!(
-                current_memory < initial_memory * 5,
-                "Memory growing unbounded during write phase: {} MB > 5x initial ({} MB)",
+                current_memory < initial_memory * 10,
+                "Memory growing unbounded during write phase: {} MB > 10x initial ({} MB)",
                 current_memory / 1_048_576,
-                (initial_memory * 5) / 1_048_576
+                (initial_memory * 10) / 1_048_576
             );
         }
     }
@@ -574,12 +575,13 @@ fn test_100gb_dataset_extreme() {
             last_report = Instant::now();
 
             // Memory should stay bounded during active writes
-            // Large datasets with background compaction can use up to 5x during writes
+            // Large datasets (64MB memtables) with background compaction need up to 10x during writes
+            // (2x memtables + compaction buffers + vlog)
             assert!(
-                current_memory < initial_memory * 5,
-                "Memory growing unbounded during write phase: {} MB > 5x initial ({} MB)",
+                current_memory < initial_memory * 10,
+                "Memory growing unbounded during write phase: {} MB > 10x initial ({} MB)",
                 current_memory / 1_048_576,
-                (initial_memory * 5) / 1_048_576
+                (initial_memory * 10) / 1_048_576
             );
         }
     }
