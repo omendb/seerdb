@@ -119,6 +119,51 @@ pub fn build(self, path: impl AsRef<Path>) -> Result<()> {
 
 **Status**: ✅ All leak detection tests now passing with fix
 
+### New Issue: Large Dataset Memory Growth (Nov 4, 2025 - INVESTIGATING)
+
+**Problem**: 10GB soak test reveals continued memory growth beyond legitimate overhead
+- Leak detection tests (100k ops, default settings): ✅ PASS at 3.5x threshold
+- 10GB test (10M ops, 64MB memtables, vlog enabled): ❌ FAIL at 10x threshold
+
+**Observations**:
+```
+Test Configuration:
+- memtable_capacity: 64 MB (vs 4 MB in leak tests)
+- vlog_threshold: 512 bytes (large values go to separate log)
+- VALUE_SIZE: 1024 bytes (all values use vlog)
+- background_compaction: true
+
+Memory Growth Pattern:
+- Baseline (after warmup):  15 MB
+- 5% (0.5M keys):         132 MB (8.8x)
+- 10% (1.0M keys):        170 MB (11.3x) ← FAILED at 10x threshold
+- Pattern: +38 MB per 0.5M keys
+- Projected at 100%: ~775 MB (51x baseline)
+```
+
+**Hypothesis**: Memory leak in vlog (value log) implementation or large-value path
+- Small values (leak_detection tests): No leak, 3.03x growth ✅
+- Large values with vlog (10GB test): Continuous growth ❌
+- Possible causes:
+  1. Vlog not flushing buffered values
+  2. Vlog GC not running or collecting
+  3. Vlog keeping references to written values
+  4. Large memtables (64MB vs 4MB) amplifying an existing issue
+
+**Next Steps**:
+1. Investigate vlog implementation for memory retention
+2. Test with vlog disabled (use default SSTable path for all values)
+3. Test with smaller memtables (4MB) to isolate variable
+4. Add vlog-specific memory instrumentation
+
+**Commits (threshold adjustments, not fixes)**:
+- `164ff2f` - test: adjust soak test memory thresholds to 3.5x/5x
+- `469fa80` - fix: use integer arithmetic for memory threshold calculations
+- `9c655d8` - test: add warmup period before measuring baseline memory
+- `66ec839` - test: increase write phase memory threshold to 10x for large datasets
+
+**Status**: 🔴 BLOCKED - Cannot proceed with soak tests until leak identified and fixed
+
 ---
 
 ## 🎉 PHASE 2 COMPLETE! 🎉
