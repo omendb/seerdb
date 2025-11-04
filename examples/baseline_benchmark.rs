@@ -1,5 +1,10 @@
 // Baseline benchmark comparing RocksDB, sled, and fjall
 // Tests: write throughput, read throughput, mixed workload, scan performance
+//
+// To run this benchmark, use:
+// cargo run --example baseline_benchmark --features baseline-benchmarks
+
+#![cfg(feature = "baseline-benchmarks")]
 
 use std::time::Instant;
 

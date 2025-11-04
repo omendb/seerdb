@@ -37,16 +37,16 @@ hdrhistogram = "7.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
+# Optional baseline systems for benchmarking (only compiled when baseline-benchmarks feature is enabled)
+rocksdb = { version = "0.22", optional = true }
+sled = { version = "0.34", optional = true }
+fjall = { version = "2.3", optional = true }
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1.6"
 tempfile = "3.14"
 rand = "0.8"              # Random data generation for soak tests
-
-# Baseline systems for benchmarking
-rocksdb = "0.22"
-sled = "0.34"
-fjall = "2.3"
 
 # Stress testing
 sysinfo = "0.29"          # Resource monitoring (memory, CPU, fd)
@@ -54,6 +54,9 @@ hdrhistogram = "7.5"      # Accurate latency percentiles
 
 [features]
 default = []
+# Enable baseline benchmark dependencies (RocksDB, sled, fjall)
+# Only needed when running comparative benchmarks, not for regular tests
+baseline-benchmarks = ["dep:rocksdb", "dep:sled", "dep:fjall"]
 # Note: io_uring support can be added later as opt-in (security concerns)
 
 [[bench]]
