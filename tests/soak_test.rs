@@ -122,8 +122,13 @@ fn test_2hour_soak() {
 
     let monitor_handle = thread::spawn(move || {
         let start_time = Instant::now();
+
+        // Wait 5 minutes for warmup before measuring baseline memory
+        println!("Warming up for 5 minutes before measuring baseline memory...");
+        thread::sleep(Duration::from_secs(300));
+
         let initial_memory = get_memory_usage_bytes();
-        println!("Initial memory: {} MB", initial_memory / 1_048_576);
+        println!("Baseline memory after warmup: {} MB", initial_memory / 1_048_576);
         println!();
 
         let mut last_ops = 0u64;
@@ -275,8 +280,13 @@ fn test_24hour_soak_extreme() {
 
     let monitor_handle = thread::spawn(move || {
         let start_time = Instant::now();
+
+        // Wait 1 hour for warmup before measuring baseline memory
+        println!("Warming up for 1 hour before measuring baseline memory...");
+        thread::sleep(Duration::from_secs(3600));
+
         let initial_memory = get_memory_usage_bytes();
-        println!("Initial memory: {} MB", initial_memory / 1_048_576);
+        println!("Baseline memory after warmup: {} MB", initial_memory / 1_048_576);
         println!();
 
         let mut last_ops = 0u64;
@@ -311,17 +321,15 @@ fn test_24hour_soak_extreme() {
 
             last_ops = current_ops;
 
-            // Validate memory is not leaking (should stay < 3.5x initial after warmup)
+            // Validate memory is not leaking (should stay < 3.5x initial)
             // Write-heavy workloads legitimately need ~3x for LSM metadata + working set
-            if elapsed > Duration::from_secs(3600) {
-                // After 1 hour warmup
-                assert!(
-                    current_memory < initial_memory * 7 / 2,  // 3.5x
-                    "Memory leak detected: {} MB > 3.5x initial ({} MB)",
-                    current_memory / 1_048_576,
-                    (initial_memory * 7 / 2) / 1_048_576
-                );
-            }
+            // Baseline already measured after warmup, so check immediately
+            assert!(
+                current_memory < initial_memory * 7 / 2,  // 3.5x
+                "Memory leak detected: {} MB > 3.5x initial ({} MB)",
+                current_memory / 1_048_576,
+                (initial_memory * 7 / 2) / 1_048_576
+            );
         }
     });
 
