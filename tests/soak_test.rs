@@ -384,16 +384,144 @@ fn test_24hour_soak_extreme() {
 }
 
 #[test]
+#[ignore] // Run manually with: cargo test --release --test soak_test test_1gb_dataset -- --ignored --nocapture
+fn test_1gb_dataset() {
+    const TARGET_SIZE_GB: u64 = 1;
+    const VALUE_SIZE: usize = 1024;
+    const NUM_KEYS: u64 = (TARGET_SIZE_GB * 1024 * 1024 * 1024) / (VALUE_SIZE as u64);
+
+    println!("\n=== 1GB DATASET TEST (QUICK VALIDATION) ===");
+    println!("Target: Write and read {} GB of data", TARGET_SIZE_GB);
+    println!("Keys: {} million", NUM_KEYS / 1_000_000);
+    println!("Estimated time: 5-10 minutes\n");
+
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().to_path_buf();
+
+    let opts = DBOptions {
+        data_dir: db_path.clone(),
+        background_compaction: true,
+        wal_sync_policy: SyncPolicy::SyncData,
+        memtable_capacity: 64 * 1024 * 1024, // 64MB memtable for faster writes
+        vlog_threshold: Some(512),
+        ..Default::default()
+    };
+
+    let db = DB::open(opts).unwrap();
+
+    let value = vec![b'x'; VALUE_SIZE];
+
+    // Warmup: write some data to fill memtables and stabilize memory
+    println!("Warming up (filling memtables)...");
+    for i in 0..10_000 {
+        let key = format!("warmup_key_{:016}", i);
+        db.put(key.as_bytes(), &value).unwrap();
+    }
+
+    let start_write = Instant::now();
+    let mut last_report = Instant::now();
+    let initial_memory = get_memory_usage_bytes();
+    println!("Baseline memory after warmup: {} MB\n", initial_memory / 1_048_576);
+
+    println!("Writing {} keys ({} GB)...", NUM_KEYS, TARGET_SIZE_GB);
+
+    for i in 0..NUM_KEYS {
+        let key = format!("large_key_{:016}", i);
+        db.put(key.as_bytes(), &value).unwrap();
+
+        // Report progress every 10% or 30 seconds
+        if i % (NUM_KEYS / 10).max(1) == 0 || last_report.elapsed() > Duration::from_secs(30) {
+            let progress = (i as f64 / NUM_KEYS as f64) * 100.0;
+            let current_memory = get_memory_usage_bytes();
+            let disk_usage = get_disk_usage_bytes(&db_path).unwrap_or(0);
+
+            println!(
+                "  Progress: {:.1}% ({:.1}M keys, {:.2} GB disk, {} MB memory)",
+                progress,
+                i as f64 / 1_000_000.0,
+                disk_usage as f64 / (1024.0 * 1024.0 * 1024.0),
+                current_memory / 1_048_576
+            );
+            last_report = Instant::now();
+
+            // Memory should stay bounded during active writes
+            assert!(
+                current_memory < initial_memory * 10,
+                "Memory growing unbounded during write phase: {} MB > 10x initial ({} MB)",
+                current_memory / 1_048_576,
+                (initial_memory * 10) / 1_048_576
+            );
+        }
+    }
+
+    let write_duration = start_write.elapsed();
+    let write_throughput = NUM_KEYS as f64 / write_duration.as_secs_f64();
+    println!("\nWrite phase complete:");
+    println!("  Duration: {:.2}s", write_duration.as_secs_f64());
+    println!("  Throughput: {:.0} writes/sec", write_throughput);
+
+    // Force final flush
+    db.flush().unwrap();
+
+    let final_disk = get_disk_usage_bytes(&db_path).unwrap();
+    println!(
+        "  Final disk usage: {:.2} GB",
+        final_disk as f64 / (1024.0 * 1024.0 * 1024.0)
+    );
+
+    // Read phase: Random reads to validate data
+    println!("\nValidating data with random reads...");
+    let num_reads = 50_000u64; // Fewer reads for smaller dataset
+    let start_read = Instant::now();
+
+    for _ in 0..num_reads {
+        let random_key = rand::random::<u64>() % NUM_KEYS;
+        let key = format!("large_key_{:016}", random_key);
+        let result = db.get(key.as_bytes()).unwrap();
+        assert!(result.is_some(), "Key should exist");
+        assert_eq!(result.unwrap().len(), VALUE_SIZE, "Value size mismatch");
+    }
+
+    let read_duration = start_read.elapsed();
+    let read_throughput = num_reads as f64 / read_duration.as_secs_f64();
+    println!("Read validation complete:");
+    println!("  {} random reads", num_reads);
+    println!("  Duration: {:.2}s", read_duration.as_secs_f64());
+    println!("  Throughput: {:.0} reads/sec", read_throughput);
+
+    let final_memory = get_memory_usage_bytes();
+    println!("\n=== 1GB DATASET TEST COMPLETE ===");
+    println!(
+        "Data written: {:.2} GB",
+        final_disk as f64 / (1024.0 * 1024.0 * 1024.0)
+    );
+    println!(
+        "Memory usage: {} MB (started at {} MB)",
+        final_memory / 1_048_576,
+        initial_memory / 1_048_576
+    );
+    println!("RESULT: PASS - Successfully handled 1GB dataset");
+
+    // Final memory check after operations settle
+    assert!(
+        final_memory < initial_memory * 7 / 2,  // 3.5x
+        "Memory leak detected: {} MB > 3.5x initial ({} MB)",
+        final_memory / 1_048_576,
+        (initial_memory * 7 / 2) / 1_048_576
+    );
+}
+
+#[test]
 #[ignore] // Run manually with: cargo test --release --test soak_test test_10gb_dataset -- --ignored --nocapture
 fn test_10gb_dataset() {
     const TARGET_SIZE_GB: u64 = 10;
     const VALUE_SIZE: usize = 1024;
     const NUM_KEYS: u64 = (TARGET_SIZE_GB * 1024 * 1024 * 1024) / (VALUE_SIZE as u64);
 
-    println!("\n=== 10GB DATASET TEST (PRACTICAL) ===");
+    println!("\n=== 10GB DATASET TEST (MEDIUM SCALE) ===");
     println!("Target: Write and read {} GB of data", TARGET_SIZE_GB);
     println!("Keys: {} million", NUM_KEYS / 1_000_000);
-    println!("Estimated time: 10-30 minutes\n");
+    println!("NOTE: This test takes 2-4 hours, not 10-30 minutes\n");
 
     let dir = tempdir().unwrap();
     let db_path = dir.path().to_path_buf();
