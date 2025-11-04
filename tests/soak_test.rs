@@ -410,9 +410,18 @@ fn test_10gb_dataset() {
     let db = DB::open(opts).unwrap();
 
     let value = vec![b'x'; VALUE_SIZE];
+
+    // Warmup: write some data to fill memtables and stabilize memory
+    println!("Warming up (filling memtables)...");
+    for i in 0..10_000 {
+        let key = format!("warmup_key_{:016}", i);
+        db.put(key.as_bytes(), &value).unwrap();
+    }
+
     let start_write = Instant::now();
     let mut last_report = Instant::now();
     let initial_memory = get_memory_usage_bytes();
+    println!("Baseline memory after warmup: {} MB\n", initial_memory / 1_048_576);
 
     println!("Writing {} keys ({} GB)...", NUM_KEYS, TARGET_SIZE_GB);
 
@@ -530,9 +539,18 @@ fn test_100gb_dataset_extreme() {
     let db = DB::open(opts).unwrap();
 
     let value = vec![b'x'; VALUE_SIZE];
+
+    // Warmup: write some data to fill memtables and stabilize memory
+    println!("Warming up (filling memtables)...");
+    for i in 0..10_000 {
+        let key = format!("warmup_key_{:016}", i);
+        db.put(key.as_bytes(), &value).unwrap();
+    }
+
     let start_write = Instant::now();
     let mut last_report = Instant::now();
     let initial_memory = get_memory_usage_bytes();
+    println!("Baseline memory after warmup: {} MB\n", initial_memory / 1_048_576);
 
     println!("Writing {} keys ({} GB)...", NUM_KEYS, TARGET_SIZE_GB);
 
