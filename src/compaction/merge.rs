@@ -101,7 +101,8 @@ mod tests {
         builder.add(Bytes::from("key1"), Bytes::from("value1"));
         builder.add(Bytes::from("key2"), Bytes::from("value2"));
         builder.add(Bytes::from("key3"), Bytes::from("value3"));
-        let sstable = builder.build(&path).unwrap();
+        builder.build(&path).unwrap();
+        let sstable = SSTable::open(&path).unwrap();
 
         // Merge (single iterator)
         let mut merge = MergeIterator::new(vec![sstable]).unwrap();
@@ -130,14 +131,16 @@ mod tests {
         let mut builder1 = SSTableBuilder::new();
         builder1.add(Bytes::from("key1"), Bytes::from("value1"));
         builder1.add(Bytes::from("key3"), Bytes::from("value3"));
-        let sstable1 = builder1.build(&path1).unwrap();
+        builder1.build(&path1).unwrap();
+        let sstable1 = SSTable::open(&path1).unwrap();
 
         // Build second SSTable
         let path2 = dir.path().join("test2.sst");
         let mut builder2 = SSTableBuilder::new();
         builder2.add(Bytes::from("key2"), Bytes::from("value2"));
         builder2.add(Bytes::from("key4"), Bytes::from("value4"));
-        let sstable2 = builder2.build(&path2).unwrap();
+        builder2.build(&path2).unwrap();
+        let sstable2 = SSTable::open(&path2).unwrap();
 
         // Merge
         let mut merge = MergeIterator::new(vec![sstable1, sstable2]).unwrap();
@@ -162,14 +165,16 @@ mod tests {
         let mut builder1 = SSTableBuilder::new();
         builder1.add(Bytes::from("key1"), Bytes::from("new_value1"));
         builder1.add(Bytes::from("key2"), Bytes::from("new_value2"));
-        let sstable1 = builder1.build(&path1).unwrap();
+        builder1.build(&path1).unwrap();
+        let sstable1 = SSTable::open(&path1).unwrap();
 
         // Build second SSTable (older)
         let path2 = dir.path().join("test2.sst");
         let mut builder2 = SSTableBuilder::new();
         builder2.add(Bytes::from("key1"), Bytes::from("old_value1"));
         builder2.add(Bytes::from("key3"), Bytes::from("value3"));
-        let sstable2 = builder2.build(&path2).unwrap();
+        builder2.build(&path2).unwrap();
+        let sstable2 = SSTable::open(&path2).unwrap();
 
         // Merge (newer first)
         let mut merge = MergeIterator::new(vec![sstable1, sstable2]).unwrap();
@@ -201,7 +206,8 @@ mod tests {
                 builder.add(Bytes::from(key), Bytes::from(value));
             }
 
-            let sstable = builder.build(&path).unwrap();
+            builder.build(&path).unwrap();
+            let sstable = SSTable::open(&path).unwrap();
             sstables.push(sstable);
         }
 

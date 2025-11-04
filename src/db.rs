@@ -834,7 +834,7 @@ impl DB {
         let mt = self.memtable.lock().expect("Memtable lock poisoned");
         let mut vlog_guard = self.vlog.lock().expect("vLog mutex poisoned");
 
-        let _sstable = if let (Some(threshold), Some(ref mut vlog)) =
+        if let (Some(threshold), Some(ref mut vlog)) =
             (self.options.vlog_threshold, vlog_guard.as_mut())
         {
             // KV separation enabled - use vLog for large values
@@ -851,12 +851,12 @@ impl DB {
                 }
             }
 
-            builder.build(&sstable_path)?
+            builder.build(&sstable_path)?;
         } else {
             // No KV separation - traditional flush
             drop(vlog_guard); // Release lock
-            mt.flush(&sstable_path)?
-        };
+            mt.flush(&sstable_path)?;
+        }
         drop(mt); // Release memtable lock
 
         let size = std::fs::metadata(&sstable_path)?.len();

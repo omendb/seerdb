@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use crate::sstable::{SSTable, SSTableBuilder, SSTableError};
+use crate::sstable::{SSTableBuilder, SSTableError};
 
 /// In-memory sorted table for recent writes
 pub struct Memtable {
@@ -123,7 +123,7 @@ impl Memtable {
 
     /// Flush memtable to disk as an SSTable
     /// Only writes Value entries, skips Tombstones (they'll be in WAL)
-    pub fn flush(&self, path: impl AsRef<Path>) -> Result<SSTable, SSTableError> {
+    pub fn flush(&self, path: impl AsRef<Path>) -> Result<(), SSTableError> {
         let mut builder = SSTableBuilder::new();
 
         // Iterate in sorted order and add to SSTable
@@ -146,6 +146,7 @@ impl Memtable {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sstable::SSTable;
 
     #[test]
     fn test_memtable_put_get() {
@@ -271,7 +272,8 @@ mod tests {
         memtable.put(Bytes::from("key3"), Bytes::from("value3"));
 
         // Flush to disk
-        let mut sstable = memtable.flush(&sstable_path).unwrap();
+        memtable.flush(&sstable_path).unwrap();
+        let mut sstable = SSTable::open(&sstable_path).unwrap();
 
         // Verify data was written correctly
         assert_eq!(sstable.len(), 3);
@@ -292,7 +294,8 @@ mod tests {
         memtable.put(Bytes::from("key3"), Bytes::from("value3"));
 
         // Flush to disk
-        let sstable = memtable.flush(&sstable_path).unwrap();
+        memtable.flush(&sstable_path).unwrap();
+        let sstable = SSTable::open(&sstable_path).unwrap();
 
         // Only non-tombstone entries should be written
         assert_eq!(sstable.len(), 2);

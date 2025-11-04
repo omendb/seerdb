@@ -133,7 +133,7 @@ impl SSTableBuilder {
     ///   flag=0x01: pointer → [offset: u64][length: u32]
     /// Index: [num_entries: u32][(key_len: u32, key, offset: u64); num_entries]
     /// Footer: [index_offset: u64][bloom_offset: u64][checksum: u32][version: u32]
-    pub fn build(self, path: impl AsRef<Path>) -> Result<SSTable> {
+    pub fn build(self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref().to_path_buf();
         let file = OpenOptions::new()
             .create(true)
@@ -210,8 +210,9 @@ impl SSTableBuilder {
 
         file.sync_all()?;
 
-        // Return SSTable reader
-        SSTable::open(path)
+        // Don't load the SSTable back into memory - it's already on disk!
+        // Callers can call SSTable::open() if they need to read it.
+        Ok(())
     }
 }
 
@@ -536,7 +537,8 @@ mod tests {
         builder.add(Bytes::from("key2"), Bytes::from("value2"));
         builder.add(Bytes::from("key3"), Bytes::from("value3"));
 
-        let mut sstable = builder.build(&sstable_path).unwrap();
+        builder.build(&sstable_path).unwrap();
+        let mut sstable = SSTable::open(&sstable_path).unwrap();
 
         assert_eq!(sstable.len(), 3);
 
@@ -557,7 +559,8 @@ mod tests {
         builder.add(Bytes::from("key1"), Bytes::from("value1"));
         builder.add(Bytes::from("key2"), Bytes::from("value2"));
 
-        let mut sstable = builder.build(&sstable_path).unwrap();
+        builder.build(&sstable_path).unwrap();
+        let mut sstable = SSTable::open(&sstable_path).unwrap();
 
         // Iterate
         let entries: Vec<_> = sstable.iter().unwrap().map(|r| r.unwrap()).collect();
@@ -597,7 +600,8 @@ mod tests {
             builder.add(Bytes::from(key), Bytes::from(value));
         }
 
-        let mut sstable = builder.build(&sstable_path).unwrap();
+        builder.build(&sstable_path).unwrap();
+        let mut sstable = SSTable::open(&sstable_path).unwrap();
 
         // Keys that exist should be found
         assert_eq!(
@@ -640,7 +644,8 @@ mod tests {
             .add_with_vlog(Bytes::from("key2"), Bytes::from("tiny"), &mut vlog)
             .unwrap();
 
-        let mut sstable = builder.build(&sstable_path).unwrap();
+        builder.build(&sstable_path).unwrap();
+        let mut sstable = SSTable::open(&sstable_path).unwrap();
 
         // Read values - should work without vLog attached (inline values)
         assert_eq!(
@@ -672,7 +677,8 @@ mod tests {
             )
             .unwrap();
 
-        let mut sstable = builder.build(&sstable_path).unwrap();
+        builder.build(&sstable_path).unwrap();
+        let mut sstable = SSTable::open(&sstable_path).unwrap();
 
         // Try to read without vLog - should fail
         let result = sstable.get(b"key1");
@@ -717,7 +723,8 @@ mod tests {
             .add_with_vlog(Bytes::from("key3"), Bytes::from("also_small"), &mut vlog)
             .unwrap();
 
-        let mut sstable = builder.build(&sstable_path).unwrap();
+        builder.build(&sstable_path).unwrap();
+        let mut sstable = SSTable::open(&sstable_path).unwrap();
 
         // Small values work without vLog
         assert_eq!(sstable.get(b"key1").unwrap(), Some(Bytes::from("small")));
