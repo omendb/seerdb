@@ -4,6 +4,7 @@
 // Week 14: Block-based index for memory efficiency
 
 pub mod block;
+pub mod builder_v2;
 
 use crate::bloom::BloomFilter;
 use crate::vlog::{VLog, ValuePointer};
