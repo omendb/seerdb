@@ -50,16 +50,16 @@ pub fn compact_sstables(
     let merge = MergeIterator::new(sstables)?;
 
     // Build new SSTable from merged entries
-    let mut builder = SSTableBuilder::new();
+    let output_path = output_path.as_ref().to_path_buf();
+    let mut builder = SSTableBuilder::create(&output_path)?;
 
     for result in merge {
         let (key, value) = result?;
-        builder.add(key, value);
+        builder.add(key, value)?;
     }
 
-    // Write new SSTable
-    let output_path = output_path.as_ref().to_path_buf();
-    builder.build(&output_path)?;
+    // Finish writing
+    builder.finish()?;
 
     // Get file size
     let metadata = std::fs::metadata(&output_path)?;
@@ -263,9 +263,17 @@ impl LSMTree {
                 let metadata = std::fs::metadata(&path)?;
                 let size = metadata.len();
 
-                // Verify SSTable by opening it (validates checksum)
+                // Verify SSTable by opening it and validating all blocks
                 // If corrupt, this will return an error
-                SSTable::open(&path).map_err(|e| {
+                let mut sstable = SSTable::open(&path).map_err(|e| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("Corrupt SSTable: {}", e),
+                    )
+                })?;
+
+                // Validate all blocks to detect corruption
+                sstable.validate().map_err(|e| {
                     std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
                         format!("Corrupt SSTable: {}", e),
@@ -352,17 +360,17 @@ mod tests {
 
         // Build first SSTable
         let path1 = dir.path().join("input1.sst");
-        let mut builder1 = SSTableBuilder::new();
-        builder1.add(Bytes::from("key1"), Bytes::from("value1"));
-        builder1.add(Bytes::from("key3"), Bytes::from("value3"));
-        builder1.build(&path1).unwrap();
+        let mut builder1 = SSTableBuilder::create(&path1).unwrap();
+        builder1.add(Bytes::from("key1"), Bytes::from("value1")).unwrap();
+        builder1.add(Bytes::from("key3"), Bytes::from("value3")).unwrap();
+        builder1.finish().unwrap();
 
         // Build second SSTable
         let path2 = dir.path().join("input2.sst");
-        let mut builder2 = SSTableBuilder::new();
-        builder2.add(Bytes::from("key2"), Bytes::from("value2"));
-        builder2.add(Bytes::from("key4"), Bytes::from("value4"));
-        builder2.build(&path2).unwrap();
+        let mut builder2 = SSTableBuilder::create(&path2).unwrap();
+        builder2.add(Bytes::from("key2"), Bytes::from("value2")).unwrap();
+        builder2.add(Bytes::from("key4"), Bytes::from("value4")).unwrap();
+        builder2.finish().unwrap();
 
         // Compact
         let output_path = dir.path().join("output.sst");
@@ -401,16 +409,16 @@ mod tests {
 
         // Build newer SSTable
         let path1 = dir.path().join("input1.sst");
-        let mut builder1 = SSTableBuilder::new();
-        builder1.add(Bytes::from("key1"), Bytes::from("new_value"));
-        builder1.build(&path1).unwrap();
+        let mut builder1 = SSTableBuilder::create(&path1).unwrap();
+        builder1.add(Bytes::from("key1"), Bytes::from("new_value")).unwrap();
+        builder1.finish().unwrap();
 
         // Build older SSTable
         let path2 = dir.path().join("input2.sst");
-        let mut builder2 = SSTableBuilder::new();
-        builder2.add(Bytes::from("key1"), Bytes::from("old_value"));
-        builder2.add(Bytes::from("key2"), Bytes::from("value2"));
-        builder2.build(&path2).unwrap();
+        let mut builder2 = SSTableBuilder::create(&path2).unwrap();
+        builder2.add(Bytes::from("key1"), Bytes::from("old_value")).unwrap();
+        builder2.add(Bytes::from("key2"), Bytes::from("value2")).unwrap();
+        builder2.finish().unwrap();
 
         // Compact (newer first)
         let output_path = dir.path().join("output.sst");

@@ -97,11 +97,11 @@ mod tests {
         let path = dir.path().join("test.sst");
 
         // Build single SSTable
-        let mut builder = SSTableBuilder::new();
-        builder.add(Bytes::from("key1"), Bytes::from("value1"));
-        builder.add(Bytes::from("key2"), Bytes::from("value2"));
-        builder.add(Bytes::from("key3"), Bytes::from("value3"));
-        builder.build(&path).unwrap();
+        let mut builder = SSTableBuilder::create(&path).unwrap();
+        builder.add(Bytes::from("key1"), Bytes::from("value1")).unwrap();
+        builder.add(Bytes::from("key2"), Bytes::from("value2")).unwrap();
+        builder.add(Bytes::from("key3"), Bytes::from("value3")).unwrap();
+        builder.finish().unwrap();
         let sstable = SSTable::open(&path).unwrap();
 
         // Merge (single iterator)
@@ -128,18 +128,18 @@ mod tests {
 
         // Build first SSTable
         let path1 = dir.path().join("test1.sst");
-        let mut builder1 = SSTableBuilder::new();
-        builder1.add(Bytes::from("key1"), Bytes::from("value1"));
-        builder1.add(Bytes::from("key3"), Bytes::from("value3"));
-        builder1.build(&path1).unwrap();
+        let mut builder1 = SSTableBuilder::create(&path1).unwrap();
+        builder1.add(Bytes::from("key1"), Bytes::from("value1")).unwrap();
+        builder1.add(Bytes::from("key3"), Bytes::from("value3")).unwrap();
+        builder1.finish().unwrap();
         let sstable1 = SSTable::open(&path1).unwrap();
 
         // Build second SSTable
         let path2 = dir.path().join("test2.sst");
-        let mut builder2 = SSTableBuilder::new();
-        builder2.add(Bytes::from("key2"), Bytes::from("value2"));
-        builder2.add(Bytes::from("key4"), Bytes::from("value4"));
-        builder2.build(&path2).unwrap();
+        let mut builder2 = SSTableBuilder::create(&path2).unwrap();
+        builder2.add(Bytes::from("key2"), Bytes::from("value2")).unwrap();
+        builder2.add(Bytes::from("key4"), Bytes::from("value4")).unwrap();
+        builder2.finish().unwrap();
         let sstable2 = SSTable::open(&path2).unwrap();
 
         // Merge
@@ -162,18 +162,18 @@ mod tests {
 
         // Build first SSTable (newer)
         let path1 = dir.path().join("test1.sst");
-        let mut builder1 = SSTableBuilder::new();
-        builder1.add(Bytes::from("key1"), Bytes::from("new_value1"));
-        builder1.add(Bytes::from("key2"), Bytes::from("new_value2"));
-        builder1.build(&path1).unwrap();
+        let mut builder1 = SSTableBuilder::create(&path1).unwrap();
+        builder1.add(Bytes::from("key1"), Bytes::from("new_value1")).unwrap();
+        builder1.add(Bytes::from("key2"), Bytes::from("new_value2")).unwrap();
+        builder1.finish().unwrap();
         let sstable1 = SSTable::open(&path1).unwrap();
 
         // Build second SSTable (older)
         let path2 = dir.path().join("test2.sst");
-        let mut builder2 = SSTableBuilder::new();
-        builder2.add(Bytes::from("key1"), Bytes::from("old_value1"));
-        builder2.add(Bytes::from("key3"), Bytes::from("value3"));
-        builder2.build(&path2).unwrap();
+        let mut builder2 = SSTableBuilder::create(&path2).unwrap();
+        builder2.add(Bytes::from("key1"), Bytes::from("old_value1")).unwrap();
+        builder2.add(Bytes::from("key3"), Bytes::from("value3")).unwrap();
+        builder2.finish().unwrap();
         let sstable2 = SSTable::open(&path2).unwrap();
 
         // Merge (newer first)
@@ -198,15 +198,15 @@ mod tests {
         // Build 5 SSTables with interleaved keys
         for i in 0..5 {
             let path = dir.path().join(format!("test{}.sst", i));
-            let mut builder = SSTableBuilder::new();
+            let mut builder = SSTableBuilder::create(&path).unwrap();
 
             for j in 0..10 {
                 let key = format!("key_{:03}", i + j * 5);
                 let value = format!("value_{}", i + j * 5);
-                builder.add(Bytes::from(key), Bytes::from(value));
+                builder.add(Bytes::from(key), Bytes::from(value)).unwrap();
             }
 
-            builder.build(&path).unwrap();
+            builder.finish().unwrap();
             let sstable = SSTable::open(&path).unwrap();
             sstables.push(sstable);
         }

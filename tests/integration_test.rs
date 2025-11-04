@@ -51,9 +51,10 @@ fn test_wal_memtable_integration() {
 
     // Flush memtable to SSTable
     let sstable_path = dir.path().join("flush.sst");
-    let mut sstable = memtable.flush(&sstable_path).unwrap();
+    memtable.flush(&sstable_path).unwrap();
 
-    // Verify SSTable has the data (non-tombstone entries)
+    // Open the SSTable and verify it has the data (non-tombstone entries)
+    let mut sstable = SSTable::open(&sstable_path).unwrap();
     assert_eq!(sstable.get(b"key1").unwrap(), Some(Bytes::from("value1")));
     assert_eq!(sstable.get(b"key2").unwrap(), Some(Bytes::from("value2")));
     assert_eq!(sstable.get(b"key3").unwrap(), None); // Tombstone not flushed

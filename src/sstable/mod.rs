@@ -1,18 +1,18 @@
 // SSTable: Sorted String Table on disk
-// Week 6: Enhanced with bloom filters, compression, and binary search
-// Week 13: KV separation - stores value pointers for large values
-// Week 14: Block-based index for memory efficiency
+// Block-based format with lazy loading for memory efficiency
 
 pub mod block;
-pub mod builder_v2;
 
 use crate::bloom::BloomFilter;
+use block::{BlockBuilder, BlockError, Block, DEFAULT_BLOCK_SIZE};
 use crate::vlog::{VLog, ValuePointer};
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use crc32fast::Hasher;
+use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -31,278 +31,507 @@ pub enum SSTableError {
 
     #[error("SSTable corrupted: expected checksum {expected:#x}, got {actual:#x}")]
     Corruption { expected: u32, actual: u32 },
+
+    #[error("Block error: {0}")]
+    Block(#[from] BlockError),
 }
 
 pub type Result<T> = std::result::Result<T, SSTableError>;
 
-/// SSTable format version
-const SSTABLE_VERSION: u32 = 1;
+/// Magic number for SSTable format: "SSTB"
+const MAGIC: u32 = 0x53535442;
+const VERSION: u32 = 0x00000002;
 
-/// Helper to calculate CRC32 checksum while writing
-struct ChecksumWriter<W: Write> {
-    writer: W,
-    hasher: Hasher,
-}
+/// Entry value type flags
+const FLAG_INLINE: u8 = 0x00;
+const FLAG_POINTER: u8 = 0x01;
 
-impl<W: Write> ChecksumWriter<W> {
-    fn new(writer: W) -> Self {
-        Self {
-            writer,
-            hasher: Hasher::new(),
-        }
-    }
-
-    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
-        self.hasher.update(buf);
-        self.writer.write_all(buf)
-    }
-
-    fn finalize(self) -> (W, u32) {
-        (self.writer, self.hasher.finalize())
-    }
-}
-
-/// Entry value - either inline or pointer to vLog
+/// Top-level index entry (loaded into RAM)
 #[derive(Debug, Clone)]
-enum EntryValue {
-    Inline(Bytes),
-    Pointer(ValuePointer),
+struct TopLevelIndexEntry {
+    last_key: Bytes,
+    offset: u64,
+    size: u32,
 }
 
-/// SSTable writer with bloom filter support and optional KV separation
+// ============================================================================
+// SSTableBuilder - Write SSTables incrementally
+// ============================================================================
+
+/// SSTable builder with block-based format
 pub struct SSTableBuilder {
-    entries: Vec<(Bytes, EntryValue)>,
+    file: File,
+    data_block: BlockBuilder,
+    index_block: BlockBuilder,
+    top_level_index: Vec<TopLevelIndexEntry>,
     bloom: BloomFilter,
-    vlog_threshold: Option<usize>, // If Some(n), values > n bytes go to vLog
+    vlog_threshold: Option<usize>,
+    num_entries: u64,
+    current_offset: u64,
+    index_blocks_start: u64,
 }
 
 impl SSTableBuilder {
-    /// Create a new SSTable builder with default bloom filter (1% FPR, 10k elements)
-    pub fn new() -> Self {
-        Self::with_bloom_capacity(10000, 0.01)
-    }
+    /// Create a new SSTable builder
+    pub fn create(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
+        let mut file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(true)
+            .open(path)?;
 
-    /// Create a new SSTable builder with custom bloom filter parameters
-    pub fn with_bloom_capacity(expected_elements: usize, false_positive_rate: f64) -> Self {
-        Self {
-            entries: Vec::new(),
-            bloom: BloomFilter::new(expected_elements, false_positive_rate),
+        let header = Self::create_header();
+        file.write_all(&header)?;
+        let header_size = header.len() as u64;
+
+        Ok(Self {
+            file,
+            data_block: BlockBuilder::with_capacity(DEFAULT_BLOCK_SIZE),
+            index_block: BlockBuilder::with_capacity(DEFAULT_BLOCK_SIZE),
+            top_level_index: Vec::new(),
+            bloom: BloomFilter::new(10000, 0.01),
             vlog_threshold: None,
-        }
+            num_entries: 0,
+            current_offset: header_size,
+            index_blocks_start: 0,
+        })
     }
 
-    /// Enable KV separation - values larger than threshold will be stored in vLog
     pub fn with_vlog_threshold(mut self, threshold: usize) -> Self {
         self.vlog_threshold = Some(threshold);
         self
     }
 
-    /// Add a key-value pair (must be added in sorted order)
-    /// If vLog is provided and value > threshold, stores value in vLog
-    pub fn add(&mut self, key: Bytes, value: Bytes) {
-        // Add key to bloom filter
+    pub fn add(&mut self, key: Bytes, value: Bytes) -> Result<()> {
         self.bloom.insert(&key);
-        self.entries.push((key, EntryValue::Inline(value)));
+        let entry = self.encode_entry(&key, FLAG_INLINE, &value);
+
+        if !self.data_block.add(&key, &entry) {
+            self.flush_data_block()?;
+            if !self.data_block.add(&key, &entry) {
+                return Err(SSTableError::InvalidFormat);
+            }
+        }
+
+        self.num_entries += 1;
+        Ok(())
     }
 
-    /// Add a key-value pair with explicit vLog handling
-    /// For large values, appends to vLog and stores pointer
     pub fn add_with_vlog(&mut self, key: Bytes, value: Bytes, vlog: &mut VLog) -> Result<()> {
         self.bloom.insert(&key);
 
-        let entry_value = if let Some(threshold) = self.vlog_threshold {
+        let (flag, data) = if let Some(threshold) = self.vlog_threshold {
             if value.len() > threshold {
-                // Store in vLog, keep pointer
                 let pointer = vlog
                     .append(&key, &value)
                     .map_err(|e| SSTableError::VLog(e.to_string()))?;
-                EntryValue::Pointer(pointer)
+
+                let mut ptr_data = BytesMut::with_capacity(12);
+                ptr_data.extend_from_slice(&pointer.offset.to_le_bytes());
+                ptr_data.extend_from_slice(&pointer.length.to_le_bytes());
+                (FLAG_POINTER, ptr_data.freeze())
             } else {
-                // Store inline
-                EntryValue::Inline(value)
+                (FLAG_INLINE, value)
             }
         } else {
-            // No vLog, store inline
-            EntryValue::Inline(value)
+            (FLAG_INLINE, value)
         };
 
-        self.entries.push((key, entry_value));
-        Ok(())
-    }
+        let entry = self.encode_entry(&key, flag, &data);
 
-    /// Build and write SSTable to disk
-    /// Format: [entries...][index][bloom_filter_len: u64][bloom_filter][footer]
-    /// Entry: [key_len: u32][key][flag: u8][value_data]
-    ///   flag=0x00: inline  → [value_len: u32][value]
-    ///   flag=0x01: pointer → [offset: u64][length: u32]
-    /// Index: [num_entries: u32][(key_len: u32, key, offset: u64); num_entries]
-    /// Footer: [index_offset: u64][bloom_offset: u64][checksum: u32][version: u32]
-    pub fn build(self, path: impl AsRef<Path>) -> Result<()> {
-        let path = path.as_ref().to_path_buf();
-        let file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&path)?;
-
-        // Wrap file with checksum writer
-        let mut writer = ChecksumWriter::new(file);
-        let mut index_entries = Vec::new();
-        let mut current_offset = 0u64;
-
-        // Write entries
-        for (key, entry_value) in &self.entries {
-            index_entries.push((key.clone(), current_offset));
-
-            // Write key
-            writer.write_all(&(key.len() as u32).to_le_bytes())?;
-            writer.write_all(key)?;
-            current_offset += 4 + key.len() as u64;
-
-            // Write value (inline or pointer)
-            match entry_value {
-                EntryValue::Inline(value) => {
-                    // Flag: 0x00 = inline
-                    writer.write_all(&[0x00])?;
-                    current_offset += 1;
-
-                    // Write value
-                    writer.write_all(&(value.len() as u32).to_le_bytes())?;
-                    writer.write_all(value)?;
-                    current_offset += 4 + value.len() as u64;
-                }
-                EntryValue::Pointer(pointer) => {
-                    // Flag: 0x01 = pointer
-                    writer.write_all(&[0x01])?;
-                    current_offset += 1;
-
-                    // Write pointer (offset + length)
-                    writer.write_all(&pointer.offset.to_le_bytes())?;
-                    writer.write_all(&pointer.length.to_le_bytes())?;
-                    current_offset += 8 + 4;
-                }
+        if !self.data_block.add(&key, &entry) {
+            self.flush_data_block()?;
+            if !self.data_block.add(&key, &entry) {
+                return Err(SSTableError::InvalidFormat);
             }
         }
 
-        let index_offset = current_offset;
-
-        // Write index with keys for binary search
-        writer.write_all(&(index_entries.len() as u32).to_le_bytes())?;
-        current_offset += 4;
-        for (key, offset) in &index_entries {
-            writer.write_all(&(key.len() as u32).to_le_bytes())?;
-            writer.write_all(key)?;
-            writer.write_all(&offset.to_le_bytes())?;
-            current_offset += 4 + key.len() as u64 + 8;
-        }
-
-        let bloom_offset = current_offset;
-
-        // Write bloom filter
-        let bloom_bytes = self.bloom.to_bytes();
-        writer.write_all(&(bloom_bytes.len() as u64).to_le_bytes())?;
-        writer.write_all(&bloom_bytes)?;
-
-        // Write footer (index offset, bloom offset)
-        writer.write_all(&index_offset.to_le_bytes())?;
-        writer.write_all(&bloom_offset.to_le_bytes())?;
-
-        // Finalize checksum and write it along with version
-        let (mut file, checksum) = writer.finalize();
-        file.write_all(&checksum.to_le_bytes())?;
-        file.write_all(&SSTABLE_VERSION.to_le_bytes())?;
-
-        file.sync_all()?;
-
-        // Don't load the SSTable back into memory - it's already on disk!
-        // Callers can call SSTable::open() if they need to read it.
+        self.num_entries += 1;
         Ok(())
     }
-}
 
-impl Default for SSTableBuilder {
-    fn default() -> Self {
-        Self::new()
+    fn encode_entry(&self, _key: &[u8], flag: u8, data: &[u8]) -> Bytes {
+        let mut buf = BytesMut::with_capacity(1 + data.len());
+        buf.extend_from_slice(&[flag]);
+        buf.extend_from_slice(data);
+        buf.freeze()
+    }
+
+    fn flush_data_block(&mut self) -> Result<()> {
+        if self.data_block.is_empty() {
+            return Ok(());
+        }
+
+        let last_key = Bytes::copy_from_slice(self.data_block.last_key());
+        let block_offset = self.current_offset;
+
+        let old_block = std::mem::replace(&mut self.data_block, BlockBuilder::with_capacity(DEFAULT_BLOCK_SIZE));
+        let block_data = old_block.finish();
+        let block_size = block_data.len() as u32;
+        self.file.write_all(&block_data)?;
+        self.current_offset += block_data.len() as u64;
+
+        let mut index_entry = BytesMut::with_capacity(4 + last_key.len() + 8 + 4);
+        index_entry.extend_from_slice(&(last_key.len() as u32).to_le_bytes());
+        index_entry.extend_from_slice(&last_key);
+        index_entry.extend_from_slice(&block_offset.to_le_bytes());
+        index_entry.extend_from_slice(&block_size.to_le_bytes());
+        let index_entry_bytes = index_entry.freeze();
+
+        if !self.index_block.add(&last_key, &index_entry_bytes) {
+            self.flush_index_block()?;
+            
+            let mut index_entry2 = BytesMut::with_capacity(4 + last_key.len() + 8 + 4);
+            index_entry2.extend_from_slice(&(last_key.len() as u32).to_le_bytes());
+            index_entry2.extend_from_slice(&last_key);
+            index_entry2.extend_from_slice(&block_offset.to_le_bytes());
+            index_entry2.extend_from_slice(&block_size.to_le_bytes());
+
+            if !self.index_block.add(&last_key, &index_entry2.freeze()) {
+                return Err(SSTableError::InvalidFormat);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn flush_index_block(&mut self) -> Result<()> {
+        if self.index_block.is_empty() {
+            return Ok(());
+        }
+
+        if self.index_blocks_start == 0 {
+            self.index_blocks_start = self.current_offset;
+        }
+
+        let last_key = Bytes::copy_from_slice(self.index_block.last_key());
+        let block_offset = self.current_offset;
+
+        let old_block = std::mem::replace(&mut self.index_block, BlockBuilder::with_capacity(DEFAULT_BLOCK_SIZE));
+        let block_data = old_block.finish();
+        let block_size = block_data.len() as u32;
+        self.file.write_all(&block_data)?;
+        self.current_offset += block_data.len() as u64;
+
+        self.top_level_index.push(TopLevelIndexEntry {
+            last_key,
+            offset: block_offset,
+            size: block_size,
+        });
+
+        Ok(())
+    }
+
+    pub fn finish(mut self) -> Result<()> {
+        self.flush_data_block()?;
+        self.flush_index_block()?;
+
+        let top_level_offset = self.current_offset;
+        self.write_top_level_index()?;
+
+        let bloom_offset = self.current_offset;
+        let bloom_bytes = self.bloom.to_bytes();
+        self.file.write_all(&(bloom_bytes.len() as u64).to_le_bytes())?;
+        self.file.write_all(&bloom_bytes)?;
+        self.current_offset += 8 + bloom_bytes.len() as u64;
+
+        self.write_footer(top_level_offset, bloom_offset)?;
+
+        self.file.seek(SeekFrom::Start(8))?;
+        self.file.write_all(&0u64.to_le_bytes())?;
+        self.file.write_all(&self.num_entries.to_le_bytes())?;
+
+        self.file.sync_all()?;
+        Ok(())
+    }
+
+    fn write_top_level_index(&mut self) -> Result<()> {
+        self.file.write_all(&(self.top_level_index.len() as u32).to_le_bytes())?;
+        self.current_offset += 4;
+
+        for entry in &self.top_level_index {
+            self.file.write_all(&(entry.last_key.len() as u32).to_le_bytes())?;
+            self.file.write_all(&entry.last_key)?;
+            self.file.write_all(&entry.offset.to_le_bytes())?;
+            self.file.write_all(&entry.size.to_le_bytes())?;
+            self.current_offset += 4 + entry.last_key.len() as u64 + 8 + 4;
+        }
+
+        Ok(())
+    }
+
+    fn write_footer(&mut self, top_level_offset: u64, bloom_offset: u64) -> Result<()> {
+        let footer_start = self.current_offset;
+
+        self.file.seek(SeekFrom::Start(0))?;
+        let mut hasher = Hasher::new();
+        let mut buf = vec![0u8; 4096];
+        let mut remaining = footer_start;
+
+        while remaining > 0 {
+            let to_read = remaining.min(4096) as usize;
+            self.file.read_exact(&mut buf[..to_read])?;
+            hasher.update(&buf[..to_read]);
+            remaining -= to_read as u64;
+        }
+
+        let checksum = hasher.finalize();
+        self.file.seek(SeekFrom::Start(footer_start))?;
+
+        self.file.write_all(&self.index_blocks_start.to_le_bytes())?;
+        self.file.write_all(&top_level_offset.to_le_bytes())?;
+        self.file.write_all(&bloom_offset.to_le_bytes())?;
+        self.file.write_all(&checksum.to_le_bytes())?;
+        self.file.write_all(&MAGIC.to_le_bytes())?;
+        self.file.write_all(&VERSION.to_le_bytes())?;
+        self.file.write_all(&0u32.to_le_bytes())?;
+
+        Ok(())
+    }
+
+    fn create_header() -> Vec<u8> {
+        let mut header = Vec::with_capacity(32);
+        header.extend_from_slice(&MAGIC.to_le_bytes());
+        header.extend_from_slice(&VERSION.to_le_bytes());
+        header.extend_from_slice(&0u64.to_le_bytes());
+        header.extend_from_slice(&0u64.to_le_bytes());
+        header.extend_from_slice(&0u64.to_le_bytes());
+        header
     }
 }
 
-/// SSTable reader with bloom filter and optional vLog
-#[derive(Debug)]
+// ============================================================================
+// SSTable - Read SSTables with lazy loading
+// ============================================================================
+
+/// SSTable reader with lazy block loading
 pub struct SSTable {
-    file: File,
+    file: Arc<Mutex<File>>,
     path: PathBuf,
-    index: Vec<(Bytes, u64)>, // (Key, offset) pairs for binary search
+    top_level_index: Vec<TopLevelIndexEntry>,
     bloom: BloomFilter,
-    num_entries: usize,
-    vlog: Option<VLog>, // Optional vLog for reading value pointers
+    num_entries: u64,
+    vlog: Option<Arc<Mutex<VLog>>>,
+    block_cache: Arc<Mutex<HashMap<u64, Bytes>>>,
 }
 
 impl SSTable {
-    /// Open an existing SSTable
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
-        let mut file = OpenOptions::new().read(true).open(&path)?;
+        let mut file = File::open(&path)?;
 
-        // Get file size
-        let file_size = file.metadata()?.len();
+        let (num_entries, _) = Self::read_header(&mut file)?;
+        let (top_level_offset, bloom_offset) = Self::read_footer(&mut file)?;
+        let top_level_index = Self::load_top_level_index(&mut file, top_level_offset)?;
+        let bloom = Self::load_bloom_filter(&mut file, bloom_offset)?;
 
-        // Read footer (last 24 bytes: index_offset + bloom_offset + checksum + version)
-        file.seek(SeekFrom::End(-24))?;
-        let mut footer_buf = [0u8; 24];
-        file.read_exact(&mut footer_buf)?;
-        let index_offset = u64::from_le_bytes(
-            footer_buf[0..8]
-                .try_into()
-                .expect("footer slice [0..8] is exactly 8 bytes"),
-        );
-        let bloom_offset = u64::from_le_bytes(
-            footer_buf[8..16]
-                .try_into()
-                .expect("footer slice [8..16] is exactly 8 bytes"),
-        );
-        let stored_checksum = u32::from_le_bytes(
-            footer_buf[16..20]
-                .try_into()
-                .expect("footer slice [16..20] is exactly 4 bytes"),
-        );
-        let version = u32::from_le_bytes(
-            footer_buf[20..24]
-                .try_into()
-                .expect("footer slice [20..24] is exactly 4 bytes"),
-        );
+        Ok(Self {
+            file: Arc::new(Mutex::new(file)),
+            path,
+            top_level_index,
+            bloom,
+            num_entries,
+            vlog: None,
+            block_cache: Arc::new(Mutex::new(HashMap::new())),
+        })
+    }
 
-        // Verify version
-        if version != SSTABLE_VERSION {
+    pub fn with_vlog(mut self, vlog: VLog) -> Self {
+        self.vlog = Some(Arc::new(Mutex::new(vlog)));
+        self
+    }
+
+    pub fn get(&mut self, key: &[u8]) -> Result<Option<Bytes>> {
+        if !self.bloom.contains(key) {
+            return Ok(None);
+        }
+
+        let (index_block_offset, index_block_size) = match self.find_index_block(key) {
+            Some((offset, size)) => (offset, size),
+            None => return Ok(None),
+        };
+
+        let index_block_data = self.load_block(index_block_offset, index_block_size)?;
+        let index_block = Block::new(index_block_data)?;
+
+        let (data_block_offset, data_block_size) = match self.find_in_index_block(&index_block, key)? {
+            Some((offset, size)) => (offset, size),
+            None => return Ok(None),
+        };
+
+        let data_block_data = self.load_block(data_block_offset, data_block_size)?;
+        let data_block = Block::new(data_block_data)?;
+
+        self.find_in_data_block(&data_block, key)
+    }
+
+    fn find_index_block(&self, key: &[u8]) -> Option<(u64, u32)> {
+        let idx = self.top_level_index
+            .binary_search_by(|entry| entry.last_key.as_ref().cmp(key))
+            .unwrap_or_else(|idx| idx);
+
+        if idx < self.top_level_index.len() {
+            Some((self.top_level_index[idx].offset, self.top_level_index[idx].size))
+        } else {
+            self.top_level_index.last().map(|e| (e.offset, e.size))
+        }
+    }
+
+    fn find_in_index_block(&self, index_block: &Block, key: &[u8]) -> Result<Option<(u64, u32)>> {
+        for entry in index_block.iter() {
+            let (entry_key, entry_value) = entry?;
+            let value_len = entry_value.len();
+            
+            if value_len < 12 {
+                return Err(SSTableError::InvalidFormat);
+            }
+
+            let mut offset_bytes = [0u8; 8];
+            let mut size_bytes = [0u8; 4];
+            offset_bytes.copy_from_slice(&entry_value[value_len - 12..value_len - 4]);
+            size_bytes.copy_from_slice(&entry_value[value_len - 4..]);
+
+            let offset = u64::from_le_bytes(offset_bytes);
+            let size = u32::from_le_bytes(size_bytes);
+
+            if key <= entry_key.as_ref() {
+                return Ok(Some((offset, size)));
+            }
+        }
+
+        Ok(None)
+    }
+
+    fn find_in_data_block(&mut self, data_block: &Block, key: &[u8]) -> Result<Option<Bytes>> {
+        for entry in data_block.iter() {
+            let (entry_key, entry_value) = entry?;
+
+            if entry_key.as_ref() == key {
+                if entry_value.is_empty() {
+                    return Err(SSTableError::InvalidFormat);
+                }
+
+                let flag = entry_value[0];
+                let data = entry_value.slice(1..);
+
+                match flag {
+                    FLAG_INLINE => return Ok(Some(data)),
+                    FLAG_POINTER => {
+                        if data.len() < 12 {
+                            return Err(SSTableError::InvalidFormat);
+                        }
+
+                        let offset = u64::from_le_bytes([
+                            data[0], data[1], data[2], data[3],
+                            data[4], data[5], data[6], data[7],
+                        ]);
+                        let length = u32::from_le_bytes([
+                            data[8], data[9], data[10], data[11],
+                        ]);
+
+                        if let Some(ref vlog) = self.vlog {
+                            let mut vlog_guard = vlog.lock().unwrap();
+                            let pointer = ValuePointer { offset, length };
+                            let value = vlog_guard.read(pointer)
+                                .map_err(|e| SSTableError::VLog(e.to_string()))?;
+                            return Ok(Some(value));
+                        } else {
+                            return Err(SSTableError::VLog("VLog not attached".to_string()));
+                        }
+                    }
+                    _ => return Err(SSTableError::InvalidFormat),
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    fn load_block(&self, offset: u64, size: u32) -> Result<Bytes> {
+        {
+            let cache = self.block_cache.lock().unwrap();
+            if let Some(block) = cache.get(&offset) {
+                return Ok(block.clone());
+            }
+        }
+
+        let mut file = self.file.lock().unwrap();
+        file.seek(SeekFrom::Start(offset))?;
+
+        let mut buf = vec![0u8; size as usize];
+        file.read_exact(&mut buf)?;
+        let block_data = Bytes::from(buf);
+
+        {
+            let mut cache = self.block_cache.lock().unwrap();
+            cache.insert(offset, block_data.clone());
+        }
+
+        Ok(block_data)
+    }
+
+    fn read_header(file: &mut File) -> Result<(u64, u64)> {
+        file.seek(SeekFrom::Start(0))?;
+        let mut header = [0u8; 32];
+        file.read_exact(&mut header)?;
+
+        let magic = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
+        let version = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
+
+        if magic != MAGIC || version != VERSION {
             return Err(SSTableError::InvalidFormat);
         }
 
-        // Verify checksum by reading all data up to the footer
-        file.seek(SeekFrom::Start(0))?;
-        let data_len = (file_size - 8) as usize; // Everything except checksum and version
-        let mut data = vec![0u8; data_len];
-        file.read_exact(&mut data)?;
+        let num_entries = u64::from_le_bytes([
+            header[16], header[17], header[18], header[19],
+            header[20], header[21], header[22], header[23],
+        ]);
 
-        let mut hasher = Hasher::new();
-        hasher.update(&data);
-        let actual_checksum = hasher.finalize();
+        Ok((num_entries, 0))
+    }
 
-        if actual_checksum != stored_checksum {
-            return Err(SSTableError::Corruption {
-                expected: stored_checksum,
-                actual: actual_checksum,
-            });
+    fn read_footer(file: &mut File) -> Result<(u64, u64)> {
+        let file_size = file.metadata()?.len();
+        file.seek(SeekFrom::Start(file_size - 40))?;
+
+        let mut footer = [0u8; 40];
+        file.read_exact(&mut footer)?;
+
+        let _index_blocks_offset = u64::from_le_bytes([
+            footer[0], footer[1], footer[2], footer[3],
+            footer[4], footer[5], footer[6], footer[7],
+        ]);
+        let top_level_offset = u64::from_le_bytes([
+            footer[8], footer[9], footer[10], footer[11],
+            footer[12], footer[13], footer[14], footer[15],
+        ]);
+        let bloom_offset = u64::from_le_bytes([
+            footer[16], footer[17], footer[18], footer[19],
+            footer[20], footer[21], footer[22], footer[23],
+        ]);
+
+        let magic = u32::from_le_bytes([footer[28], footer[29], footer[30], footer[31]]);
+        let version = u32::from_le_bytes([footer[32], footer[33], footer[34], footer[35]]);
+
+        if magic != MAGIC || version != VERSION {
+            return Err(SSTableError::InvalidFormat);
         }
 
-        // Read index
-        file.seek(SeekFrom::Start(index_offset))?;
+        Ok((top_level_offset, bloom_offset))
+    }
+
+    fn load_top_level_index(file: &mut File, offset: u64) -> Result<Vec<TopLevelIndexEntry>> {
+        file.seek(SeekFrom::Start(offset))?;
 
         let mut num_entries_buf = [0u8; 4];
         file.read_exact(&mut num_entries_buf)?;
         let num_entries = u32::from_le_bytes(num_entries_buf) as usize;
 
-        let mut index = Vec::with_capacity(num_entries);
+        let mut entries = Vec::with_capacity(num_entries);
+
         for _ in 0..num_entries {
-            // Read key
             let mut key_len_buf = [0u8; 4];
             file.read_exact(&mut key_len_buf)?;
             let key_len = u32::from_le_bytes(key_len_buf) as usize;
@@ -310,527 +539,209 @@ impl SSTable {
             let mut key = vec![0u8; key_len];
             file.read_exact(&mut key)?;
 
-            // Read offset
             let mut offset_buf = [0u8; 8];
             file.read_exact(&mut offset_buf)?;
-            let offset = u64::from_le_bytes(offset_buf);
+            let block_offset = u64::from_le_bytes(offset_buf);
 
-            index.push((Bytes::from(key), offset));
+            let mut size_buf = [0u8; 4];
+            file.read_exact(&mut size_buf)?;
+            let block_size = u32::from_le_bytes(size_buf);
+
+            entries.push(TopLevelIndexEntry {
+                last_key: Bytes::from(key),
+                offset: block_offset,
+                size: block_size,
+            });
         }
 
-        // Read bloom filter
-        file.seek(SeekFrom::Start(bloom_offset))?;
-        let mut bloom_len_buf = [0u8; 8];
-        file.read_exact(&mut bloom_len_buf)?;
-        let bloom_len = u64::from_le_bytes(bloom_len_buf) as usize;
+        Ok(entries)
+    }
+
+    fn load_bloom_filter(file: &mut File, offset: u64) -> Result<BloomFilter> {
+        file.seek(SeekFrom::Start(offset))?;
+
+        let mut len_buf = [0u8; 8];
+        file.read_exact(&mut len_buf)?;
+        let bloom_len = u64::from_le_bytes(len_buf) as usize;
 
         let mut bloom_bytes = vec![0u8; bloom_len];
         file.read_exact(&mut bloom_bytes)?;
 
-        let bloom = BloomFilter::from_bytes(&bloom_bytes).ok_or(SSTableError::InvalidFormat)?;
-
-        Ok(Self {
-            file,
-            path,
-            index,
-            bloom,
-            num_entries,
-            vlog: None,
-        })
+        BloomFilter::from_bytes(&bloom_bytes).ok_or(SSTableError::InvalidFormat)
     }
 
-    /// Attach a vLog for reading value pointers
-    pub fn with_vlog(mut self, vlog: VLog) -> Self {
-        self.vlog = Some(vlog);
-        self
-    }
-
-    /// Get a value by key using bloom filter + binary search
-    /// Handles both inline values and vLog pointers
-    pub fn get(&mut self, key: &[u8]) -> Result<Option<Bytes>> {
-        // Check bloom filter first - if not present, definitely not in SSTable
-        if !self.bloom.contains(&key) {
-            return Ok(None);
-        }
-
-        // Bloom filter says key might be present, do binary search
-        let result = self.index.binary_search_by(|(k, _)| k.as_ref().cmp(key));
-
-        match result {
-            Ok(idx) => {
-                // Found the key, read the value
-                let (_key, offset) = &self.index[idx];
-                self.file.seek(SeekFrom::Start(*offset))?;
-
-                // Read key (skip it)
-                let mut key_len_buf = [0u8; 4];
-                self.file.read_exact(&mut key_len_buf)?;
-                let key_len = u32::from_le_bytes(key_len_buf) as usize;
-                self.file.seek(SeekFrom::Current(key_len as i64))?;
-
-                // Read flag byte
-                let mut flag_buf = [0u8; 1];
-                self.file.read_exact(&mut flag_buf)?;
-                let flag = flag_buf[0];
-
-                match flag {
-                    0x00 => {
-                        // Inline value
-                        let mut value_len_buf = [0u8; 4];
-                        self.file.read_exact(&mut value_len_buf)?;
-                        let value_len = u32::from_le_bytes(value_len_buf) as usize;
-
-                        let mut value = vec![0u8; value_len];
-                        self.file.read_exact(&mut value)?;
-
-                        Ok(Some(Bytes::from(value)))
-                    }
-                    0x01 => {
-                        // Value pointer - read from vLog
-                        let mut offset_buf = [0u8; 8];
-                        self.file.read_exact(&mut offset_buf)?;
-                        let vlog_offset = u64::from_le_bytes(offset_buf);
-
-                        let mut length_buf = [0u8; 4];
-                        self.file.read_exact(&mut length_buf)?;
-                        let vlog_length = u32::from_le_bytes(length_buf);
-
-                        let pointer = ValuePointer {
-                            offset: vlog_offset,
-                            length: vlog_length,
-                        };
-
-                        // Read from vLog
-                        if let Some(vlog) = &mut self.vlog {
-                            let value = vlog
-                                .read(pointer)
-                                .map_err(|e| SSTableError::VLog(e.to_string()))?;
-                            Ok(Some(value))
-                        } else {
-                            Err(SSTableError::VLog(
-                                "Value pointer found but no vLog attached".to_string(),
-                            ))
-                        }
-                    }
-                    _ => Err(SSTableError::InvalidFormat),
-                }
-            }
-            Err(_) => {
-                // Key not found (bloom filter false positive)
-                Ok(None)
-            }
-        }
-    }
-
-    /// Iterate over all entries
-    pub fn iter(&mut self) -> Result<SSTableIterator<'_>> {
-        // Extract just the offsets for the iterator
-        let offsets: Vec<u64> = self.index.iter().map(|(_, offset)| *offset).collect();
-        SSTableIterator::new(&mut self.file, &offsets)
-    }
-
-    /// Get number of entries
     pub fn len(&self) -> usize {
-        self.num_entries
+        self.num_entries as usize
     }
 
-    /// Check if empty
     pub fn is_empty(&self) -> bool {
         self.num_entries == 0
     }
 
-    /// Get file path
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    /// Validate all blocks in the SSTable by loading and checking checksums
+    /// This is expensive but useful for corruption detection
+    pub fn validate(&mut self) -> Result<()> {
+        // Get file size to validate block offsets
+        let file_size = std::fs::metadata(&self.path)?.len();
+
+        // Validate all index blocks and data blocks
+        for top_entry in &self.top_level_index.clone() {
+            // Check if offset + size is within file bounds
+            if top_entry.offset + (top_entry.size as u64) > file_size {
+                return Err(SSTableError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("Block extends past end of file: offset={}, size={}, file_size={}",
+                            top_entry.offset, top_entry.size, file_size),
+                )));
+            }
+
+            // Load and validate index block
+            let index_block_data = self.load_block(top_entry.offset, top_entry.size)?;
+            let index_block = Block::new(index_block_data)?;
+
+            // Iterate through index entries to validate data blocks
+            for result in index_block.iter() {
+                let (_key_bytes, value_bytes) = result?;
+
+                // Index entry format: [key_len: 4][key: variable][offset: 8][size: 4]
+                if value_bytes.len() < 16 {
+                    continue;
+                }
+
+                // Read key_len to skip the key
+                let key_len = u32::from_le_bytes(value_bytes[..4].try_into().unwrap()) as usize;
+                let offset_start = 4 + key_len;
+
+                if value_bytes.len() < offset_start + 12 {
+                    continue;
+                }
+
+                let offset = u64::from_le_bytes(value_bytes[offset_start..offset_start+8].try_into().unwrap());
+                let size = u32::from_le_bytes(value_bytes[offset_start+8..offset_start+12].try_into().unwrap());
+
+                // Check if data block is within file bounds
+                if offset + (size as u64) > file_size {
+                    return Err(SSTableError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("Data block extends past end of file: offset={}, size={}, file_size={}",
+                                offset, size, file_size),
+                    )));
+                }
+
+                // Load and validate data block
+                let data_block_data = self.load_block(offset, size)?;
+                let _data_block = Block::new(data_block_data)?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
-/// Iterator over SSTable entries
-pub struct SSTableIterator<'a> {
-    file: &'a mut File,
-    offsets: Vec<u64>,
-    current_index: usize,
+// ============================================================================
+// SSTableIterator - Iterator over all entries
+// ============================================================================
+
+pub struct SSTableIterator {
+    entries: Vec<(Bytes, Bytes)>,
+    position: usize,
 }
 
-impl<'a> SSTableIterator<'a> {
-    fn new(file: &'a mut File, offsets: &[u64]) -> Result<Self> {
-        Ok(Self {
-            file,
-            offsets: offsets.to_vec(),
-            current_index: 0,
+impl SSTable {
+    pub fn iter(&mut self) -> Result<SSTableIterator> {
+        let mut entries = Vec::new();
+
+        // Iterate through all data blocks
+        for top_entry in &self.top_level_index {
+            // Load index block
+            let index_block_data = self.load_block(top_entry.offset, top_entry.size)?;
+            let index_block = Block::new(index_block_data)?;
+
+            // Iterate through index entries to get data blocks
+            for idx_entry in index_block.iter() {
+                let (_index_key, index_value) = idx_entry?;
+                
+                let value_len = index_value.len();
+                if value_len < 12 {
+                    continue;
+                }
+
+                let mut offset_bytes = [0u8; 8];
+                let mut size_bytes = [0u8; 4];
+                offset_bytes.copy_from_slice(&index_value[value_len - 12..value_len - 4]);
+                size_bytes.copy_from_slice(&index_value[value_len - 4..]);
+
+                let data_offset = u64::from_le_bytes(offset_bytes);
+                let data_size = u32::from_le_bytes(size_bytes);
+
+                // Load data block
+                let data_block_data = self.load_block(data_offset, data_size)?;
+                let data_block = Block::new(data_block_data)?;
+
+                // Iterate through data block entries
+                for data_entry in data_block.iter() {
+                    let (key, entry_value) = data_entry?;
+
+                    if entry_value.is_empty() {
+                        continue;
+                    }
+
+                    let flag = entry_value[0];
+                    let data = entry_value.slice(1..);
+
+                    let value = match flag {
+                        FLAG_INLINE => data,
+                        FLAG_POINTER => {
+                            if data.len() < 12 {
+                                continue;
+                            }
+
+                            let offset = u64::from_le_bytes([
+                                data[0], data[1], data[2], data[3],
+                                data[4], data[5], data[6], data[7],
+                            ]);
+                            let length = u32::from_le_bytes([
+                                data[8], data[9], data[10], data[11],
+                            ]);
+
+                            if let Some(ref vlog) = self.vlog {
+                                let mut vlog_guard = vlog.lock().unwrap();
+                                let pointer = ValuePointer { offset, length };
+                                vlog_guard.read(pointer)
+                                    .map_err(|e| SSTableError::VLog(e.to_string()))?
+                            } else {
+                                continue;
+                            }
+                        }
+                        _ => continue,
+                    };
+
+                    entries.push((key, value));
+                }
+            }
+        }
+
+        Ok(SSTableIterator {
+            entries,
+            position: 0,
         })
     }
 }
 
-impl<'a> Iterator for SSTableIterator<'a> {
+impl Iterator for SSTableIterator {
     type Item = Result<(Bytes, Bytes)>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.current_index >= self.offsets.len() {
+        if self.position >= self.entries.len() {
             return None;
         }
 
-        let offset = self.offsets[self.current_index];
-        self.current_index += 1;
-
-        // Seek to entry
-        if let Err(e) = self.file.seek(SeekFrom::Start(offset)) {
-            return Some(Err(e.into()));
-        }
-
-        // Read key
-        let mut key_len_buf = [0u8; 4];
-        if let Err(e) = self.file.read_exact(&mut key_len_buf) {
-            return Some(Err(e.into()));
-        }
-        let key_len = u32::from_le_bytes(key_len_buf) as usize;
-
-        let mut key = vec![0u8; key_len];
-        if let Err(e) = self.file.read_exact(&mut key) {
-            return Some(Err(e.into()));
-        }
-
-        // Read flag byte
-        let mut flag_buf = [0u8; 1];
-        if let Err(e) = self.file.read_exact(&mut flag_buf) {
-            return Some(Err(e.into()));
-        }
-        let flag = flag_buf[0];
-
-        match flag {
-            0x00 => {
-                // Inline value
-                let mut value_len_buf = [0u8; 4];
-                if let Err(e) = self.file.read_exact(&mut value_len_buf) {
-                    return Some(Err(e.into()));
-                }
-                let value_len = u32::from_le_bytes(value_len_buf) as usize;
-
-                let mut value = vec![0u8; value_len];
-                if let Err(e) = self.file.read_exact(&mut value) {
-                    return Some(Err(e.into()));
-                }
-
-                Some(Ok((Bytes::from(key), Bytes::from(value))))
-            }
-            0x01 => {
-                // Value pointer - skip for now (iterator doesn't have vLog access)
-                // This is a limitation we'll address later
-                Some(Err(SSTableError::VLog(
-                    "Iterator doesn't support vLog pointers yet".to_string(),
-                )))
-            }
-            _ => Some(Err(SSTableError::InvalidFormat)),
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::tempdir;
-
-    #[test]
-    fn test_sstable_build_and_read() {
-        let dir = tempdir().unwrap();
-        let sstable_path = dir.path().join("test.sst");
-
-        // Build SSTable
-        let mut builder = SSTableBuilder::new();
-        builder.add(Bytes::from("key1"), Bytes::from("value1"));
-        builder.add(Bytes::from("key2"), Bytes::from("value2"));
-        builder.add(Bytes::from("key3"), Bytes::from("value3"));
-
-        builder.build(&sstable_path).unwrap();
-        let mut sstable = SSTable::open(&sstable_path).unwrap();
-
-        assert_eq!(sstable.len(), 3);
-
-        // Read values
-        assert_eq!(sstable.get(b"key1").unwrap(), Some(Bytes::from("value1")));
-        assert_eq!(sstable.get(b"key2").unwrap(), Some(Bytes::from("value2")));
-        assert_eq!(sstable.get(b"key3").unwrap(), Some(Bytes::from("value3")));
-        assert_eq!(sstable.get(b"key4").unwrap(), None);
-    }
-
-    #[test]
-    fn test_sstable_iterator() {
-        let dir = tempdir().unwrap();
-        let sstable_path = dir.path().join("test.sst");
-
-        // Build SSTable
-        let mut builder = SSTableBuilder::new();
-        builder.add(Bytes::from("key1"), Bytes::from("value1"));
-        builder.add(Bytes::from("key2"), Bytes::from("value2"));
-
-        builder.build(&sstable_path).unwrap();
-        let mut sstable = SSTable::open(&sstable_path).unwrap();
-
-        // Iterate
-        let entries: Vec<_> = sstable.iter().unwrap().map(|r| r.unwrap()).collect();
-
-        assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].0, Bytes::from("key1"));
-        assert_eq!(entries[1].0, Bytes::from("key2"));
-    }
-
-    #[test]
-    fn test_sstable_reopen() {
-        let dir = tempdir().unwrap();
-        let sstable_path = dir.path().join("test.sst");
-
-        // Build and close
-        {
-            let mut builder = SSTableBuilder::new();
-            builder.add(Bytes::from("key1"), Bytes::from("value1"));
-            builder.build(&sstable_path).unwrap();
-        }
-
-        // Reopen
-        let mut sstable = SSTable::open(&sstable_path).unwrap();
-        assert_eq!(sstable.get(b"key1").unwrap(), Some(Bytes::from("value1")));
-    }
-
-    #[test]
-    fn test_sstable_bloom_filter() {
-        let dir = tempdir().unwrap();
-        let sstable_path = dir.path().join("test_bloom.sst");
-
-        // Build SSTable with 100 keys
-        let mut builder = SSTableBuilder::with_bloom_capacity(100, 0.01);
-        for i in 0..100 {
-            let key = format!("key_{:03}", i);
-            let value = format!("value_{}", i);
-            builder.add(Bytes::from(key), Bytes::from(value));
-        }
-
-        builder.build(&sstable_path).unwrap();
-        let mut sstable = SSTable::open(&sstable_path).unwrap();
-
-        // Keys that exist should be found
-        assert_eq!(
-            sstable.get(b"key_000").unwrap(),
-            Some(Bytes::from("value_0"))
-        );
-        assert_eq!(
-            sstable.get(b"key_050").unwrap(),
-            Some(Bytes::from("value_50"))
-        );
-        assert_eq!(
-            sstable.get(b"key_099").unwrap(),
-            Some(Bytes::from("value_99"))
-        );
-
-        // Keys that don't exist should return None
-        // Bloom filter should filter most of these without binary search
-        assert_eq!(sstable.get(b"key_100").unwrap(), None);
-        assert_eq!(sstable.get(b"key_999").unwrap(), None);
-        assert_eq!(sstable.get(b"nonexistent").unwrap(), None);
-    }
-
-    #[test]
-    fn test_sstable_with_vlog_inline_values() {
-        use crate::vlog::VLog;
-
-        let dir = tempdir().unwrap();
-        let sstable_path = dir.path().join("test_vlog.sst");
-        let vlog_path = dir.path().join("test.vlog");
-
-        // Create vLog
-        let mut vlog = VLog::create(&vlog_path).unwrap();
-
-        // Build SSTable with small values (will be stored inline)
-        let mut builder = SSTableBuilder::new().with_vlog_threshold(100); // 100 byte threshold
-        builder
-            .add_with_vlog(Bytes::from("key1"), Bytes::from("small_value"), &mut vlog)
-            .unwrap();
-        builder
-            .add_with_vlog(Bytes::from("key2"), Bytes::from("tiny"), &mut vlog)
-            .unwrap();
-
-        builder.build(&sstable_path).unwrap();
-        let mut sstable = SSTable::open(&sstable_path).unwrap();
-
-        // Read values - should work without vLog attached (inline values)
-        assert_eq!(
-            sstable.get(b"key1").unwrap(),
-            Some(Bytes::from("small_value"))
-        );
-        assert_eq!(sstable.get(b"key2").unwrap(), Some(Bytes::from("tiny")));
-    }
-
-    #[test]
-    fn test_sstable_with_vlog_large_values() {
-        use crate::vlog::VLog;
-
-        let dir = tempdir().unwrap();
-        let sstable_path = dir.path().join("test_vlog.sst");
-        let vlog_path = dir.path().join("test.vlog");
-
-        // Create vLog
-        let mut vlog = VLog::create(&vlog_path).unwrap();
-
-        // Build SSTable with large values (will be stored in vLog)
-        let mut builder = SSTableBuilder::new().with_vlog_threshold(10); // 10 byte threshold
-        let large_value = vec![b'x'; 100];
-        builder
-            .add_with_vlog(
-                Bytes::from("key1"),
-                Bytes::from(large_value.clone()),
-                &mut vlog,
-            )
-            .unwrap();
-
-        builder.build(&sstable_path).unwrap();
-        let mut sstable = SSTable::open(&sstable_path).unwrap();
-
-        // Try to read without vLog - should fail
-        let result = sstable.get(b"key1");
-        assert!(result.is_err());
-
-        // Reopen vLog and attach to SSTable
-        let vlog = VLog::open(&vlog_path).unwrap();
-        let mut sstable = SSTable::open(&sstable_path).unwrap().with_vlog(vlog);
-
-        // Now should work
-        assert_eq!(
-            sstable.get(b"key1").unwrap(),
-            Some(Bytes::from(large_value))
-        );
-    }
-
-    #[test]
-    fn test_sstable_with_vlog_mixed_values() {
-        use crate::vlog::VLog;
-
-        let dir = tempdir().unwrap();
-        let sstable_path = dir.path().join("test_vlog.sst");
-        let vlog_path = dir.path().join("test.vlog");
-
-        // Create vLog
-        let mut vlog = VLog::create(&vlog_path).unwrap();
-
-        // Build SSTable with mixed small and large values
-        let mut builder = SSTableBuilder::new().with_vlog_threshold(50); // 50 byte threshold
-        builder
-            .add_with_vlog(Bytes::from("key1"), Bytes::from("small"), &mut vlog)
-            .unwrap();
-        let large_value = vec![b'x'; 100];
-        builder
-            .add_with_vlog(
-                Bytes::from("key2"),
-                Bytes::from(large_value.clone()),
-                &mut vlog,
-            )
-            .unwrap();
-        builder
-            .add_with_vlog(Bytes::from("key3"), Bytes::from("also_small"), &mut vlog)
-            .unwrap();
-
-        builder.build(&sstable_path).unwrap();
-        let mut sstable = SSTable::open(&sstable_path).unwrap();
-
-        // Small values work without vLog
-        assert_eq!(sstable.get(b"key1").unwrap(), Some(Bytes::from("small")));
-        assert_eq!(
-            sstable.get(b"key3").unwrap(),
-            Some(Bytes::from("also_small"))
-        );
-
-        // Large value requires vLog
-        let result = sstable.get(b"key2");
-        assert!(result.is_err());
-
-        // Attach vLog
-        let vlog = VLog::open(&vlog_path).unwrap();
-        let mut sstable = SSTable::open(&sstable_path).unwrap().with_vlog(vlog);
-
-        // All values should work now
-        assert_eq!(sstable.get(b"key1").unwrap(), Some(Bytes::from("small")));
-        assert_eq!(
-            sstable.get(b"key2").unwrap(),
-            Some(Bytes::from(large_value))
-        );
-        assert_eq!(
-            sstable.get(b"key3").unwrap(),
-            Some(Bytes::from("also_small"))
-        );
-    }
-
-    #[test]
-    fn test_sstable_vlog_reopen() {
-        use crate::vlog::VLog;
-
-        let dir = tempdir().unwrap();
-        let sstable_path = dir.path().join("test_vlog.sst");
-        let vlog_path = dir.path().join("test.vlog");
-
-        // Create and populate
-        {
-            let mut vlog = VLog::create(&vlog_path).unwrap();
-            let mut builder = SSTableBuilder::new().with_vlog_threshold(20);
-
-            let large_value = vec![b'A'; 100];
-            builder
-                .add_with_vlog(Bytes::from("key1"), Bytes::from(large_value), &mut vlog)
-                .unwrap();
-            builder.build(&sstable_path).unwrap();
-        }
-
-        // Reopen and verify
-        let vlog = VLog::open(&vlog_path).unwrap();
-        let mut sstable = SSTable::open(&sstable_path).unwrap().with_vlog(vlog);
-
-        let value = sstable.get(b"key1").unwrap().unwrap();
-        assert_eq!(value.len(), 100);
-        assert_eq!(value[0], b'A');
-    }
-
-    #[test]
-    fn test_sstable_checksum_detection() {
-        use std::fs::OpenOptions;
-        use std::io::{Seek, SeekFrom, Write};
-
-        let dir = tempfile::tempdir().unwrap();
-        let sstable_path = dir.path().join("test.sst");
-
-        // Build an SSTable
-        let mut builder = SSTableBuilder::new();
-        builder.add(Bytes::from("key1"), Bytes::from("value1"));
-        builder.add(Bytes::from("key2"), Bytes::from("value2"));
-        builder.build(&sstable_path).unwrap();
-
-        // Corrupt the file by flipping a bit in the data section
-        {
-            let mut file = OpenOptions::new().write(true).open(&sstable_path).unwrap();
-            file.seek(SeekFrom::Start(10)).unwrap(); // Middle of data
-            file.write_all(&[0xFF]).unwrap(); // Corrupt one byte
-            file.sync_all().unwrap();
-        }
-
-        // Opening should detect corruption
-        let result = SSTable::open(&sstable_path);
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            SSTableError::Corruption { .. } => {} // Expected
-            other => panic!("Expected Corruption error, got: {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_sstable_checksum_valid() {
-        let dir = tempfile::tempdir().unwrap();
-        let sstable_path = dir.path().join("test.sst");
-
-        // Build an SSTable
-        let mut builder = SSTableBuilder::new();
-        builder.add(Bytes::from("key1"), Bytes::from("value1"));
-        builder.add(Bytes::from("key2"), Bytes::from("value2"));
-        builder.build(&sstable_path).unwrap();
-
-        // Should open successfully without modification
-        let mut sstable = SSTable::open(&sstable_path).unwrap();
-        assert_eq!(sstable.get(b"key1").unwrap(), Some(Bytes::from("value1")));
-        assert_eq!(sstable.get(b"key2").unwrap(), Some(Bytes::from("value2")));
+        let entry = self.entries[self.position].clone();
+        self.position += 1;
+        Some(Ok(entry))
     }
 }

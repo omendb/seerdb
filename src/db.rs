@@ -838,7 +838,7 @@ impl DB {
             (self.options.vlog_threshold, vlog_guard.as_mut())
         {
             // KV separation enabled - use vLog for large values
-            let mut builder = SSTableBuilder::new().with_vlog_threshold(threshold);
+            let mut builder = SSTableBuilder::create(&sstable_path)?.with_vlog_threshold(threshold);
 
             for (key, entry) in mt.iter() {
                 match entry {
@@ -851,7 +851,7 @@ impl DB {
                 }
             }
 
-            builder.build(&sstable_path)?;
+            builder.finish()?;
         } else {
             // No KV separation - traditional flush
             drop(vlog_guard); // Release lock

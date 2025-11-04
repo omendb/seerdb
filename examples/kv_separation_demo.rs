@@ -16,7 +16,9 @@ fn main() {
     let mut vlog = VLog::create(&vlog_path).unwrap();
 
     // Build SSTable with 4KB threshold (like embeddings)
-    let mut builder = SSTableBuilder::new().with_vlog_threshold(4096);
+    let mut builder = SSTableBuilder::create(&sstable_path)
+        .unwrap()
+        .with_vlog_threshold(4096);
 
     println!("Adding entries:");
 
@@ -42,8 +44,11 @@ fn main() {
 
     println!();
 
-    // Build SSTable
-    let mut sstable = builder.build(&sstable_path).unwrap();
+    // Finish writing SSTable
+    builder.finish().unwrap();
+
+    // Open SSTable for reading
+    let mut sstable = seerdb::SSTable::open(&sstable_path).unwrap();
 
     // Check file sizes
     let sstable_size = std::fs::metadata(&sstable_path).unwrap().len();

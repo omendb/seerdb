@@ -124,13 +124,13 @@ impl Memtable {
     /// Flush memtable to disk as an SSTable
     /// Only writes Value entries, skips Tombstones (they'll be in WAL)
     pub fn flush(&self, path: impl AsRef<Path>) -> Result<(), SSTableError> {
-        let mut builder = SSTableBuilder::new();
+        let mut builder = SSTableBuilder::create(path)?;
 
         // Iterate in sorted order and add to SSTable
         for entry in self.iter() {
             match entry.1 {
                 Entry::Value(value) => {
-                    builder.add(entry.0, value);
+                    builder.add(entry.0, value)?;
                 }
                 Entry::Tombstone => {
                     // Skip tombstones - they're in the WAL
@@ -139,7 +139,7 @@ impl Memtable {
             }
         }
 
-        builder.build(path)
+        builder.finish()
     }
 }
 
