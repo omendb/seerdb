@@ -168,11 +168,10 @@ fn test_2hour_soak() {
             // Validate memory is not leaking (should stay < 3.5x initial)
             // Write-heavy workloads legitimately need ~3x for LSM metadata + working set
             assert!(
-                current_memory < initial_memory * 3.5,
+                current_memory < initial_memory * 7 / 2,  // 3.5x
                 "Memory leak detected: {} MB > 3.5x initial ({} MB)",
                 current_memory / 1_048_576,
-                3,
-                (initial_memory * 3) / 1_048_576
+                (initial_memory * 7 / 2) / 1_048_576
             );
         }
     });
@@ -317,10 +316,10 @@ fn test_24hour_soak_extreme() {
             if elapsed > Duration::from_secs(3600) {
                 // After 1 hour warmup
                 assert!(
-                    current_memory < initial_memory * 3.5,
+                    current_memory < initial_memory * 7 / 2,  // 3.5x
                     "Memory leak detected: {} MB > 3.5x initial ({} MB)",
                     current_memory / 1_048_576,
-                    (initial_memory * 3.5) / 1_048_576
+                    (initial_memory * 7 / 2) / 1_048_576
                 );
             }
         }
@@ -498,10 +497,10 @@ fn test_10gb_dataset() {
     // Final memory check after operations settle
     // Write-heavy workloads legitimately need ~3x for LSM metadata + working set
     assert!(
-        final_memory < initial_memory * 3.5,
+        final_memory < initial_memory * 7 / 2,  // 3.5x
         "Memory leak detected: {} MB > 3.5x initial ({} MB)",
         final_memory / 1_048_576,
-        (initial_memory * 3.5) / 1_048_576
+        (initial_memory * 7 / 2) / 1_048_576
     );
 }
 
@@ -608,9 +607,9 @@ fn test_100gb_dataset_extreme() {
     // Final memory check after operations settle
     // Write-heavy workloads legitimately need ~3x for LSM metadata + working set
     assert!(
-        final_memory < initial_memory * 3.5,
+        final_memory < initial_memory * 7 / 2,  // 3.5x
         "Memory leak detected: {} MB > 3.5x initial ({} MB)",
         final_memory / 1_048_576,
-        (initial_memory * 3.5) / 1_048_576
+        (initial_memory * 7 / 2) / 1_048_576
     );
 }
