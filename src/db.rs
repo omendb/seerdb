@@ -275,6 +275,8 @@ pub struct DB {
     compaction_tx: Option<Sender<CompactionTask>>,
     /// Background compaction worker thread
     compaction_worker: Option<JoinHandle<()>>,
+    /// Flush mutex to serialize flush operations and prevent concurrent flush races
+    flush_mutex: Arc<Mutex<()>>,
 }
 
 impl DB {
@@ -432,6 +434,7 @@ impl DB {
             metrics: Arc::new(MetricsCollector::new()),
             compaction_tx,
             compaction_worker,
+            flush_mutex: Arc::new(Mutex::new(())),
         };
 
         // Flush memtable if it filled up during recovery
@@ -644,8 +647,16 @@ impl DB {
         let lsm = self.lsm.lock().expect("LSM mutex poisoned");
         for level_num in 0..lsm.num_levels() {
             if let Some(level) = lsm.level(level_num) {
+                // L0 has overlapping SSTables - check newest first (reverse order)
+                // L1+ have non-overlapping SSTables - check in forward order
+                let sstables: Vec<_> = if level_num == 0 {
+                    level.sstables().iter().rev().collect()
+                } else {
+                    level.sstables().iter().collect()
+                };
+
                 // Check each SSTable in this level
-                for sstable_path in level.sstables() {
+                for sstable_path in sstables {
                     let mut sstable = if has_vlog {
                         // Attach vLog for reading value pointers
                         let vlog = VLog::open(&vlog_path)?;
@@ -654,9 +665,26 @@ impl DB {
                         SSTable::open(sstable_path)?
                     };
 
-                    if let Some(value) = sstable.get(key)? {
-                        self.metrics.record_get(start.elapsed());
-                        return Ok(Some(value));
+                    // For L0, if bloom filter says key exists but get() returns None, it's a tombstone
+                    // Stop searching immediately (don't check older SSTables)
+                    let may_contain = sstable.may_contain(key);
+                    let result = sstable.get(key)?;
+
+                    match result {
+                        Some(value) => {
+                            self.metrics.record_get(start.elapsed());
+                            return Ok(Some(value));
+                        }
+                        None if level_num == 0 && may_contain => {
+                            // L0: bloom filter says key exists but get() returned None = tombstone
+                            // Don't check older L0 SSTables (tombstone masks them)
+                            self.metrics.record_get(start.elapsed());
+                            return Ok(None);
+                        }
+                        None => {
+                            // Key not in this SSTable (bloom filter false positive or key truly absent)
+                            // Continue to next SSTable
+                        }
                     }
                 }
             }
@@ -810,8 +838,20 @@ impl DB {
         use crate::memtable::Entry;
         use crate::sstable::SSTableBuilder;
 
+        // **CRITICAL FIX**: Serialize all flushes to prevent concurrent flush races
+        // Without this lock, concurrent flushes can cause:
+        // 1. WAL cleared while writes are still in memtable (data loss)
+        // 2. Memtable swapped while being iterated (corruption)
+        // 3. Multiple flushes writing to same SSTable file (corruption)
+        let _flush_lock = self.flush_mutex.lock().expect("Flush mutex poisoned");
+
         let flush_start = Instant::now();
         let mt_size_before = self.memtable.lock().expect("Memtable lock poisoned").size();
+
+        // Early return if memtable is empty (nothing to flush)
+        if mt_size_before == 0 {
+            return Ok(());
+        }
 
         info!(
             memtable_size_bytes = mt_size_before,
@@ -830,8 +870,17 @@ impl DB {
         *counter += 1;
         drop(counter);
 
-        // Build SSTable with optional vLog support
-        let mt = self.memtable.lock().expect("Memtable lock poisoned");
+        // Swap memtable FIRST (RocksDB-style immutable memtable)
+        // 1. Lock memtable
+        // 2. Swap with new empty memtable (old one becomes immutable)
+        // 3. Release lock (new writes go to new memtable and stay in WAL)
+        // 4. Flush immutable memtable to SSTable
+        // 5. Clear WAL (flushed data is in SSTable, new writes are in new memtable + WAL)
+        let mut mt_guard = self.memtable.lock().expect("Memtable lock poisoned");
+        let immutable_memtable = std::mem::replace(&mut *mt_guard, Memtable::new(self.options.memtable_capacity));
+        drop(mt_guard); // Release lock immediately - new writes go to new memtable
+
+        // Build SSTable with optional vLog support from immutable memtable
         let mut vlog_guard = self.vlog.lock().expect("vLog mutex poisoned");
 
         if let (Some(threshold), Some(ref mut vlog)) =
@@ -840,13 +889,16 @@ impl DB {
             // KV separation enabled - use vLog for large values
             let mut builder = SSTableBuilder::create(&sstable_path)?.with_vlog_threshold(threshold);
 
-            for (key, entry) in mt.iter() {
+            for (key, entry) in immutable_memtable.iter() {
                 match entry {
                     Entry::Value(value) => {
                         builder.add_with_vlog(key, value, vlog)?;
                     }
                     Entry::Tombstone => {
-                        // Skip tombstones during flush
+                        // **CRITICAL FIX**: DO NOT skip tombstones!
+                        // Tombstones must be persisted to SSTables to mask older values
+                        // They are removed during compaction when all older versions are gone
+                        builder.add_tombstone(key)?;
                     }
                 }
             }
@@ -855,9 +907,8 @@ impl DB {
         } else {
             // No KV separation - traditional flush
             drop(vlog_guard); // Release lock
-            mt.flush(&sstable_path)?;
+            immutable_memtable.flush(&sstable_path)?;
         }
-        drop(mt); // Release memtable lock
 
         let size = std::fs::metadata(&sstable_path)?.len();
 
@@ -868,14 +919,10 @@ impl DB {
 
         // Clear WAL after successful flush
         // Data is now safely persisted in SSTable
+        // New writes (in new memtable) are still in WAL and safe
         let mut wal = self.wal.lock().expect("WAL mutex poisoned");
         wal.clear()?;
         drop(wal);
-
-        // **CRITICAL FIX**: Replace memtable with a new empty one to free memory
-        let mut mt_guard = self.memtable.lock().expect("Memtable lock poisoned");
-        *mt_guard = Memtable::new(self.options.memtable_capacity);
-        drop(mt_guard);
 
         let flush_duration_ms = flush_start.elapsed().as_millis();
         info!(

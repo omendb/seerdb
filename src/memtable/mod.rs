@@ -122,7 +122,7 @@ impl Memtable {
     }
 
     /// Flush memtable to disk as an SSTable
-    /// Only writes Value entries, skips Tombstones (they'll be in WAL)
+    /// Flush memtable to SSTable, including tombstones
     pub fn flush(&self, path: impl AsRef<Path>) -> Result<(), SSTableError> {
         let mut builder = SSTableBuilder::create(path)?;
 
@@ -133,8 +133,10 @@ impl Memtable {
                     builder.add(entry.0, value)?;
                 }
                 Entry::Tombstone => {
-                    // Skip tombstones - they're in the WAL
-                    // Compaction will handle them properly later
+                    // **CRITICAL**: Tombstones MUST be persisted to SSTables!
+                    // They mask older values in lower levels and are removed during compaction
+                    // when all older versions are gone
+                    builder.add_tombstone(entry.0)?;
                 }
             }
         }
@@ -295,9 +297,14 @@ mod tests {
 
         // Flush to disk
         memtable.flush(&sstable_path).unwrap();
-        let sstable = SSTable::open(&sstable_path).unwrap();
+        let mut sstable = SSTable::open(&sstable_path).unwrap();
 
-        // Only non-tombstone entries should be written
-        assert_eq!(sstable.len(), 2);
+        // All entries including tombstones should be written
+        assert_eq!(sstable.len(), 3);
+
+        // Verify tombstone behavior - get() should return None for deleted key
+        assert_eq!(sstable.get(b"key1").unwrap(), Some(Bytes::from("value1")));
+        assert_eq!(sstable.get(b"key2").unwrap(), None); // Tombstone
+        assert_eq!(sstable.get(b"key3").unwrap(), Some(Bytes::from("value3")));
     }
 }

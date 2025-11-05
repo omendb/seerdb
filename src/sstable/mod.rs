@@ -45,6 +45,7 @@ const VERSION: u32 = 0x00000002;
 /// Entry value type flags
 const FLAG_INLINE: u8 = 0x00;
 const FLAG_POINTER: u8 = 0x01;
+const FLAG_TOMBSTONE: u8 = 0x02;
 
 /// Top-level index entry (loaded into RAM)
 #[derive(Debug, Clone)]
@@ -140,6 +141,21 @@ impl SSTableBuilder {
         };
 
         let entry = self.encode_entry(&key, flag, &data);
+
+        if !self.data_block.add(&key, &entry) {
+            self.flush_data_block()?;
+            if !self.data_block.add(&key, &entry) {
+                return Err(SSTableError::InvalidFormat);
+            }
+        }
+
+        self.num_entries += 1;
+        Ok(())
+    }
+
+    pub fn add_tombstone(&mut self, key: Bytes) -> Result<()> {
+        self.bloom.insert(&key);
+        let entry = self.encode_entry(&key, FLAG_TOMBSTONE, &[]);
 
         if !self.data_block.add(&key, &entry) {
             self.flush_data_block()?;
@@ -343,6 +359,11 @@ impl SSTable {
         self
     }
 
+    /// Check if key might be in this SSTable (bloom filter check)
+    pub fn may_contain(&self, key: &[u8]) -> bool {
+        self.bloom.contains(key)
+    }
+
     pub fn get(&mut self, key: &[u8]) -> Result<Option<Bytes>> {
         if !self.bloom.contains(key) {
             return Ok(None);
@@ -441,6 +462,7 @@ impl SSTable {
                             return Err(SSTableError::VLog("VLog not attached".to_string()));
                         }
                     }
+                    FLAG_TOMBSTONE => return Ok(None),
                     _ => return Err(SSTableError::InvalidFormat),
                 }
             }
@@ -717,6 +739,7 @@ impl SSTable {
                                 continue;
                             }
                         }
+                        FLAG_TOMBSTONE => continue,
                         _ => continue,
                     };
 
