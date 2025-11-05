@@ -1,20 +1,20 @@
-// Bit-packed bloom filter implementation
-// Uses Vec<u64> for 8x space savings vs Vec<bool>
+// Bloom filter with bit-packed storage
+// Uses Vec<u64> instead of Vec<bool> (standard approach, 8x more memory efficient)
 // SIMD-friendly for future optimizations
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use twox_hash::XxHash64;
 
-/// Bit-packed bloom filter (8x more space-efficient than traditional)
-pub struct BitPackedBloomFilter {
+/// Bloom filter with optimal bit-packed storage (Vec<u64>)
+pub struct BloomFilter {
     bits: Vec<u64>,    // Bit-packed storage (64 bits per u64)
     num_bits: usize,   // Total number of bits
     num_hashes: usize, // Number of hash functions
     count: usize,      // Number of elements inserted
 }
 
-impl BitPackedBloomFilter {
+impl BloomFilter {
     /// Create a new bloom filter with expected capacity and desired false positive rate
     pub fn new(expected_elements: usize, false_positive_rate: f64) -> Self {
         // Calculate optimal number of bits: m = -n*ln(p) / (ln(2)^2)
@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn test_bitpacked_basic() {
-        let mut bloom = BitPackedBloomFilter::new(100, 0.01);
+        let mut bloom = BloomFilter::new(100, 0.01);
 
         bloom.insert(&"hello");
         bloom.insert(&"world");
@@ -179,12 +179,12 @@ mod tests {
 
     #[test]
     fn test_bitpacked_serialization() {
-        let mut bloom = BitPackedBloomFilter::new(100, 0.01);
+        let mut bloom = BloomFilter::new(100, 0.01);
         bloom.insert(&"test1");
         bloom.insert(&"test2");
 
         let bytes = bloom.to_bytes();
-        let bloom2 = BitPackedBloomFilter::from_bytes(&bytes).unwrap();
+        let bloom2 = BloomFilter::from_bytes(&bytes).unwrap();
 
         assert!(bloom2.contains(&"test1"));
         assert!(bloom2.contains(&"test2"));
@@ -193,7 +193,7 @@ mod tests {
 
     #[test]
     fn test_bitpacked_space_efficiency() {
-        let bloom = BitPackedBloomFilter::new(10000, 0.01);
+        let bloom = BloomFilter::new(10000, 0.01);
 
         // Bit-packed should use ~1/8 the space of Vec<bool>
         // Expected: ~1.2 bytes per element for 1% FPR

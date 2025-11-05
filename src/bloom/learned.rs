@@ -6,7 +6,7 @@
 // - High confidence → return prediction
 // - Low confidence → check backup traditional bloom filter
 
-use super::traditional::BloomFilter;
+use super::bitpacked::BloomFilter;
 use smartcore::linalg::basic::matrix::DenseMatrix;
 use smartcore::tree::decision_tree_classifier::DecisionTreeClassifier;
 use std::collections::hash_map::DefaultHasher;

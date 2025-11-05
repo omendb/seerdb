@@ -1,15 +1,13 @@
-// Bloom filter implementations: Traditional, Bit-packed, and Learned
+// Bloom filter implementation
 //
-// OPTIMIZATION: BitPackedBloomFilter is now the default (8x space savings vs traditional)
-// Traditional bloom used Vec<bool> (~1 byte per bit), BitPacked uses Vec<u64> (~0.125 bytes per bit)
+// Uses bit-packed Vec<u64> storage (standard approach, 8x more efficient than naive Vec<bool>)
+// Learned bloom filter available but has accuracy issues (48-51% FPR vs 1% target)
 
 mod bitpacked;
 mod learned;
-mod traditional;
 
-pub use bitpacked::BitPackedBloomFilter;
+#[cfg(test)]
+mod traditional; // Naive Vec<bool> implementation for benchmarking only
+
+pub use bitpacked::BloomFilter;
 pub use learned::LearnedBloomFilter;
-pub use traditional::BloomFilter as TraditionalBloomFilter;
-
-// Use bit-packed bloom as default for 8x space savings
-pub use bitpacked::BitPackedBloomFilter as BloomFilter;
