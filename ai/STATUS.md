@@ -1,11 +1,11 @@
 # STATUS - seerdb
 
-**Last Updated**: November 5, 2025 (std::simd migration complete!)
-**Current Phase**: SOTA Optimizations - std::simd Migration Complete
-**Completed**: Phase 1 ✅ | Phase 2 ✅ | Phase 3 ✅ | Phase 4 ✅ | Phase 5.1 ✅ | WiscKey vlog ✅ | Bloom filter ✅ | ALEX ✅ (std::simd!) | SIMD bloom ❌ (removed - regression) | Learned bloom ✅ (fixed) | Dostoevsky ✅ (implemented!) | std::simd ✅ (migrated!)
+**Last Updated**: November 5, 2025 (Bloom cleanup complete, starting RocksDB comparison)
+**Current Phase**: CRITICAL - Proving SOTA Claims vs RocksDB
+**Completed**: Phase 1 ✅ | Phase 2 ✅ | Phase 3 ✅ | Phase 4 ✅ | Phase 5.1 ✅ | WiscKey vlog ✅ | Bloom filter ✅ | ALEX ✅ (std::simd!) | SIMD bloom ❌ (removed) | Learned bloom ✅ (fixed) | Dostoevsky ✅ (implemented!) | std::simd ✅ (migrated!) | Bloom cleanup ✅
 **Tests**: All 123 tests passing + stress tests + property tests + crash recovery tests
-**In Progress**: RocksDB comparison benchmark
-**Next**: End-to-end SOTA validation
+**In Progress**: 🎯 RocksDB comparison benchmark (CRITICAL PATH)
+**Next**: Prove "10x write amp", "5x faster queries" claims
 **Decision**: omen stays with RocksDB until seerdb proves SOTA claims
 **Toolchain**: Nightly Rust (for std::simd portable_simd feature)
 

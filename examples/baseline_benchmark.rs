@@ -39,6 +39,11 @@ fn main() {
     benchmark_fjall();
 
     println!("\n{:=<70}", "=");
+    println!("SEERDB (THIS PROJECT)");
+    println!("{:=<70}\n", "=");
+    benchmark_seerdb();
+
+    println!("\n{:=<70}", "=");
     println!("Summary");
     println!("{:=<70}", "=");
     println!("All benchmarks complete. See results above.");
@@ -332,6 +337,105 @@ fn benchmark_fjall() {
 
     drop(partition);
     drop(keyspace);
+}
+
+#[cfg(feature = "baseline-benchmarks")]
+fn benchmark_seerdb() {
+    use seerdb::{DBOptions, DB};
+    use std::path::PathBuf;
+
+    let path = PathBuf::from("/tmp/bench_seerdb");
+    let _ = std::fs::remove_dir_all(&path);
+
+    let opts = DBOptions {
+        data_dir: path.clone(),
+        memtable_capacity: 64 * 1024 * 1024, // 64MB memtable (same as RocksDB)
+        wal_sync_policy: seerdb::SyncPolicy::None, // Fast benchmark mode
+        background_compaction: true,
+        vlog_threshold: Some(4096), // Enable vLog for values >4KB
+        ..Default::default()
+    };
+
+    let db = DB::open(opts).expect("Failed to open seerdb");
+
+    // Workload 1: Sequential Writes
+    println!("Workload 1: Sequential Writes ({} ops)", NUM_OPERATIONS);
+    let value = vec![0u8; VALUE_SIZE];
+    let start = Instant::now();
+    for i in 0..NUM_OPERATIONS {
+        let key = format!("key_{:08}", i);
+        db.put(key.as_bytes(), &value).expect("Put failed");
+    }
+    let elapsed = start.elapsed();
+    let throughput = NUM_OPERATIONS as f64 / elapsed.as_secs_f64();
+    println!("  Time: {:.2}s", elapsed.as_secs_f64());
+    println!("  Throughput: {:.0} ops/sec", throughput);
+    println!(
+        "  Latency: {:.2} us/op",
+        elapsed.as_micros() as f64 / NUM_OPERATIONS as f64
+    );
+
+    // Workload 2: Random Reads
+    println!("\nWorkload 2: Random Reads ({} ops)", NUM_OPERATIONS);
+    let start = Instant::now();
+    for i in 0..NUM_OPERATIONS {
+        let key = format!("key_{:08}", i);
+        let _ = db.get(key.as_bytes()).expect("Get failed");
+    }
+    let elapsed = start.elapsed();
+    let throughput = NUM_OPERATIONS as f64 / elapsed.as_secs_f64();
+    println!("  Time: {:.2}s", elapsed.as_secs_f64());
+    println!("  Throughput: {:.0} ops/sec", throughput);
+    println!(
+        "  Latency: {:.2} us/op",
+        elapsed.as_micros() as f64 / NUM_OPERATIONS as f64
+    );
+
+    // Workload 3: Mixed (50% read, 50% write)
+    println!("\nWorkload 3: Mixed 50/50 ({} ops)", NUM_OPERATIONS);
+    let start = Instant::now();
+    for i in 0..NUM_OPERATIONS {
+        if i % 2 == 0 {
+            // Write
+            let key = format!("key_{:08}", i + NUM_OPERATIONS);
+            db.put(key.as_bytes(), &value).expect("Put failed");
+        } else {
+            // Read
+            let key = format!("key_{:08}", i);
+            let _ = db.get(key.as_bytes()).expect("Get failed");
+        }
+    }
+    let elapsed = start.elapsed();
+    let throughput = NUM_OPERATIONS as f64 / elapsed.as_secs_f64();
+    println!("  Time: {:.2}s", elapsed.as_secs_f64());
+    println!("  Throughput: {:.0} ops/sec", throughput);
+    println!(
+        "  Latency: {:.2} us/op",
+        elapsed.as_micros() as f64 / NUM_OPERATIONS as f64
+    );
+
+    // Workload 4: Range Scans (simulated via sequential gets)
+    println!("\nWorkload 4: Range Scans (1000 scans, 100 keys each)");
+    let start = Instant::now();
+    for i in 0..1000 {
+        let base = i * 100;
+        for offset in 0..100 {
+            let key = format!("key_{:08}", base + offset);
+            let _ = db.get(key.as_bytes());
+        }
+    }
+    let elapsed = start.elapsed();
+    println!("  Time: {:.2}s", elapsed.as_secs_f64());
+    println!(
+        "  Throughput: {:.0} scans/sec",
+        1000.0 / elapsed.as_secs_f64()
+    );
+    println!(
+        "  Latency: {:.2} ms/scan",
+        elapsed.as_millis() as f64 / 1000.0
+    );
+
+    drop(db);
 }
 
 #[cfg(not(feature = "baseline-benchmarks"))]
