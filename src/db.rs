@@ -263,6 +263,9 @@ pub struct DB {
     wal: Arc<Mutex<WAL>>,
     /// Active memtable (Mutex allows swapping after flush)
     memtable: Arc<Mutex<Memtable>>,
+    /// Immutable memtable being flushed (RocksDB-style)
+    /// Readers check this before SSTables to avoid data loss during flush
+    immutable_memtable: Arc<Mutex<Option<Memtable>>>,
     /// LSM tree for level management
     lsm: Arc<Mutex<LSMTree>>,
     /// Value log for KV separation (optional)
@@ -428,6 +431,7 @@ impl DB {
             options: options.clone(),
             wal: Arc::new(Mutex::new(wal)),
             memtable: Arc::new(Mutex::new(memtable)),
+            immutable_memtable: Arc::new(Mutex::new(None)),
             lsm,
             vlog: Arc::new(Mutex::new(vlog)),
             sstable_counter,
@@ -633,10 +637,49 @@ impl DB {
         // Check memtable first (most recent data)
         let mt = self.memtable.lock().expect("Memtable lock poisoned");
         let result = mt.get(key);
+        let contains = mt.contains(key);
         drop(mt); // Release lock
-        if let Some(value) = result {
-            self.metrics.record_get(start.elapsed());
-            return Ok(Some(value));
+
+        match result {
+            Some(value) => {
+                // Found value in memtable
+                self.metrics.record_get(start.elapsed());
+                return Ok(Some(value));
+            }
+            None if contains => {
+                // Key exists in memtable as tombstone - don't check immutable or SSTables
+                self.metrics.record_get(start.elapsed());
+                return Ok(None);
+            }
+            None => {
+                // Key not in active memtable - check immutable memtable
+            }
+        }
+
+        // Check immutable memtable (if flush is in progress)
+        let immut = self.immutable_memtable.lock().expect("Immutable memtable lock poisoned");
+        if let Some(ref immutable_mt) = *immut {
+            let immut_result = immutable_mt.get(key);
+            let immut_contains = immutable_mt.contains(key);
+            drop(immut);
+
+            match immut_result {
+                Some(value) => {
+                    // Found value in immutable memtable
+                    self.metrics.record_get(start.elapsed());
+                    return Ok(Some(value));
+                }
+                None if immut_contains => {
+                    // Key exists as tombstone in immutable memtable
+                    self.metrics.record_get(start.elapsed());
+                    return Ok(None);
+                }
+                None => {
+                    // Key not in immutable memtable - continue to SSTables
+                }
+            }
+        } else {
+            drop(immut);
         }
 
         // Get vLog if available (need to clone for SSTable attachment)
@@ -873,12 +916,25 @@ impl DB {
         // Swap memtable FIRST (RocksDB-style immutable memtable)
         // 1. Lock memtable
         // 2. Swap with new empty memtable (old one becomes immutable)
-        // 3. Release lock (new writes go to new memtable and stay in WAL)
-        // 4. Flush immutable memtable to SSTable
-        // 5. Clear WAL (flushed data is in SSTable, new writes are in new memtable + WAL)
+        // 3. Store immutable memtable so readers can access it during flush
+        // 4. Release lock (new writes go to new memtable and stay in WAL)
+        // 5. Flush immutable memtable to SSTable
+        // 6. Clear immutable memtable + WAL (flushed data is in SSTable)
         let mut mt_guard = self.memtable.lock().expect("Memtable lock poisoned");
-        let immutable_memtable = std::mem::replace(&mut *mt_guard, Memtable::new(self.options.memtable_capacity));
+        let flushing_memtable = std::mem::replace(&mut *mt_guard, Memtable::new(self.options.memtable_capacity));
         drop(mt_guard); // Release lock immediately - new writes go to new memtable
+
+        // Store in immutable_memtable so readers can access during flush
+        {
+            let mut immut_guard = self.immutable_memtable.lock().expect("Immutable memtable lock poisoned");
+            *immut_guard = Some(flushing_memtable);
+        } // Release lock - readers can now access immutable memtable
+
+        // Build SSTable from immutable memtable (need to access it again)
+        // We clone the Arc pointer, not the data
+        let immut_clone = Arc::clone(&self.immutable_memtable);
+        let immut_guard = immut_clone.lock().expect("Immutable memtable lock poisoned");
+        let immutable_memtable = immut_guard.as_ref().expect("Immutable memtable should be present");
 
         // Build SSTable with optional vLog support from immutable memtable
         let mut vlog_guard = self.vlog.lock().expect("vLog mutex poisoned");
@@ -909,6 +965,7 @@ impl DB {
             drop(vlog_guard); // Release lock
             immutable_memtable.flush(&sstable_path)?;
         }
+        drop(immut_guard); // Release lock on immutable memtable
 
         let size = std::fs::metadata(&sstable_path)?.len();
 
@@ -917,9 +974,13 @@ impl DB {
         let sstable_path_for_log = sstable_path.clone();
         lsm.add_l0_sstable(sstable_path, size);
 
-        // Clear WAL after successful flush
+        // Clear immutable memtable + WAL after successful flush
         // Data is now safely persisted in SSTable
         // New writes (in new memtable) are still in WAL and safe
+        let mut immut_guard = self.immutable_memtable.lock().expect("Immutable memtable lock poisoned");
+        *immut_guard = None;
+        drop(immut_guard);
+
         let mut wal = self.wal.lock().expect("WAL mutex poisoned");
         wal.clear()?;
         drop(wal);
