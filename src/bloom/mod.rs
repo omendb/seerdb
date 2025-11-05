@@ -5,6 +5,9 @@
 
 mod bitpacked;
 mod learned;
+// TODO: Blocked bloom filter - 3x speedup expected (cache-line locality)
+//       Research shows promise, needs proper multi-word bit implementation
+//       Defer until after RocksDB comparison proves core claims
 // mod simd; // Disabled: 18% regression on negative lookups (hot path) - see SIMD_OPPORTUNITIES.md
 
 #[cfg(test)]

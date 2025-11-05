@@ -1,6 +1,38 @@
 # TODO - seerdb Research & Implementation
 
-## Phase 1: Research - Foundational Papers (In Progress)
+**Status**: Core engine complete (123 tests passing), SOTA features integrated
+**Current Phase**: Prove SOTA claims vs RocksDB
+**Last Updated**: November 5, 2025
+
+---
+
+## IMMEDIATE PRIORITIES (Week 11-12)
+
+### 1. RocksDB Comparison Benchmarks 🎯 **CRITICAL PATH**
+- [ ] End-to-end YCSB workloads (A, B, C, D)
+- [ ] Write amplification measurement (with/without vLog)
+- [ ] Query latency comparison (with/without ALEX)
+- [ ] Mixed workload performance
+- [ ] Document results in ai/BENCHMARKS.md
+- [ ] **Goal**: Prove "10x write amp", "5x faster queries" claims
+
+### 2. Dostoevsky Validation
+- [ ] Wire adaptive compaction into DB (connect metrics)
+- [ ] Benchmark fixed vs adaptive on real workloads
+- [ ] Measure write amp reduction
+- [ ] Document effectiveness
+
+### 3. Performance Optimizations (Deferred)
+- [ ] **Blocked bloom filter** (3x speedup expected, 5-10% overall gain)
+  - Research shows cache-line blocking effective
+  - Needs proper multi-word bit operations (2-3 hour implementation)
+  - Defer until after RocksDB comparison
+  - See SIMD_OPPORTUNITIES.md for analysis
+- [ ] Profile actual bottlenecks (only after core claims proven)
+
+---
+
+## Phase 1: Research - Foundational Papers ✅ COMPLETE
 
 ### Paper Reading - Phase 1 ✅ COMPLETE
 - [x] Read "The Case for Learned Index Structures" (Kraska et al., 2018)
