@@ -38,7 +38,7 @@ impl BitPackedBloomFilter {
     }
 
     /// Insert an element into the bloom filter
-    pub fn insert<T: Hash>(&mut self, item: &T) {
+    pub fn insert<T: Hash + ?Sized>(&mut self, item: &T) {
         for i in 0..self.num_hashes {
             let hash = self.hash(item, i);
             let index = (hash % self.num_bits as u64) as usize;
@@ -51,7 +51,7 @@ impl BitPackedBloomFilter {
 
     /// Check if an element might be in the set
     /// Returns true if possibly in set, false if definitely not in set
-    pub fn contains<T: Hash>(&self, item: &T) -> bool {
+    pub fn contains<T: Hash + ?Sized>(&self, item: &T) -> bool {
         for i in 0..self.num_hashes {
             let hash = self.hash(item, i);
             let index = (hash % self.num_bits as u64) as usize;
@@ -145,7 +145,7 @@ impl BitPackedBloomFilter {
     }
 
     /// Compute hash for an item with a given seed
-    fn hash<T: Hash>(&self, item: &T, seed: usize) -> u64 {
+    fn hash<T: Hash + ?Sized>(&self, item: &T, seed: usize) -> u64 {
         if seed.is_multiple_of(2) {
             // Use DefaultHasher for even seeds
             let mut hasher = DefaultHasher::new();

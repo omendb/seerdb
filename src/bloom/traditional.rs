@@ -79,8 +79,9 @@ impl BloomFilter {
 
     /// Get the size in bytes (for benchmarking)
     pub fn size_bytes(&self) -> usize {
-        // Bit array size + metadata
-        self.bits.len().div_ceil(8) + std::mem::size_of::<Self>()
+        // Vec<bool> uses ~1 byte per bool in memory (not packed)
+        // This is the actual in-memory size, not serialized size
+        self.bits.len() + std::mem::size_of::<Self>()
     }
 
     /// Calculate actual false positive rate based on current state
