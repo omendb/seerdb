@@ -176,7 +176,7 @@ impl Default for DBOptions {
             base_level_size: 10 * 1024 * 1024, // 10MB
             size_ratio: 10,
             num_levels: 7,
-            vlog_threshold: None,         // Disabled by default
+            vlog_threshold: Some(4096),   // WiscKey: 4KB threshold for KV separation (FIXED!)
             background_compaction: false, // Disabled by default for compatibility
         }
     }
@@ -930,15 +930,49 @@ impl DB {
             "Starting memtable flush"
         );
 
-        // Generate SSTable filename
-        let mut counter = self
-            .sstable_counter
-            .lock()
-            .expect("SSTable counter mutex poisoned");
-        let sstable_path = self
-            .options
-            .data_dir
-            .join(format!("L0_{:06}.sst", *counter));
+        // **CRITICAL**: Check if there's a previous failed flush
+        // If immutable_memtable is occupied, flush it first to avoid data loss
+        let pending_immutable = {
+            let mut immut_guard = self.immutable_memtable.lock().expect("Immutable memtable lock poisoned");
+            immut_guard.take()
+        };
+
+        if let Some(pending_mt) = pending_immutable {
+            // Previous flush failed - retry flushing the existing immutable_memtable
+            warn!("Retrying flush of previously failed immutable memtable");
+
+            // Generate filename for pending flush
+            let mut counter = self.sstable_counter.lock().expect("SSTable counter mutex poisoned");
+            let pending_sstable_path = self.options.data_dir.join(format!("L0_{:06}.sst", *counter));
+            *counter += 1;
+            drop(counter);
+
+            // Flush pending memtable to SSTable
+            pending_mt.flush(&pending_sstable_path)?;
+            let pending_size = std::fs::metadata(&pending_sstable_path)?.len();
+
+            // Add to LSM tree
+            let mut lsm = self.lsm.lock().expect("LSM mutex poisoned");
+            lsm.add_l0_sstable(pending_sstable_path.clone(), pending_size);
+            drop(lsm);
+
+            // Clear WAL (pending data now in SSTable)
+            let mut wal = self.wal.lock().expect("WAL mutex poisoned");
+            wal.clear()?;
+            drop(wal);
+
+            info!("Successfully flushed previously failed immutable memtable");
+        }
+
+        // Now check if active memtable needs flushing
+        let mt_size = self.memtable.lock().expect("Memtable lock poisoned").size();
+        if mt_size == 0 {
+            return Ok(()); // Nothing to flush
+        }
+
+        // Generate SSTable filename for main flush
+        let mut counter = self.sstable_counter.lock().expect("SSTable counter mutex poisoned");
+        let sstable_path = self.options.data_dir.join(format!("L0_{:06}.sst", *counter));
         *counter += 1;
         drop(counter);
 
@@ -989,6 +1023,10 @@ impl DB {
             }
 
             builder.finish()?;
+
+            // ALWAYS sync vLog after flush - we need it synced for reading
+            // (different file handles won't see buffered writes)
+            vlog.sync()?;
         } else {
             // No KV separation - traditional flush
             drop(vlog_guard); // Release lock

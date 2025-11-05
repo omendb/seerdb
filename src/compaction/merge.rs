@@ -109,15 +109,19 @@ mod tests {
 
         let (k, v) = merge.next().unwrap().unwrap();
         assert_eq!(k, Bytes::from("key1"));
-        assert_eq!(v, Bytes::from("value1"));
+        // MergeIterator returns FLAG-prefixed values (for compaction)
+        assert_eq!(v[0], crate::sstable::FLAG_INLINE);
+        assert_eq!(&v[1..], b"value1");
 
         let (k, v) = merge.next().unwrap().unwrap();
         assert_eq!(k, Bytes::from("key2"));
-        assert_eq!(v, Bytes::from("value2"));
+        assert_eq!(v[0], crate::sstable::FLAG_INLINE);
+        assert_eq!(&v[1..], b"value2");
 
         let (k, v) = merge.next().unwrap().unwrap();
         assert_eq!(k, Bytes::from("key3"));
-        assert_eq!(v, Bytes::from("value3"));
+        assert_eq!(v[0], crate::sstable::FLAG_INLINE);
+        assert_eq!(&v[1..], b"value3");
 
         assert!(merge.next().is_none());
     }
@@ -185,7 +189,9 @@ mod tests {
 
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].0, Bytes::from("key1"));
-        assert_eq!(entries[0].1, Bytes::from("new_value1")); // Keeps newer
+        // MergeIterator returns FLAG-prefixed values (for compaction)
+        assert_eq!(entries[0].1[0], crate::sstable::FLAG_INLINE);
+        assert_eq!(&entries[0].1[1..], b"new_value1"); // Keeps newer
         assert_eq!(entries[1].0, Bytes::from("key2"));
         assert_eq!(entries[2].0, Bytes::from("key3"));
     }

@@ -43,9 +43,9 @@ const MAGIC: u32 = 0x53535442;
 const VERSION: u32 = 0x00000002;
 
 /// Entry value type flags
-const FLAG_INLINE: u8 = 0x00;
-const FLAG_POINTER: u8 = 0x01;
-const FLAG_TOMBSTONE: u8 = 0x02;
+pub const FLAG_INLINE: u8 = 0x00;
+pub const FLAG_POINTER: u8 = 0x01;
+pub const FLAG_TOMBSTONE: u8 = 0x02;
 
 /// Top-level index entry (loaded into RAM)
 #[derive(Debug, Clone)]
@@ -112,6 +112,22 @@ impl SSTableBuilder {
         if !self.data_block.add(&key, &entry) {
             self.flush_data_block()?;
             if !self.data_block.add(&key, &entry) {
+                return Err(SSTableError::InvalidFormat);
+            }
+        }
+
+        self.num_entries += 1;
+        Ok(())
+    }
+
+    /// Add a raw entry that already has a flag prefix (for compaction)
+    /// This preserves the original encoding (FLAG_INLINE, FLAG_POINTER, etc.)
+    pub fn add_raw(&mut self, key: Bytes, encoded_value: Bytes) -> Result<()> {
+        self.bloom.insert(&key);
+
+        if !self.data_block.add(&key, &encoded_value) {
+            self.flush_data_block()?;
+            if !self.data_block.add(&key, &encoded_value) {
                 return Err(SSTableError::InvalidFormat);
             }
         }
@@ -716,7 +732,15 @@ impl SSTable {
                     let data = entry_value.slice(1..);
 
                     let value = match flag {
-                        FLAG_INLINE => data,
+                        FLAG_INLINE => {
+                            if self.vlog.is_some() {
+                                // vlog attached - return decoded value
+                                data
+                            } else {
+                                // No vlog attached (compaction) - return full entry with FLAG
+                                entry_value
+                            }
+                        }
                         FLAG_POINTER => {
                             if data.len() < 12 {
                                 continue;
@@ -736,7 +760,10 @@ impl SSTable {
                                 vlog_guard.read(pointer)
                                     .map_err(|e| SSTableError::VLog(e.to_string()))?
                             } else {
-                                continue;
+                                // No vlog attached (e.g., during compaction)
+                                // Return the full entry including FLAG_POINTER + pointer bytes
+                                // so compaction can preserve vlog pointers
+                                entry_value
                             }
                         }
                         FLAG_TOMBSTONE => continue,

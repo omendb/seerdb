@@ -55,7 +55,9 @@ pub fn compact_sstables(
 
     for result in merge {
         let (key, value) = result?;
-        builder.add(key, value)?;
+        // Use add_raw to preserve vlog pointers (FLAG_POINTER + data)
+        // without double-wrapping with FLAG_INLINE
+        builder.add_raw(key, value)?;
     }
 
     // Finish writing
@@ -158,8 +160,11 @@ impl LSMTree {
         levels.push(Level::new(0, u64::MAX));
 
         // L1+ have exponentially increasing thresholds
+        // Use saturating math to prevent overflow with extreme configurations
         for i in 1..num_levels {
-            let threshold = base_size * size_ratio.pow((i - 1) as u32);
+            let exponent = (i - 1) as u32;
+            let multiplier = size_ratio.saturating_pow(exponent);
+            let threshold = base_size.saturating_mul(multiplier);
             levels.push(Level::new(i, threshold));
         }
 

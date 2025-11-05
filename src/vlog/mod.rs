@@ -191,6 +191,7 @@ impl VLog {
 
     /// Append a value to the vLog
     /// Returns pointer (offset, length) to be stored in LSM tree
+    /// NOTE: Does NOT sync - caller must call sync() or sync_data() explicitly
     pub fn append(&mut self, key: &[u8], value: &[u8]) -> Result<ValuePointer> {
         let record = VLogRecord {
             key: Bytes::copy_from_slice(key),
@@ -200,10 +201,9 @@ impl VLog {
         let encoded = record.encode();
         let record_offset = self.head;
 
-        // Write to file
+        // Write to file (buffered, not synced yet)
         self.file.seek(SeekFrom::Start(self.head))?;
         self.file.write_all(&encoded)?;
-        self.file.sync_data()?; // Ensure durability
 
         self.head += encoded.len() as u64;
 
@@ -216,6 +216,12 @@ impl VLog {
             offset: value_offset,
             length: value_len,
         })
+    }
+
+    /// Sync vLog to disk (durability)
+    pub fn sync(&mut self) -> Result<()> {
+        self.file.sync_data()?;
+        Ok(())
     }
 
     /// Read a value from vLog using pointer
