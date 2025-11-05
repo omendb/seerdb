@@ -1,12 +1,96 @@
 # STATUS - seerdb
 
-**Last Updated**: November 5, 2025 (ALEX integrated into SSTable!)
-**Current Phase**: SOTA Optimizations - ALEX Integration Complete
-**Completed**: Phase 1 ✅ | Phase 2 ✅ | Phase 3 ✅ | Phase 4 ✅ | Phase 5.1 ✅ | WiscKey vlog ✅ | Bloom filter ✅ | ALEX ✅ (integrated!) | SIMD bloom ⚠️ | Learned bloom ✅ (fixed)
-**Tests**: All 122 tests passing + 7 corruption detection tests + 15 crash recovery tests
-**In Progress**: Workload-aware compaction (Dostoevsky)
-**Next**: RocksDB comparison benchmark
+**Last Updated**: November 5, 2025 (Workload-aware compaction complete!)
+**Current Phase**: SOTA Optimizations - Dostoevsky Adaptive Compaction Complete
+**Completed**: Phase 1 ✅ | Phase 2 ✅ | Phase 3 ✅ | Phase 4 ✅ | Phase 5.1 ✅ | WiscKey vlog ✅ | Bloom filter ✅ | ALEX ✅ (integrated!) | SIMD bloom ⚠️ | Learned bloom ✅ (fixed) | Dostoevsky ✅ (implemented!)
+**Tests**: All 125 tests passing + 7 corruption detection tests + 15 crash recovery tests = 147 tests
+**In Progress**: RocksDB comparison benchmark
+**Next**: End-to-end SOTA validation
 **Decision**: omen stays with RocksDB until seerdb proves SOTA claims
+
+---
+
+## 🎯 Dostoevsky Adaptive Compaction Complete! (Nov 5, 2025 - Session 3)
+
+**Status**: ✅ **COMPLETE** - Workload-aware LSM compaction, 125 tests passing
+
+### What Was Done
+
+**Dostoevsky Adaptive Compaction Strategy**:
+- ✅ Implemented adaptive size ratio based on read/write workload
+- ✅ Dos toevsky formula: T = sqrt((Z * W) / R) where T=size ratio, W=writes, R=reads
+- ✅ Auto-adjusts level thresholds based on observed workload
+- ✅ Configurable min/max ratio bounds (e.g., 4-20x)
+- ✅ Falls back gracefully if not enough workload data
+
+**Key Features**:
+1. **CompactionStrategy Enum**: Fixed vs Adaptive
+2. **Auto-adjustment**: Triggers after 1000+ new operations
+3. **Write-heavy → Higher ratio**: Less compaction overhead (e.g., 200:1 w:r → ratio=17)
+4. **Read-heavy → Lower ratio**: Better read performance (e.g., 1:100 w:r → ratio=4)
+5. **Dynamic threshold updates**: Recalculates L1-L6 thresholds when ratio changes
+
+**Files Modified**:
+- `src/compaction/mod.rs`: CompactionStrategy enum + LSMTree::adjust_for_workload() (180 lines added)
+  - Lines 129-180: CompactionStrategy with Dostoevsky formula
+  - Lines 218-240: new_adaptive() constructor
+  - Lines 310-360: adjust_for_workload() + update_level_thresholds()
+  - Lines 592-647: 3 new tests for adaptive strategy
+
+### Dostoevsky Formula Explained
+
+**Formula**: T = sqrt((Z * W) / R)
+- **T**: Optimal size ratio (e.g., 4-20x)
+- **Z**: Zero-result penalty (1.5 = moderate cost for negative lookups)
+- **W**: Write operations
+- **R**: Read operations
+
+**Intuition**:
+- Write-heavy (W >> R): Higher T → less compaction → lower write amplification
+- Read-heavy (R >> W): Lower T → more compaction → better read performance
+- Balanced: T ≈ sqrt(1.5) ≈ 1.2 * sqrt(W/R)
+
+**Examples**:
+- 100:1 write:read → T = sqrt(150) ≈ 12x
+- 1:1 write:read → T = sqrt(1.5) ≈ 1x (clamped to min=4)
+- 1:100 write:read → T = sqrt(0.015) ≈ 0.12x (clamped to min=4)
+
+### Test Results
+
+**All 147 Tests Passing**:
+- ✅ 125 lib tests (up from 122 - added 3 adaptive compaction tests)
+- ✅ 7 corruption detection tests
+- ✅ 15 crash recovery tests
+
+**New Tests**:
+1. `test_adaptive_compaction_strategy`: Verifies formula correctness
+2. `test_lsm_adaptive_workload_adjustment`: Verifies threshold updates
+3. `test_fixed_strategy_doesnt_adapt`: Verifies backwards compatibility
+
+### API Usage
+
+**Fixed Strategy** (traditional LSM):
+```rust
+let lsm = LSMTree::new(data_dir, 10_000_000, 10, 7);
+// Always uses 10x size ratio
+```
+
+**Adaptive Strategy** (Dostoevsky):
+```rust
+let lsm = LSMTree::new_adaptive(data_dir, 10_000_000, 7, 4, 20);
+// Adapts between 4x-20x based on workload
+
+// Periodically adjust (e.g., every 1000 ops)
+if lsm.adjust_for_workload(total_writes, total_reads) {
+    println!("Size ratio adjusted to {}", lsm.strategy().current_ratio());
+}
+```
+
+### Next Steps
+
+1. **Integration**: Wire adaptive strategy into DB (connect metrics to LSMTree)
+2. **Benchmark**: Compare fixed vs adaptive on write-heavy/read-heavy workloads
+3. **RocksDB comparison**: Validate SOTA claims end-to-end
 
 ---
 
