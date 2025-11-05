@@ -4,13 +4,15 @@
 // To run this benchmark, use:
 // cargo run --example baseline_benchmark --features baseline-benchmarks
 
-#![cfg(feature = "baseline-benchmarks")]
-
+#[cfg(feature = "baseline-benchmarks")]
 use std::time::Instant;
 
+#[cfg(feature = "baseline-benchmarks")]
 const NUM_OPERATIONS: usize = 100_000;
+#[cfg(feature = "baseline-benchmarks")]
 const VALUE_SIZE: usize = 1024; // 1KB values (typical for many workloads)
 
+#[cfg(feature = "baseline-benchmarks")]
 fn main() {
     println!("=== Storage Engine Baseline Benchmark ===\n");
     println!("Operations: {}", NUM_OPERATIONS);
@@ -330,4 +332,11 @@ fn benchmark_fjall() {
 
     drop(partition);
     drop(keyspace);
+}
+
+#[cfg(not(feature = "baseline-benchmarks"))]
+fn main() {
+    eprintln!("Error: This benchmark requires the 'baseline-benchmarks' feature.");
+    eprintln!("Run with: cargo run --example baseline_benchmark --features baseline-benchmarks");
+    std::process::exit(1);
 }

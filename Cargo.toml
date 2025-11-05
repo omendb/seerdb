@@ -1,7 +1,7 @@
 [package]
 name = "seerdb"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 license = "Elastic-2.0"
 authors = ["seerdb contributors"]
 description = "Research-grade storage engine with learned data structures"
@@ -54,7 +54,9 @@ sysinfo = "0.29"          # Resource monitoring (memory, CPU, fd)
 hdrhistogram = "7.5"      # Accurate latency percentiles
 
 [features]
-default = []
+default = ["simd"]
+# SIMD optimizations using std::simd (requires nightly)
+simd = []
 # Enable baseline benchmark dependencies (RocksDB, sled, fjall)
 # Only needed when running comparative benchmarks, not for regular tests
 baseline-benchmarks = ["dep:rocksdb", "dep:sled", "dep:fjall"]

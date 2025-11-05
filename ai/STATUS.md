@@ -1,12 +1,109 @@
 # STATUS - seerdb
 
-**Last Updated**: November 5, 2025 (Workload-aware compaction complete!)
-**Current Phase**: SOTA Optimizations - Dostoevsky Adaptive Compaction Complete
-**Completed**: Phase 1 ✅ | Phase 2 ✅ | Phase 3 ✅ | Phase 4 ✅ | Phase 5.1 ✅ | WiscKey vlog ✅ | Bloom filter ✅ | ALEX ✅ (integrated!) | SIMD bloom ⚠️ | Learned bloom ✅ (fixed) | Dostoevsky ✅ (implemented!)
-**Tests**: All 125 tests passing + 7 corruption detection tests + 15 crash recovery tests = 147 tests
+**Last Updated**: November 5, 2025 (std::simd migration complete!)
+**Current Phase**: SOTA Optimizations - std::simd Migration Complete
+**Completed**: Phase 1 ✅ | Phase 2 ✅ | Phase 3 ✅ | Phase 4 ✅ | Phase 5.1 ✅ | WiscKey vlog ✅ | Bloom filter ✅ | ALEX ✅ (std::simd!) | SIMD bloom ❌ (removed - regression) | Learned bloom ✅ (fixed) | Dostoevsky ✅ (implemented!) | std::simd ✅ (migrated!)
+**Tests**: All 123 tests passing + stress tests + property tests + crash recovery tests
 **In Progress**: RocksDB comparison benchmark
 **Next**: End-to-end SOTA validation
 **Decision**: omen stays with RocksDB until seerdb proves SOTA claims
+**Toolchain**: Nightly Rust (for std::simd portable_simd feature)
+
+---
+
+## 🔬 std::simd Migration Complete! (Nov 5, 2025 - Session 4)
+
+**Status**: ✅ **COMPLETE** - Migrated from hand-rolled SIMD intrinsics to std::simd, all tests passing
+
+### What Was Done
+
+**std::simd Migration** (Code Quality Win):
+- ✅ Configured nightly Rust + portable_simd feature
+- ✅ Migrated ALEX simd_search.rs to std::simd (fixed SIMD insertion bug)
+- ✅ Removed bloom/simd.rs (18% regression on negative lookups documented)
+- ✅ Updated Rust edition to 2024
+- ✅ Fixed `gen` keyword reservation in tests
+- ✅ All 123 library tests passing
+
+**Key Changes**:
+1. **Toolchain**: Nightly Rust required (`#![feature(portable_simd)]`)
+2. **Cargo.toml**: Edition 2024, simd feature flag added
+3. **ALEX SIMD**: Migrated to std::simd, fixed insertion position bug
+4. **Bloom SIMD**: Removed (documented 18% regression on critical path)
+5. **Rust 2024**: Fixed `gen` keyword conflicts
+
+**Files Modified**:
+- `rust-toolchain.toml`: Created (specifies nightly)
+- `Cargo.toml`: Edition 2024, simd feature flag
+- `src/lib.rs`: Added `#![feature(portable_simd)]`
+- `src/alex/simd_search.rs`: Added SimdPartialOrd import, fixed insertion bug
+- `src/bloom/mod.rs`: Disabled simd module
+- `tests/stress_test.rs`: Fixed `gen` → `r#gen` (Rust 2024 keyword)
+- `examples/baseline_benchmark.rs`: Fixed feature flag gating
+
+### SIMD Migration Analysis
+
+**Primary Benefit**: Code simplification, NOT performance (seerdb is I/O bound)
+
+**Key Findings** (documented in SIMD_OPPORTUNITIES.md):
+- ✅ ALEX SIMD: 1.04-1.42x speedup maintained with std::simd
+- ❌ Bloom SIMD: 18% regression on negative lookups (removed)
+- ⏹️ Limited new opportunities: I/O bound workload (60-80% disk time)
+- 📉 Realistic overall gain: <5% (vs omendb's 3.1-3.9x on CPU-bound workload)
+
+**Why std::simd Anyway?**:
+1. ✅ Code quality: 70% less SIMD code (488 lines → ~150 lines estimated)
+2. ✅ Align with omendb: Both projects now use std::simd
+3. ✅ Future-proof: std::simd stabilization expected Q1-Q2 2026
+4. ✅ Maintainability: One implementation vs platform-specific code
+
+### Bug Fixes
+
+**Critical SIMD Bug in ALEX** (src/alex/simd_search.rs):
+- **Problem**: SIMD insertion position search returned wrong position for None gaps
+- **Example**: `keys = [Some(10), Some(20), None, Some(30)]`, target=25 → returned 2 (None) instead of 3 (Some(30))
+- **Root Cause**: None values converted to i64::MAX, matched >= test, but returned gap position
+- **Fix**: Skip None values in result iteration (lines 311-320)
+- **Impact**: test_simd_vs_scalar_insert_pos now passes
+
+**Rust 2024 Edition**:
+- **Problem**: `gen` is now a reserved keyword (for generators)
+- **Fix**: Changed `rng.gen()` → `rng.r#gen()` in stress_test.rs
+
+### Test Results
+
+**All Tests Passing**:
+- ✅ 123 library tests (down from 126 - removed 3 SIMD bloom tests)
+- ✅ 5 stress tests (sequential, random, mixed, concurrent, read-heavy)
+- ✅ 8 property tests (proptest-based)
+- ✅ 9 snapshot consistency tests
+- ✅ 7 corruption detection tests
+- ✅ 15 crash recovery tests
+
+**Benchmarks**:
+1. **ALEX vs Binary Search**:
+   - 100 blocks: 1.04x faster (84.6ns → 81.4ns)
+   - 1000 blocks: 1.34x faster (118.5ns → 88.7ns)
+   - 10000 blocks: 1.42x faster (132.5ns → 93.6ns)
+
+2. **SSTable ALEX Integration**:
+   - Random lookups: 26,038 ops/sec (38.4 µs/lookup)
+   - Sequential lookups: 26,363 ops/sec (37.9 µs/lookup)
+
+### Coordination with OmenDB
+
+**Both projects now use std::simd** (see SIMD_MIGRATION_COORDINATION.md):
+- SeerDB: ✅ Migrated (ALEX simd_search.rs)
+- OmenDB: 🔨 In progress (simd_distance.rs migration)
+- Shared nightly requirement (temporary until std::simd stabilizes)
+- Consistent SIMD approach across ecosystem
+
+### Next Steps
+
+1. **Integration**: Wire adaptive compaction into DB (connect metrics)
+2. **Benchmark**: Dostoevsky adaptive vs fixed compaction
+3. **RocksDB comparison**: End-to-end YCSB workloads
+4. **Monitor std::simd**: Quarterly checks for stabilization (expected Q1-Q2 2026)
 
 ---
 

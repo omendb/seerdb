@@ -1,3 +1,5 @@
+#![feature(portable_simd)]
+
 //! seerdb - Research-grade embedded storage engine
 //!
 //! A modern LSM-tree based key-value storage engine implementing 2018-2024 research
@@ -115,7 +117,7 @@ pub mod wal;
 
 // Re-export main types for convenient access
 pub use alex::AlexTree;
-pub use bloom::{BloomFilter, LearnedBloomFilter, SimdBloomFilter};
+pub use bloom::{BloomFilter, LearnedBloomFilter};
 pub use db::{DBOptions, DB};
 pub use health::{CheckStatus, HealthCheck, HealthStatus};
 pub use memtable::Memtable;

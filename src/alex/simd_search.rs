@@ -33,7 +33,7 @@
 //! - Portable: Falls back to scalar on older CPUs
 
 #[cfg(feature = "simd")]
-use std::simd::{cmp::SimdPartialEq, num::SimdInt, LaneCount, Simd, SupportedLaneCount};
+use std::simd::{cmp::SimdPartialEq, cmp::SimdPartialOrd, LaneCount, Simd, SupportedLaneCount};
 
 /// SIMD-accelerated search for exact key match in gapped array
 ///
@@ -310,14 +310,11 @@ where
 
         if ge_mask.any() {
             // Found insertion position - find first match
+            // Note: None values are converted to i64::MAX, so they may match the >= test
+            // We must skip None values and only return positions with actual keys
             for i in 0..LANES {
-                if ge_mask.test(i) {
-                    // Check if this is a real key or gap in correct position
-                    if keys[offset + i].is_some() {
-                        return offset + i;
-                    } else if i == 0 || keys[offset + i - 1].map_or(true, |k| k < target) {
-                        return offset + i; // Gap at correct position
-                    }
+                if ge_mask.test(i) && keys[offset + i].is_some() {
+                    return offset + i;
                 }
             }
         }

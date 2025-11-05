@@ -376,7 +376,7 @@ fn test_stress_read_heavy_workload() {
 
         // Zipfian distribution would be more realistic, but uniform is simpler
         // 90% reads hit existing keys, 10% miss
-        let key_num = if rng.gen::<f64>() < 0.9 {
+        let key_num = if rng.r#gen::<f64>() < 0.9 {
             rng.gen_range(0..num_keys)
         } else {
             num_keys + rng.gen_range(0..num_keys * 10)

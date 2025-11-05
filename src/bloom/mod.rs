@@ -5,11 +5,11 @@
 
 mod bitpacked;
 mod learned;
-mod simd;
+// mod simd; // Disabled: 18% regression on negative lookups (hot path) - see SIMD_OPPORTUNITIES.md
 
 #[cfg(test)]
 mod traditional; // Naive Vec<bool> implementation for benchmarking only
 
 pub use bitpacked::BloomFilter;
 pub use learned::LearnedBloomFilter;
-pub use simd::SimdBloomFilter;
+// pub use simd::SimdBloomFilter; // Disabled - see SIMD_OPPORTUNITIES.md
