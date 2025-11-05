@@ -1,84 +1,63 @@
 # STATUS - seerdb
 
-**Last Updated**: November 5, 2025 (BitPackedBloomFilter optimization complete!)
-**Current Phase**: SOTA Optimizations - BitPackedBloomFilter ✅
-**Completed**: Phase 1 ✅ | Phase 2 ✅ | Phase 3 ✅ | Phase 4 ✅ | Phase 5.1 ✅ | WiscKey vlog ✅ | BitPackedBloomFilter ✅
+**Last Updated**: November 5, 2025 (Production-grade bloom filter + WiscKey vlog complete!)
+**Current Phase**: SOTA Optimizations - Core implementations ready
+**Completed**: Phase 1 ✅ | Phase 2 ✅ | Phase 3 ✅ | Phase 4 ✅ | Phase 5.1 ✅ | WiscKey vlog ✅ | Bloom filter ✅
 **In Progress**: Ready for next SOTA optimization
 **Next**: Additional SOTA optimizations OR omen integration
 **Decision**: omen stays with RocksDB until seerdb is production-grade
 
 ---
 
-## 🚀 BitPackedBloomFilter Optimization Complete! (Nov 5, 2025)
+## 🛠️ Bloom Filter Implementation Complete! (Nov 5, 2025)
 
-**Status**: ✅ **COMPLETE** - 8x space savings, no performance regression, all tests passing
+**Status**: ✅ **COMPLETE** - Production-grade bit-packed implementation, all tests passing
 
-### What Changed
+### What Was Done
 
-Replaced default bloom filter from `TraditionalBloomFilter` (Vec<bool>) to `BitPackedBloomFilter` (Vec<u64>).
+Implemented standard bit-packed bloom filter (Vec<u64> storage) following industry practices (RocksDB, LevelDB).
 
-**Implementation**:
-- `Vec<bool>` uses ~1 byte per bit in Rust (memory overhead)
-- `Vec<u64>` packs 64 bits per u64 = 0.125 bytes per bit
-- Same hash functions, same algorithm, just different storage
+**Why This Matters**:
+- Naive implementation: Vec<bool> (~1 byte per bit, 8x memory waste)
+- Production implementation: Vec<u64> (0.125 bytes per bit, optimal)
+- This is not an "optimization" - it's implementing it correctly the first time
 
 **Files Modified**:
-- `src/bloom/mod.rs`: Made BitPackedBloomFilter the default export
-- `src/bloom/bitpacked.rs`: Added `?Sized` trait bound for compatibility
-- `src/bloom/traditional.rs`: Fixed size_bytes() to report actual memory usage
-- `src/sstable/mod.rs`: Bumped SSTable version to v3
-- `examples/bitpacked_benchmark.rs`: Created benchmark to validate optimization
+- `src/bloom/bitpacked.rs`: Core bloom filter with Vec<u64> storage
+- `src/bloom/mod.rs`: Clean exports (just BloomFilter, no confusing variants)
+- `src/bloom/traditional.rs`: Kept for benchmarking only (#[cfg(test)])
+- `src/sstable/mod.rs`: SSTable version v3 with bit-packed bloom
 
-### Benchmark Results
+### Validation
 
-**Space Savings** (Vec<bool> → Vec<u64>):
-- 1,000 keys: 9,626 → 1,248 bytes (7.7x smaller, 87.0% reduction)
-- 10,000 keys: 95,891 → 12,032 bytes (8.0x smaller, 87.5% reduction)
-- 100,000 keys: 958,546 → 119,864 bytes (8.0x smaller, 87.5% reduction)
+**Memory Usage** (Vec<bool> vs Vec<u64> benchmark):
+- 1,000 keys: 9.6 KB → 1.2 KB (8x more efficient)
+- 10,000 keys: 96 KB → 12 KB (8x more efficient)
+- 100,000 keys: 958 KB → 120 KB (8x more efficient)
 
-**False Positive Rate** (target: 1%):
-- Traditional: 1.03-1.07%
-- BitPacked: 1.03-1.07%
-- **Result**: Identical FPR ✅
+**Correctness** (target: 1% FPR):
+- Actual FPR: 1.03-1.07% ✅
+- Query performance: Similar or better than Vec<bool>
+- All 75 tests passing
 
-**Query Performance**:
-- Traditional: 430-5,000 µs (10k-100k queries)
-- BitPacked: 456-4,555 µs (10k-100k queries)
-- **Result**: 0.92-1.07x (similar or better) ✅
+### Why Not "Optimization"?
 
-### Test Results
+**Honest framing**: This is how bloom filters SHOULD be implemented:
+- ALL production databases use bit-packing (RocksDB, LevelDB, etc.)
+- Vec<bool> is the teaching example, not a viable alternative
+- Calling it "BitPackedBloomFilter" implies it's special (it's not - it's standard)
 
-**All tests passing**:
-- ✅ 75/75 lib tests
-- ✅ No regressions in existing tests
-- ✅ SSTable format bumped to v3 for new bloom filter
-
-### Why This Matters
-
-**Memory Efficiency**: Every SSTable includes a bloom filter. 8x reduction = significant memory savings for:
-- Large databases (1000s of SSTables)
-- Memory-constrained environments
-- Vector databases with high cardinality
-
-**SIMD-Friendly**: Vec<u64> enables future SIMD optimizations for:
-- Parallel bit operations
-- Vectorized hash computations
-- Fast membership tests
-
-**Production-Ready**: Traditional bloom filter implementations often use bit-packing in production (RocksDB, LevelDB). We now match industry standard while maintaining clean Rust implementation.
+**Final naming**: Just `BloomFilter` (implementation detail hidden)
 
 ### Learned Bloom Filter Investigation
 
-**Attempted**: Learned bloom filter (ML model replaces hash functions)
+**Attempted**: ML-based bloom filter (Kraska et al. 2018 paper)
 **Result**: 48-51% false positive rate (target: 1%) - **Unsuitable**
-**Decision**: Use BitPackedBloomFilter (space-optimized traditional)
+**Decision**: Skip learned bloom filter for now
 
-Learned bloom filters show promise in research papers, but our implementation has issues:
-- Very high FPR (48-51% vs 1% target)
-- Slow training (85s for 100k keys vs 7ms for traditional)
-- Complex model selection logic
+Our learned bloom implementation has severe accuracy issues. This is likely an implementation bug, not a fundamental limitation of the approach. Research papers show promise, but fixing this requires deep investigation.
 
-**Next steps for learned bloom**: Investigate root cause or consider alternative ML approaches later.
+**Status**: Deprioritized (standard bloom filter is working well)
 
 ---
 
@@ -137,14 +116,14 @@ Learned bloom filters show promise in research papers, but our implementation ha
 
 **WiscKey Implementation Complete** - Ready for production use!
 
-**SOTA Optimizations Completed**:
-1. ✅ WiscKey vlog (1.0x write amp for large values)
-2. ✅ BitPackedBloomFilter (8x space savings)
+**Core Implementations Completed**:
+1. ✅ WiscKey vlog (1.0x write amp for large values - REAL optimization)
+2. ✅ Production bloom filter (bit-packed Vec<u64> - standard implementation, not "optimization")
 
-**Remaining SOTA Optimizations** (from original plan):
+**Remaining Research Integrations** (from original plan):
 1. ⏸️ **Later**: Learned Index (ALEX) integration
 2. ⏸️ **Later**: SIMD optimizations
-3. ❌ **Skipped**: Learned Bloom Filter (unsuitable - 48-51% FPR)
+3. ❌ **Skipped**: Learned Bloom Filter (implementation has bugs - 48-51% FPR)
 
 **Next Decision**: Additional optimizations OR move to omen integration
 
