@@ -388,7 +388,36 @@ impl DB {
         );
 
         let lsm = Arc::new(Mutex::new(lsm));
-        let sstable_counter = Arc::new(Mutex::new(0));
+
+        // Initialize SSTable counter from existing files to avoid overwriting
+        // Collect all SSTable paths first to avoid borrow issues
+        let mut all_sstables = Vec::new();
+        {
+            let lsm_guard = lsm.lock().expect("LSM lock poisoned");
+            for level_num in 0..lsm_guard.num_levels() {
+                if let Some(level) = lsm_guard.level(level_num) {
+                    all_sstables.extend(level.sstables().iter().cloned());
+                }
+            }
+        }
+
+        // Find max counter value from filenames like "L0_000123.sst"
+        let max_counter = all_sstables
+            .iter()
+            .filter_map(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .and_then(|name| {
+                        name.strip_prefix("L")
+                            .and_then(|s| s.split('_').nth(1))
+                            .and_then(|s| s.strip_suffix(".sst"))
+                            .and_then(|s| s.parse::<u64>().ok())
+                    })
+            })
+            .max()
+            .unwrap_or(0);
+
+        let sstable_counter = Arc::new(Mutex::new(max_counter + 1));
 
         // Start background compaction worker if enabled
         let (compaction_tx, compaction_worker) = if options.background_compaction {
