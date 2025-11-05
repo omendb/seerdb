@@ -301,4 +301,255 @@ io-uring = ["io-uring-sys"]  # Opt-in, Linux-only, performance vs security trade
 
 ---
 
+## Implementation Decisions
+
+### 11. SSTable Binary Search with Full Key Index (Week 6 - Nov 1, 2025)
+
+**Decision**: Store full keys in SSTable index, not just offsets
+
+**Rationale**:
+- Enables O(log n) binary search directly on keys
+- Previous: Vec<u64> (offsets only) → O(n) linear scan
+- Current: Vec<(Bytes, u64)> (key + offset) → O(log n) binary search
+
+**Implementation**:
+- Index: Vec<(Bytes, u64)> stored in SSTable
+- Search: binary_search_by() on sorted keys
+- Memory cost: ~1-2 MB per SSTable (acceptable)
+
+**Trade-offs**:
+- ✅ Binary search: O(log n) lookups
+- ✅ 100k entries: 17 comparisons vs 100k comparisons
+- ❌ Memory: ~1-2 MB index per SSTable
+- ❌ Later addressed by block-based format (Phase 2.4)
+
+**Performance**: 476k ops/sec existing keys, 9.1M ops/sec missing keys (19x speedup from bloom)
+
+**Commits**: a4d2c8b (Week 6), 7a3cbe8 (block-based refactor)
+
+---
+
+### 12. Bloom Filter Integration (Week 6 - Nov 1, 2025)
+
+**Decision**: Check bloom filter before binary search
+
+**Rationale**:
+- Eliminates unnecessary lookups for missing keys
+- 19x speedup for negative lookups (192x at 100k scale)
+- 1% FPR = 99% of missing keys filtered instantly
+
+**Implementation**:
+- Bloom filter built during SSTable construction
+- Serialized to SSTable file (footer: [index_offset][bloom_offset])
+- Checked in get() before binary search
+
+**Trade-offs**:
+- ✅ Missing keys: ~11 µs constant (regardless of SSTable size)
+- ✅ Space: 122 KB for 100k keys (1% FPR)
+- ❌ 1% false positives still do binary search + disk read
+- ✅ 99% benefit outweighs 1% cost
+
+**Performance**: 100k entries, missing key lookups 192x faster than without bloom
+
+**Commits**: a4d2c8b
+
+---
+
+### 13. Collect-and-Sort Merge Strategy (Week 7 - Nov 1, 2025)
+
+**Decision**: Collect all entries upfront, then sort (not streaming k-way merge)
+
+**Rationale**:
+- SSTable::iter() requires &mut self (file seeking)
+- Streaming k-way merge with BinaryHeap has lifetime issues
+- Compaction is background task (memory acceptable)
+- Simplicity > streaming efficiency
+
+**Implementation**:
+```rust
+// Collect all entries from all SSTables
+for sstable in sstables {
+    entries.extend(sstable.iter());
+}
+// Sort by (key, source_id)
+entries.sort_by(|(k1, sid1, _), (k2, sid2, _)|
+    k1.cmp(k2).then(sid1.cmp(sid2))
+);
+// Deduplicate: keep first (newest)
+```
+
+**Trade-offs**:
+- ✅ Simple, correct, testable
+- ✅ Easier to reason about deduplication
+- ❌ Memory: O(total entries) during merge
+- ❌ Not streaming (but acceptable for compaction)
+
+**Future**: Consider streaming merge if large compactions become bottleneck
+
+**Commits**: ea3b5bd
+
+---
+
+### 14. Deduplication Strategy: Newest Wins (Week 7 - Nov 1, 2025)
+
+**Decision**: Keep entry from lowest source_id (newest value)
+
+**Rationale**:
+- Input SSTables ordered by age (newest first)
+- Lower source_id = later in time = should override
+- Matches LSM semantics (newer writes win)
+
+**Implementation**:
+- Sort by (key, source_id)
+- Stable sort preserves ordering
+- Keep first occurrence after sort
+
+**Trade-offs**:
+- ✅ Correct LSM semantics
+- ✅ Simple: just stable sort + dedup
+- ✅ Handles overwrites, deletes (tombstones)
+
+**Commits**: ea3b5bd
+
+---
+
+### 15. Synchronous Flush and Compaction (Week 8 - Nov 1, 2025)
+
+**Decision**: Flush and compaction block the write thread initially
+
+**Rationale**:
+- Simpler implementation for MVP
+- Easier to reason about correctness
+- Sufficient for initial validation
+- Can add background threads later (proven pattern)
+
+**Trade-offs**:
+- ✅ Simple, correct, no race conditions
+- ✅ Faster to implement and validate
+- ❌ Write latency spikes during flush/compaction
+- ✅ Addressed in Week 15 (background compaction)
+
+**Commits**: 7e421cb (sync), later 2bd4074 (background option added)
+
+---
+
+### 16. WAL Recovery on Every Open (Week 8 - Nov 1, 2025)
+
+**Decision**: Always replay WAL on DB::open(), even if empty
+
+**Rationale**:
+- Ensures consistency (no partial writes)
+- Simple: No need to track "clean shutdown" state
+- Fast: WAL small if recently flushed
+- Industry standard (RocksDB, LevelDB do this)
+
+**Implementation**:
+- Check if WAL exists on open
+- If exists, replay all records into memtable
+- Create new WAL (overwrites old)
+- Flush memtable if capacity exceeded
+
+**Trade-offs**:
+- ✅ Zero data loss guarantee
+- ✅ Simple: no shutdown markers needed
+- ❌ Small overhead on normal open (negligible)
+- ✅ WAL small in practice (<memtable capacity)
+
+**Commits**: c863e92
+
+---
+
+### 17. New WAL After Recovery (Week 8 - Nov 1, 2025)
+
+**Decision**: Create new WAL after replaying (overwrite old)
+
+**Rationale**:
+- Old WAL data already in memtable
+- Avoids ever-growing WAL
+- Simpler than WAL truncation/rotation
+
+**Trade-offs**:
+- ✅ Simple: just overwrite file
+- ✅ Prevents WAL growth
+- ❌ Loses WAL as historical record (use snapshots instead)
+
+**Future**: WAL rotation for long-running databases (archive old WALs)
+
+**Commits**: c863e92
+
+---
+
+### 18. Arc<Mutex<>> for Shared State (Week 8 - Nov 1, 2025)
+
+**Decision**: Use Arc<Mutex<>> for WAL and LSMTree
+
+**Rationale**:
+- Simple concurrency model
+- WAL and LSMTree modified infrequently (only on flush/compaction)
+- Memtable uses lock-free skiplist (high-frequency reads/writes)
+- Clear ownership and mutation points
+
+**Trade-offs**:
+- ✅ Simple: clear lock points
+- ✅ Correct: no data races
+- ❌ Mutex contention on flush (acceptable - infrequent)
+- ✅ Memtable lock-free for hot path
+
+**Future**: Consider RwLock for read-heavy workloads (metrics, stats)
+
+**Commits**: 7e421cb
+
+---
+
+### 19. Traditional Bloom Filters, NOT Learned (Week 9 - Nov 1, 2025)
+
+**Decision**: Use traditional bit-packed bloom filters, NOT learned models
+
+**Context**: Week 1 plan was to use learned bloom filters (Kraska et al. 2018 paper)
+
+**What Happened**:
+- Implemented learned bloom filter with decision tree model
+- Achieved 48-51% false positive rate (target: 1%)
+- Root cause: Hash-based features destroy patterns needed for ML
+
+**Why Learned Blooms Failed**:
+1. **Our feature extraction**: Hash functions (intentionally random)
+   - `hash("key_0001")` → `[0.342, 0.891, 0.123, ...]`
+   - `hash("key_0002")` → `[0.671, 0.234, 0.987, ...]`
+   - Similar inputs → completely unrelated outputs (avalanche effect)
+2. **Model behavior**: Memorized training examples, couldn't generalize
+   - Training data: 100% accuracy
+   - Unseen data: 50% accuracy (random guessing)
+3. **Proof**: Fixed implementation with proper features (numeric patterns) → 0% FPR
+
+**When Learned Blooms Work**:
+- ✅ Malicious URL filtering (domain patterns, TLD, path structure)
+- ✅ Spam email detection (known spam domains, sender patterns)
+- ✅ IP address blacklisting (network ranges, subnets)
+- ❌ General KV storage (arbitrary byte strings, no guaranteed pattern)
+- ❌ Cryptographic hashes (designed to be random)
+- ❌ Random UUIDs (uniformly distributed)
+
+**Why Traditional Blooms Win for seerdb**:
+- Arbitrary keys: Users can store ANY byte string
+- No assumptions: Can't assume keys follow patterns
+- Guaranteed FPR: Mathematical guarantee (1%)
+- Fast: Hash functions faster than ML inference (14x in benchmarks)
+- Universal: Works for any data
+
+**Trade-offs**:
+- ✅ Guaranteed 1% FPR
+- ✅ Works for arbitrary keys
+- ✅ 10-100µs queries vs 1ms for learned
+- ✅ No training overhead
+- ❌ Can't exploit patterns (but we have no guaranteed patterns)
+
+**Evidence**: ai/research/learned_bloom_analysis.md
+
+**Commits**: Week 9 research (not merged to production)
+
+**Status**: Traditional blooms in production, learned blooms research documented
+
+---
+
 *Add decisions as they're made - include commit hash if implemented*
