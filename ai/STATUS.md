@@ -1,13 +1,70 @@
 # STATUS - seerdb
 
-**Last Updated**: November 5, 2025 (Bloom cleanup complete, starting RocksDB comparison)
-**Current Phase**: CRITICAL - Proving SOTA Claims vs RocksDB
-**Completed**: Phase 1 ✅ | Phase 2 ✅ | Phase 3 ✅ | Phase 4 ✅ | Phase 5.1 ✅ | WiscKey vlog ✅ | Bloom filter ✅ | ALEX ✅ (std::simd!) | SIMD bloom ❌ (removed) | Learned bloom ✅ (fixed) | Dostoevsky ✅ (implemented!) | std::simd ✅ (migrated!) | Bloom cleanup ✅
-**Tests**: All 123 tests passing + stress tests + property tests + crash recovery tests
-**In Progress**: 🎯 RocksDB comparison benchmark (CRITICAL PATH)
-**Next**: Prove "10x write amp", "5x faster queries" claims
-**Decision**: omen stays with RocksDB until seerdb proves SOTA claims
+**Last Updated**: November 5, 2025 🚨 CRITICAL REGRESSION DISCOVERED
+**Current Phase**: 🔥 EMERGENCY - Fix Read Performance (370x slower than RocksDB)
+**Completed**: Phase 1 ✅ | Phase 2 ✅ | Phase 3 ✅ | Phase 4 ✅ | Phase 5.1 ✅ | WiscKey vlog ✅ | Bloom filter ✅ | ALEX ✅ | Dostoevsky ✅ | std::simd ✅ | Baseline benchmark ✅
+**Tests**: All 123 tests passing (functional correctness ✅, performance ❌)
+**CRITICAL ISSUE**: seerdb is 370x slower on reads than RocksDB (357µs vs 0.96µs)
+**BLOCKER**: Cannot proceed until read performance is fixed
+**Status**: 🚨 NOT READY FOR PRODUCTION
 **Toolchain**: Nightly Rust (for std::simd portable_simd feature)
+
+---
+
+## 🚨 CRITICAL: Baseline Benchmark Results (Nov 5, 2025)
+
+**Status**: ❌ **FAILED** - seerdb massively underperforms RocksDB
+
+### Benchmark Results Summary
+
+| Workload | RocksDB | seerdb | Ratio | Status |
+|----------|---------|--------|-------|--------|
+| Sequential Writes | 370,620 ops/sec | 250,007 ops/sec | 0.67x | ⚠️ Acceptable |
+| **Random Reads** | 1,037,751 ops/sec | **2,800 ops/sec** | **0.0027x** | **❌ CRITICAL** |
+| **Mixed 50/50** | 392,330 ops/sec | **3,661 ops/sec** | **0.0093x** | **❌ CRITICAL** |
+| **Range Scans** | 20,016 scans/sec | **18 scans/sec** | **0.0009x** | **❌ CRITICAL** |
+
+### Performance Analysis
+
+**Claims vs Reality**:
+- **Claim**: "5x faster queries"
+- **Reality**: **370x SLOWER reads** (0.96µs → 357µs per read)
+- **Verdict**: ❌ **CLAIM INVALIDATED**
+
+**Read Latency Breakdown**:
+- RocksDB: 0.96 µs/read
+- seerdb: 357.16 µs/read
+- **Overhead**: 356.2 µs per read (something is catastrophically wrong)
+
+**Range Scan Latency**:
+- RocksDB: 0.05 ms/scan (100 keys)
+- seerdb: 54.66 ms/scan (100 keys)
+- **Overhead**: 54.61 ms per scan (1112x slower)
+
+### Root Cause Hypotheses
+
+**Most Likely** (in priority order):
+1. **SSTable lookup algorithm broken** - Checking all SSTables instead of early exit
+2. **Bloom filters not working** - Not filtering negative lookups (99% miss rate expected)
+3. **ALEX index overhead** - Adding latency instead of reducing it
+4. **vLog indirection inefficient** - All reads going through vLog unnecessarily
+5. **Merge iterator O(n²)** - Inefficient merge of memtable + levels
+
+### Immediate Action Required
+
+**STOP ALL OTHER WORK**. Fix read performance first:
+
+1. **Profile read path** - Find where 357µs is spent (flamegraph)
+2. **Test minimal LSM** - Disable vLog, ALEX, learned bloom (isolate regression)
+3. **Fix critical path** - Target: <10µs reads (10x better than current)
+4. **Re-benchmark** - Validate fix before proceeding
+
+**BLOCKED** (until reads are fixed):
+- ❌ Write amplification measurement
+- ❌ SOTA feature validation
+- ❌ omen integration
+- ❌ Production deployment
+- ❌ Any optimization work
 
 ---
 
