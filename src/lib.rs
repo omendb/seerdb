@@ -102,6 +102,7 @@
 //! # }
 //! ```
 
+pub mod alex;
 pub mod bloom;
 pub mod compaction;
 pub mod db;
@@ -113,7 +114,8 @@ pub mod vlog;
 pub mod wal;
 
 // Re-export main types for convenient access
-pub use bloom::{BloomFilter, LearnedBloomFilter};
+pub use alex::AlexTree;
+pub use bloom::{BloomFilter, LearnedBloomFilter, SimdBloomFilter};
 pub use db::{DBOptions, DB};
 pub use health::{CheckStatus, HealthCheck, HealthStatus};
 pub use memtable::Memtable;

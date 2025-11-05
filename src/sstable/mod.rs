@@ -3,6 +3,7 @@
 
 pub mod block;
 
+use crate::alex::AlexTree;
 use crate::bloom::BloomFilter;
 use block::{BlockBuilder, BlockError, Block, DEFAULT_BLOCK_SIZE};
 use crate::vlog::{VLog, ValuePointer};
@@ -53,6 +54,15 @@ struct TopLevelIndexEntry {
     last_key: Bytes,
     offset: u64,
     size: u32,
+}
+
+/// Convert bytes key to i64 for ALEX index
+/// Uses big-endian to preserve lexicographic ordering
+fn bytes_to_i64(bytes: &[u8]) -> i64 {
+    let mut buf = [0u8; 8];
+    let len = bytes.len().min(8);
+    buf[..len].copy_from_slice(&bytes[..len]);
+    i64::from_be_bytes(buf)
 }
 
 // ============================================================================
@@ -112,7 +122,14 @@ impl SSTableBuilder {
         if !self.data_block.add(&key, &entry) {
             self.flush_data_block()?;
             if !self.data_block.add(&key, &entry) {
-                return Err(SSTableError::InvalidFormat);
+                // Entry too large for default block - create custom-sized block
+                let entry_size = key.len() + entry.len() + 8; // key + entry + headers
+                let custom_size = (entry_size * 2).max(DEFAULT_BLOCK_SIZE * 2); // 2x for safety
+                self.data_block = BlockBuilder::with_capacity(custom_size);
+
+                if !self.data_block.add(&key, &entry) {
+                    return Err(SSTableError::InvalidFormat);
+                }
             }
         }
 
@@ -128,7 +145,14 @@ impl SSTableBuilder {
         if !self.data_block.add(&key, &encoded_value) {
             self.flush_data_block()?;
             if !self.data_block.add(&key, &encoded_value) {
-                return Err(SSTableError::InvalidFormat);
+                // Entry too large for default block - create custom-sized block
+                let entry_size = key.len() + encoded_value.len() + 8; // key + value + headers
+                let custom_size = (entry_size * 2).max(DEFAULT_BLOCK_SIZE * 2); // 2x for safety
+                self.data_block = BlockBuilder::with_capacity(custom_size);
+
+                if !self.data_block.add(&key, &encoded_value) {
+                    return Err(SSTableError::InvalidFormat);
+                }
             }
         }
 
@@ -161,7 +185,14 @@ impl SSTableBuilder {
         if !self.data_block.add(&key, &entry) {
             self.flush_data_block()?;
             if !self.data_block.add(&key, &entry) {
-                return Err(SSTableError::InvalidFormat);
+                // Entry too large for default block - create custom-sized block
+                let entry_size = key.len() + entry.len() + 8; // key + entry + headers
+                let custom_size = (entry_size * 2).max(DEFAULT_BLOCK_SIZE * 2); // 2x for safety
+                self.data_block = BlockBuilder::with_capacity(custom_size);
+
+                if !self.data_block.add(&key, &entry) {
+                    return Err(SSTableError::InvalidFormat);
+                }
             }
         }
 
@@ -176,7 +207,14 @@ impl SSTableBuilder {
         if !self.data_block.add(&key, &entry) {
             self.flush_data_block()?;
             if !self.data_block.add(&key, &entry) {
-                return Err(SSTableError::InvalidFormat);
+                // Entry too large for default block - create custom-sized block
+                let entry_size = key.len() + entry.len() + 8; // key + entry + headers
+                let custom_size = (entry_size * 2).max(DEFAULT_BLOCK_SIZE * 2); // 2x for safety
+                self.data_block = BlockBuilder::with_capacity(custom_size);
+
+                if !self.data_block.add(&key, &entry) {
+                    return Err(SSTableError::InvalidFormat);
+                }
             }
         }
 
@@ -343,6 +381,7 @@ pub struct SSTable {
     file: Arc<Mutex<File>>,
     path: PathBuf,
     top_level_index: Vec<TopLevelIndexEntry>,
+    alex_index: Option<AlexTree>, // ALEX learned index for faster lookups
     bloom: BloomFilter,
     num_entries: u64,
     vlog: Option<Arc<Mutex<VLog>>>,
@@ -359,10 +398,28 @@ impl SSTable {
         let top_level_index = Self::load_top_level_index(&mut file, top_level_offset)?;
         let bloom = Self::load_bloom_filter(&mut file, bloom_offset)?;
 
+        // Build ALEX learned index for faster top-level index lookups
+        let alex_index = if !top_level_index.is_empty() {
+            let mut alex = AlexTree::new();
+            for (idx, entry) in top_level_index.iter().enumerate() {
+                let key_i64 = bytes_to_i64(&entry.last_key);
+                // Store index position as value (encoded as bytes)
+                let value = (idx as u64).to_le_bytes().to_vec();
+                if alex.insert(key_i64, value).is_err() {
+                    // ALEX insert failed - fall back to binary search
+                    break;
+                }
+            }
+            Some(alex)
+        } else {
+            None
+        };
+
         Ok(Self {
             file: Arc::new(Mutex::new(file)),
             path,
             top_level_index,
+            alex_index,
             bloom,
             num_entries,
             vlog: None,
@@ -405,9 +462,36 @@ impl SSTable {
     }
 
     fn find_index_block(&self, key: &[u8]) -> Option<(u64, u32)> {
-        let idx = self.top_level_index
-            .binary_search_by(|entry| entry.last_key.as_ref().cmp(key))
-            .unwrap_or_else(|idx| idx);
+        // Try ALEX learned index first (O(1) expected)
+        let idx = if let Some(ref alex) = self.alex_index {
+            let key_i64 = bytes_to_i64(key);
+            match alex.get(key_i64) {
+                Ok(Some(value)) => {
+                    // Decode index position from value
+                    if value.len() >= 8 {
+                        let mut bytes = [0u8; 8];
+                        bytes.copy_from_slice(&value[..8]);
+                        u64::from_le_bytes(bytes) as usize
+                    } else {
+                        // Fall back to binary search on decode error
+                        self.top_level_index
+                            .binary_search_by(|entry| entry.last_key.as_ref().cmp(key))
+                            .unwrap_or_else(|idx| idx)
+                    }
+                }
+                _ => {
+                    // ALEX lookup failed - fall back to binary search
+                    self.top_level_index
+                        .binary_search_by(|entry| entry.last_key.as_ref().cmp(key))
+                        .unwrap_or_else(|idx| idx)
+                }
+            }
+        } else {
+            // No ALEX index - use binary search
+            self.top_level_index
+                .binary_search_by(|entry| entry.last_key.as_ref().cmp(key))
+                .unwrap_or_else(|idx| idx)
+        };
 
         if idx < self.top_level_index.len() {
             Some((self.top_level_index[idx].offset, self.top_level_index[idx].size))

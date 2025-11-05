@@ -5,9 +5,11 @@
 
 mod bitpacked;
 mod learned;
+mod simd;
 
 #[cfg(test)]
 mod traditional; // Naive Vec<bool> implementation for benchmarking only
 
 pub use bitpacked::BloomFilter;
 pub use learned::LearnedBloomFilter;
+pub use simd::SimdBloomFilter;

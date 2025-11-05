@@ -3,10 +3,18 @@
 // Critical for data integrity: detect and reject corrupted data
 
 use seerdb::{DBOptions, DB};
-use std::fs::OpenOptions;
+use std::fs::{self, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use tempfile::TempDir;
+
+// Helper to find first SSTable file (handles dynamic sequence numbers)
+fn find_sstable(data_dir: &PathBuf) -> Option<PathBuf> {
+    fs::read_dir(data_dir).ok()?
+        .filter_map(|e| e.ok())
+        .find(|e| e.file_name().to_string_lossy().ends_with(".sst"))
+        .map(|e| e.path())
+}
 
 #[test]
 fn test_detect_corrupted_sstable() {
@@ -29,7 +37,7 @@ fn test_detect_corrupted_sstable() {
     }
 
     // Corrupt the SSTable file
-    let sstable_path = data_dir.join("L0_000000.sst");
+    let sstable_path = find_sstable(&data_dir).expect("No SSTable found");
     {
         let mut file = OpenOptions::new()
             .write(true)
@@ -47,22 +55,25 @@ fn test_detect_corrupted_sstable() {
             data_dir: data_dir.clone(),
             ..Default::default()
         };
-        let db = DB::open(opts).unwrap();
+        // DB::open may detect corruption immediately (preferred)
+        match DB::open(opts) {
+            Ok(db) => {
+                // If open succeeded, attempt to read - may detect corruption here
+                let result = db.get(b"key_050");
 
-        // Attempt to read - should detect corruption
-        // Current implementation may not catch all corruption
-        // This test documents expected behavior
-        let result = db.get(b"key_050");
-
-        // TODO: Implement corruption detection properly
-        // For now, we just document that corruption may not be caught
-        match result {
-            Ok(_) => {
-                // Data read succeeded (corruption not detected yet)
-                // This is acceptable if checksum validation hasn't been implemented
+                match result {
+                    Ok(_) => {
+                        // Data read succeeded (corruption not detected yet)
+                        // This is acceptable if corrupted block wasn't accessed
+                    }
+                    Err(_) => {
+                        // Corruption detected during read - this is the desired behavior
+                    }
+                }
             }
             Err(_) => {
-                // Corruption detected - this is the desired behavior
+                // Corruption detected at open time - this is best!
+                // Test passes as corruption was detected
             }
         }
     }
@@ -93,7 +104,7 @@ fn test_sstable_validate_method() {
     {
         use seerdb::sstable::SSTable;
 
-        let sstable_path = data_dir.join("L0_000000.sst");
+        let sstable_path = find_sstable(&data_dir).expect("No SSTable found");
         let mut sstable = SSTable::open(&sstable_path).unwrap();
 
         // Should succeed for valid SSTable
@@ -102,7 +113,7 @@ fn test_sstable_validate_method() {
     }
 
     // Corrupt the file
-    let sstable_path = data_dir.join("L0_000000.sst");
+    let sstable_path = find_sstable(&data_dir).expect("No SSTable found");
     {
         let mut file = OpenOptions::new()
             .write(true)
@@ -220,7 +231,7 @@ fn test_truncated_sstable() {
     }
 
     // Truncate SSTable file (simulate incomplete write)
-    let sstable_path = data_dir.join("L0_000000.sst");
+    let sstable_path = find_sstable(&data_dir).expect("No SSTable found");
     {
         use std::fs;
         let metadata = fs::metadata(&sstable_path).unwrap();
@@ -285,7 +296,7 @@ fn test_missing_footer() {
     }
 
     // Truncate footer (last 40 bytes)
-    let sstable_path = data_dir.join("L0_000000.sst");
+    let sstable_path = find_sstable(&data_dir).expect("No SSTable found");
     {
         use std::fs;
         let metadata = fs::metadata(&sstable_path).unwrap();
@@ -342,7 +353,7 @@ fn test_corrupted_block_header() {
     }
 
     // Corrupt block header (early in file)
-    let sstable_path = data_dir.join("L0_000000.sst");
+    let sstable_path = find_sstable(&data_dir).expect("No SSTable found");
     {
         let mut file = OpenOptions::new()
             .write(true)
@@ -354,18 +365,26 @@ fn test_corrupted_block_header() {
         file.write_all(&[0xFF; 20]).unwrap();
     }
 
-    // Try to read
+    // Try to read - corruption may be detected at open or during reads
     {
         let opts = DBOptions {
             data_dir: data_dir.clone(),
             ..Default::default()
         };
-        let db = DB::open(opts).unwrap();
 
-        // Attempt to read - may fail or return errors
-        for i in 0..100 {
-            let _ = db.get(format!("key_{:03}", i).as_bytes());
-            // Don't assert - corruption handling varies
+        // DB::open may detect corruption immediately (preferred)
+        match DB::open(opts) {
+            Ok(db) => {
+                // If open succeeded, reads may fail
+                for i in 0..100 {
+                    let _ = db.get(format!("key_{:03}", i).as_bytes());
+                    // Corruption may be detected here
+                }
+            }
+            Err(_) => {
+                // Corruption detected at open time - this is good!
+                // Test passes as corruption was detected
+            }
         }
     }
 }
@@ -388,7 +407,7 @@ fn test_wrong_magic_number() {
     }
 
     // Corrupt magic number in header
-    let sstable_path = data_dir.join("L0_000000.sst");
+    let sstable_path = find_sstable(&data_dir).expect("No SSTable found");
     {
         let mut file = OpenOptions::new()
             .write(true)

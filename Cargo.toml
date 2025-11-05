@@ -41,6 +41,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 rocksdb = { version = "0.22", optional = true }
 sled = { version = "0.34", optional = true }
 fjall = { version = "2.3", optional = true }
+anyhow = "1.0.100"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

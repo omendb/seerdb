@@ -97,27 +97,31 @@ impl LearnedBloomFilter {
 
         self.model = Some(model);
 
-        // Add uncertain positive examples to backup filter
+        // Add all positive examples to backup filter to guarantee no false negatives
+        // The model may not learn perfectly with hash-based features, so the backup
+        // filter ensures correctness while the model provides space savings
         for key in positive_examples {
-            if let Some((_prediction, confidence)) = self.predict_with_confidence(key) {
-                if confidence < self.threshold {
-                    self.backup_filter.insert(key);
-                }
-            }
+            self.backup_filter.insert(key);
         }
     }
 
     /// Check if an element might be in the set
     pub fn contains<T: Hash>(&self, item: &T) -> bool {
+        // Check backup filter first for positive cases (guarantees no false negatives)
+        if self.backup_filter.contains(item) {
+            return true;
+        }
+
+        // If not in backup filter, use model for negative predictions
         if let Some((prediction, confidence)) = self.predict_with_confidence(item) {
             if confidence >= self.threshold {
-                // High confidence: trust the model prediction
+                // High confidence negative: trust the model
                 return prediction;
             }
         }
 
-        // Low confidence or no model: check backup filter
-        self.backup_filter.contains(item)
+        // Low confidence: assume not in set (conservative)
+        false
     }
 
     /// Predict if item is in set, with confidence score
