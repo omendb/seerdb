@@ -99,7 +99,7 @@ impl LearnedBloomFilter {
 
         // Add uncertain positive examples to backup filter
         for key in positive_examples {
-            if let Some(confidence) = self.predict_confidence(key) {
+            if let Some((_prediction, confidence)) = self.predict_with_confidence(key) {
                 if confidence < self.threshold {
                     self.backup_filter.insert(key);
                 }
@@ -109,10 +109,10 @@ impl LearnedBloomFilter {
 
     /// Check if an element might be in the set
     pub fn contains<T: Hash>(&self, item: &T) -> bool {
-        if let Some(confidence) = self.predict_confidence(item) {
+        if let Some((prediction, confidence)) = self.predict_with_confidence(item) {
             if confidence >= self.threshold {
-                // High confidence: trust the model
-                return true;
+                // High confidence: trust the model prediction
+                return prediction;
             }
         }
 
@@ -120,8 +120,9 @@ impl LearnedBloomFilter {
         self.backup_filter.contains(item)
     }
 
-    /// Predict confidence that item is in set (0.0 - 1.0)
-    fn predict_confidence<T: Hash>(&self, item: &T) -> Option<f64> {
+    /// Predict if item is in set, with confidence score
+    /// Returns (prediction, confidence) where prediction is true/false and confidence is 0.0-1.0
+    fn predict_with_confidence<T: Hash>(&self, item: &T) -> Option<(bool, f64)> {
         let model = self.model.as_ref()?;
 
         let features = self.extract_features(item);
@@ -130,13 +131,19 @@ impl LearnedBloomFilter {
         // Predict (1 = in set, 0 = not in set)
         let prediction = model.predict(&x).ok()?;
 
-        // Convert to confidence score (simplified: just use prediction)
-        // In practice, could use probability estimates from ensemble methods
+        // Convert to (prediction, confidence) tuple
+        // Decision trees give binary predictions, so we use high confidence for both
         if prediction[0] == 1 {
-            Some(0.9) // High confidence "in set"
+            Some((true, 0.9)) // High confidence "in set"
         } else {
-            Some(0.1) // Low confidence "not in set"
+            Some((false, 0.9)) // High confidence "not in set"
         }
+    }
+
+    /// Predict confidence that item is in set (deprecated - use predict_with_confidence)
+    #[allow(dead_code)]
+    fn predict_confidence<T: Hash>(&self, item: &T) -> Option<f64> {
+        self.predict_with_confidence(item).map(|(_, conf)| conf)
     }
 
     /// Extract hash-based features from a key
