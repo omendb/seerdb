@@ -1,6 +1,6 @@
 # Production Hardening Roadmap
 
-**Last Updated**: November 4, 2025 (evening - MAJOR UPDATE)
+**Last Updated**: 2025-11-04
 **Status**: ✅ Phases 1-4 ALL COMPLETE! | Ready for Phase 5 (Validation)
 **Goal**: Production-ready storage engine (phases complete, validation remaining)
 
@@ -63,7 +63,6 @@
 
 ## Phase 1: Fix Critical Bugs ✅ COMPLETE (100%)
 
-**Duration**: 2 weeks
 **Status**: ✅ ALL OBJECTIVES ACHIEVED
 
 ### Completed Work:
@@ -84,7 +83,6 @@
 
 ## Phase 2: Testing & Validation ✅ COMPLETE (100%)
 
-**Duration**: 3 weeks
 **Status**: ✅ ALL OBJECTIVES ACHIEVED
 
 ### 2.1 Stress Tests ✅ COMPLETED (commit b44e547)
@@ -132,14 +130,13 @@
 
 ---
 
-## Phase 3: Observability & Instrumentation (CURRENT - 1-2 weeks)
+## Phase 3: Observability & Instrumentation
 
 **Goal**: Production-grade monitoring, logging, and diagnostics
 **Priority**: CRITICAL (required before production use)
 
-### 3.1 Metrics Collection (Week 1)
+### 3.1 Metrics Collection
 **Priority**: CRITICAL
-**Estimated**: 3-4 days
 
 **Objectives**:
 - Expose key operational metrics via API
@@ -203,9 +200,8 @@ impl DB {
 - Stats accurate (tested)
 - Examples in documentation
 
-### 3.2 Structured Logging (Week 1-2)
+### 3.2 Structured Logging
 **Priority**: CRITICAL
-**Estimated**: 3-4 days
 
 **Objectives**:
 - Replace eprintln! with proper logging
@@ -259,9 +255,8 @@ info!(
 - JSON output supported
 - Documentation with examples
 
-### 3.3 Health Checks & Diagnostics (Week 2)
+### 3.3 Health Checks & Diagnostics
 **Priority**: HIGH
-**Estimated**: 2-3 days
 
 **Objectives**:
 - Detect degraded performance
@@ -331,9 +326,8 @@ impl DB {
 - Tests verify check logic
 - Documentation with examples
 
-### 3.4 Performance Profiling (Week 2)
+### 3.4 Performance Profiling
 **Priority**: MEDIUM
-**Estimated**: 2-3 days
 
 **Objectives**:
 - Identify bottlenecks
@@ -367,13 +361,12 @@ impl DB {
 
 ---
 
-## Phase 4: Code Quality & CI/CD (1 week)
+## Phase 4: Code Quality & CI/CD
 
 **Goal**: Clean, maintainable codebase with automated quality checks
 
 ### 4.1 CI/CD Pipeline
 **Priority**: HIGH
-**Estimated**: 2-3 days
 
 **Tasks**:
 - [ ] GitHub Actions workflow
@@ -393,7 +386,6 @@ impl DB {
 
 ### 4.2 Documentation
 **Priority**: MEDIUM
-**Estimated**: 2-3 days
 
 **Tasks**:
 - [ ] API documentation (rustdoc)
@@ -418,15 +410,14 @@ impl DB {
 
 ---
 
-## Phase 5: Iterative Validation (1-2 weeks)
+## Phase 5: Iterative Validation
 
 **Goal**: Quick, iterative validation for production confidence
 **Philosophy**: Small tests (1-2 hours) that find issues fast, not marathon tests
 
 ### 5.1 Iterative Soak Testing ⏳ IN PROGRESS
 **Priority**: HIGH
-**Status**: Started Nov 4, 2025 (evening)
-**Estimated**: 3-4 days
+**Status**: Started 2025-11-04
 
 **Approach**: Start small, iterate fast
 - Run 1-2 hour tests repeatedly
@@ -487,7 +478,6 @@ impl DB {
 
 ### 5.2 Real Workload Testing (omen Integration)
 **Priority**: CRITICAL
-**Estimated**: 1 week
 
 **Approach**: Incremental integration, not big-bang
 
@@ -525,7 +515,6 @@ impl DB {
 
 ### 5.3 Production Readiness
 **Priority**: CRITICAL
-**Estimated**: 1 week
 
 **Tasks**:
 - [ ] Security review
@@ -577,14 +566,11 @@ impl DB {
 
 ## Timeline
 
-**Phase 1**: ✅ Complete (2 weeks actual)
-**Phase 2**: ✅ Complete (3 weeks actual)
-**Phase 3**: 1-2 weeks (next, observability)
+**Phase 1**: ✅ Complete
+**Phase 2**: ✅ Complete
+**Phase 3**: Next (observability)
 **Phase 4**: Already complete ✅ (CI/CD + docs done)
-**Phase 5**: 1-2 weeks (iterative soak + omen integration)
-
-**Total Remaining**: 2-4 weeks to production-ready
-**Target**: Production-ready by end of Week 18-20 (mid-late Nov)
+**Phase 5**: Iterative soak + omen integration
 
 ---
 
@@ -631,7 +617,5 @@ impl DB {
 
 ---
 
-*Last Updated: November 3, 2025*
+*Last Updated: 2025-11-05*
 *Status: Phase 2 complete (100%), Phase 3 starting*
-*Owner: seerdb team*
-*Review Cadence: Weekly*

@@ -1,6 +1,6 @@
 # TODO - seerdb Research & Implementation
 
-## Week 1: Research Phase - Foundational Papers (In Progress)
+## Phase 1: Research - Foundational Papers (In Progress)
 
 ### Paper Reading - Phase 1 ✅ COMPLETE
 - [x] Read "The Case for Learned Index Structures" (Kraska et al., 2018)
@@ -43,7 +43,7 @@
 
 ---
 
-## Week 2: LSM Tree Papers (Continuing)
+## Phase 2: LSM Tree Papers (Continuing)
 
 ### Paper Reading (Next Priority)
 - [ ] Read "Dostoevsky: Better Space-Time Trade-Offs" (Dayan et al., 2018) - **NEXT**
@@ -65,7 +65,7 @@
 
 ---
 
-## Week 3: Workload-Aware Papers (Backlog)
+## Phase 3: Workload-Aware Papers (Backlog)
 
 - [ ] Read "Tucana" (Liu et al., 2020)
   - Learned LSM trees adapt to workload
@@ -78,7 +78,7 @@
 
 ---
 
-## Week 4: Modern Hardware (Backlog)
+## Phase 4: Modern Hardware (Backlog)
 
 - [ ] Read "FASTER" (Chandramouli et al., 2018)
   - Hybrid log structure
