@@ -298,4 +298,18 @@ Now that core validation is complete, here are optional optimizations to conside
 - **For research**: Dostoevsky integration validates adaptive claims
 - **For production**: Range scans most impactful for real workloads
 
-**Ready for omen evaluation**: seerdb is functional with validated write amplification benefits, but slower raw performance. Evaluate fit for write-heavy workloads prioritizing efficiency over speed.
+**Honest Assessment for Omen Integration**:
+
+**When to Use seerdb**:
+- ✅ Write-heavy workloads where write amplification matters more than raw speed
+- ✅ Large values (embeddings, documents) that benefit from KV separation
+- ✅ Applications tolerant of 2-16x slower performance vs RocksDB
+- ✅ Research/academic use cases valuing SOTA implementations
+
+**When NOT to Use seerdb**:
+- ❌ Read-heavy workloads (71% slower than RocksDB)
+- ❌ Range scan intensive applications (94% slower, though major improvement made)
+- ❌ Real-time systems requiring microsecond latencies
+- ❌ Production systems where RocksDB compatibility is needed
+
+**Recommendation**: Start with limited omen integration trials for write-heavy vector workloads. The 4.82x write amplification improvement is real and valuable, but performance trade-offs must be carefully evaluated.
