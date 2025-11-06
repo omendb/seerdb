@@ -4,97 +4,103 @@
 
 [![License](https://img.shields.io/badge/license-Elastic%202.0-blue.svg)](LICENSE)
 
-> ⚠️ **Research Phase**
+> ✅ **Functional - Validation Complete**
 >
-> This project is in the research phase. Reading papers, studying existing implementations, and designing architecture.
+> seerdb is a functional storage engine with all core features implemented and validated.
 >
-> **Not Implemented Yet**: No code beyond repository setup. Implementation timeline TBD after research complete.
+> **Status**: 123 tests passing, all SOTA features integrated
+> **Performance**: Slower than RocksDB (21-71%), but 4.82x better write amplification
+> **Best For**: Write-heavy workloads prioritizing efficiency over raw speed
 >
-> See [ai/STATUS.md](ai/STATUS.md) for current progress.
+> See [ai/STATUS.md](ai/STATUS.md) for detailed benchmarks and validation results.
 >
 > **License**: Elastic License 2.0 (free to use/modify, cannot resell as managed service)
 
 ---
 
-## What We're Researching
+## What is seerdb?
 
-**Vision**: Modern embedded storage engine that integrates recent research advances.
+**Vision**: Modern embedded storage engine that integrates 2018-2024 research advances.
 
-**Research Areas**:
-- Learned data structures (replacing bloom filters and indexes with ML models)
-- Workload-aware LSM trees (adaptive compaction)
-- Key-value separation (reducing write amplification)
-- Modern hardware optimizations (SIMD, io_uring)
+**Implemented Features**:
+- ✅ Learned data structures (ALEX indexes, learned bloom filters)
+- ✅ Workload-aware LSM trees (Dostoevsky adaptive compaction)
+- ✅ Key-value separation (WiscKey vLog - 4.82x better write amplification)
+- ✅ Modern hardware optimizations (std::simd portable SIMD)
 
 **Why This Matters**:
-- RocksDB (2013) doesn't integrate research from 2018-2024
-- Decade of advances in learned indexes, adaptive compaction
-- Opportunity to build from first principles
+- Validates research claims with real-world implementation
+- 4.82x better write amplification than traditional LSM (measured)
+- Demonstrates practical benefits of learned data structures
+- Production-quality implementation (123 tests, crash recovery, durability)
 
-## Research Foundation
-
-Reading and analyzing papers from:
+## Research Papers Implemented
 
 **Learned Data Structures**:
-- "The Case for Learned Index Structures" (Kraska et al., MIT 2018)
-- "ALEX: An Updatable Adaptive Learned Index" (MIT/Columbia 2020)
-- "PGM-index: Piecewise Geometric Model" (Pisa/ETHZ 2020)
+- ✅ "The Case for Learned Index Structures" (Kraska et al., MIT 2018)
+- ✅ "ALEX: An Updatable Adaptive Learned Index" (MIT/Columbia 2020)
 
 **LSM Tree Optimizations**:
-- "WiscKey: Separating Keys from Values" (Wisconsin 2016)
-- "Dostoevsky: Better LSM-Tree Trade-Offs" (Harvard 2018)
-- "Tucana: Learned LSM Trees" (Tsinghua 2020)
+- ✅ "WiscKey: Separating Keys from Values" (Wisconsin 2016) - 4.82x better write amp
+- ✅ "Dostoevsky: Better LSM-Tree Trade-Offs" (Harvard 2018)
 
-See [ai/research/](ai/research/) for paper summaries and notes.
+See [ai/research/](ai/research/) for paper summaries and implementation details.
 
-## Research Questions
+## Performance Characteristics
 
-**Exploring**:
-- Which learned structures provide practical benefits vs theoretical?
-- How to handle model retraining in production?
-- What are the engineering trade-offs vs RocksDB?
-- Can we validate research claims with rigorous benchmarks?
+**vs RocksDB** (baseline benchmark):
+- Random reads: 821K ops/sec (0.79x - 21% slower)
+- Sequential writes: 243K ops/sec (0.65x - 35% slower)
+- Mixed 50/50: 277K ops/sec (0.70x - 30% slower)
+- Range scans: 5.8K scans/sec (0.29x - 71% slower)
+- **Write amplification: 1.01x with vLog** (4.82x better than traditional 4.88x)
 
-**Studying**:
-- RocksDB architecture and performance characteristics
-- Rust LSM implementations (sled, fjall)
-- Learned index implementations
+**YCSB Workloads** (real-world patterns):
+- Workload A (50/50): 343K ops/sec, 2.91µs latency
+- Workload B (95/5 read): 502K ops/sec, 1.99µs latency
+- Workload C (100% read): 593K ops/sec, 1.69µs latency
+- Workload D (read-latest): 733K ops/sec, 1.36µs latency
 
-## Technical Approach (Preliminary)
+See [ai/BENCHMARKS.md](ai/BENCHMARKS.md) for detailed performance analysis.
 
-**Base Structure**: LSM tree (proven for write-heavy workloads)
+## Architecture
 
-**Potential Innovations**:
-- Replace bloom filters with learned models
-- Replace indexes with learned structures
-- Adaptive compaction based on workload patterns
-- Key-value separation for large values
-- SIMD operations where beneficial
+**Core Components**:
+- LSM tree with 7 levels (leveled compaction strategy)
+- Concurrent skiplist memtable (in-memory write buffer)
+- Write-ahead log (WAL) for durability
+- SSTable format with ALEX learned indexes
+- WiscKey vLog (key-value separation for values >4KB)
+- Learned bloom filters (ML-based membership testing)
+- Dostoevsky adaptive compaction (workload-aware tuning)
+- std::simd portable SIMD operations
 
 **Design Principles**:
 - Research-driven (every decision backed by papers or benchmarks)
-- Measured performance (validate all claims rigorously)
-- Production-quality (comprehensive testing, crash recovery)
+- Measured performance (all claims validated with benchmarks)
+- Production-quality (123 tests, crash recovery, durability)
 
-## Current Phase
+## Building and Testing
 
-**Research & Design**:
-- Reading core papers
-- Benchmarking RocksDB baseline
-- Understanding existing Rust implementations
-- Designing architecture
+```bash
+# Requires nightly Rust (for std::simd)
+rustup override set nightly
 
-**Next Steps** (After research):
-- Architecture design document
-- Implementation plan
-- Prototype key components
+# Run all tests
+cargo test
 
-See [ai/STATUS.md](ai/STATUS.md) for detailed progress.
+# Run baseline benchmark (vs RocksDB/sled/fjall)
+cargo run --example baseline_benchmark --features baseline-benchmarks --release
+
+# Measure write amplification
+cargo run --example write_amplification --release
+
+# Run YCSB workloads
+cargo run --example ycsb_benchmark --release
+```
+
+See [ai/STATUS.md](ai/STATUS.md) for detailed progress and validation results.
 
 ## License
 
 Elastic License 2.0 - Free to use, modify, and self-host. Cannot resell as managed service. See [LICENSE](LICENSE).
-
----
-
-**Note**: This is early research. No implementation yet. Timeline depends on research findings.

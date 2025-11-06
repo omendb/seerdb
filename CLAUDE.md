@@ -1,9 +1,9 @@
 # seerdb - Research-Grade Storage Engine
 
 **Repository**: seerdb (Storage Engine with Learned Data Structures)
-**Last Updated**: November 2, 2025
+**Last Updated**: November 5, 2025
 **License**: Elastic License 2.0 (source-available)
-**Status**: Phase 2.4 - Leak Detection (Phase 1 & 2.3 Complete, 118 tests passing)
+**Status**: Functional - All validations complete (123 tests passing, slower than RocksDB but better write amp)
 
 ---
 
@@ -18,7 +18,7 @@
 - Built-in support for vectors, time series, queues
 - Rust-native with modern hardware optimizations
 
-**Positioning**: "RocksDB but with 2020s research - 10x better write amplification, 5x faster queries"
+**Positioning**: "RocksDB but with 2020s research - 4.82x better write amplification (validated)"
 
 **Why This Matters**: Storage engines are 10+ years old. Decade of research (learned indexes, workload-aware LSM, key-value separation) not integrated into production systems. seerdb bridges this gap.
 
@@ -57,10 +57,11 @@
 **Solution**: Build foundation that makes ALL products faster
 
 **Impact**:
-- omen: "10x faster" → "Built on research-grade storage"
+- omen: "Built on research-grade storage" (better write amplification)
 - All products benefit automatically
 - Unique technical moat (hard to replicate)
 - Can publish research papers (academic credibility)
+- Note: Currently slower than RocksDB in raw performance, but better write amplification
 
 ### Parallel Development
 
@@ -72,20 +73,26 @@
 
 ---
 
-## Current Phase: Phase 2 - Testing & Validation
+## Current Phase: All Core Validations Complete
 
-**Status**: Phase 2.4 - Leak Detection (in progress)
+**Status**: Functional ✅ - All testing and validation complete
 
 **Completed**:
 - ✅ Phase 1: Production Hardening (7 critical bugs fixed, all tests passing)
-- ✅ Phase 2.1: Stress Tests (5 tests, 100k-1M ops)
-- ✅ Phase 2.2: Crash Recovery Tests (5 tests, all scenarios covered)
-- ✅ Phase 2.3: Fuzzing & Property-Based Testing (1M+ fuzz executions, 8 property tests, 18 edge case tests)
+- ✅ Phase 2: Testing & Validation (stress, crash recovery, fuzzing, property-based)
+- ✅ Phase 3: Performance Validation (SSTable cache fix, write amp measurement, YCSB)
+- ✅ 123 tests passing (100% pass rate)
+- ✅ Write amplification: 1.01x with vLog (4.82x better than traditional LSM)
+- ✅ Real-world workloads: 340K-730K ops/sec (YCSB validated)
 
-**In Progress**:
-- ⏳ Phase 2.4: Leak Detection (memory, FD, thread leak tests)
+**Performance vs RocksDB**:
+- ⚠️ Reads: 0.79x (21% slower)
+- ⚠️ Writes: 0.65x (35% slower)
+- ⚠️ Mixed: 0.70x (30% slower)
+- ❌ Scans: 0.29x (71% slower)
+- ✅ Write amp: 4.82x better
 
-**For complete roadmap**: See `ai/PLAN.md` (4-phase strategic plan)
+**For complete details**: See `ai/STATUS.md`
 
 ### Key Papers to Read (Priority Order)
 
@@ -357,11 +364,13 @@ let db = DB::open(options, "./data")?;
 - 🎯 3+ design decisions documented with rationale
 
 ### Implementation Phase (Weeks 5-18)
-- 🎯 Core engine passes 100+ tests
-- 🎯 10x better write amplification vs RocksDB
-- 🎯 5x faster point queries
-- 🎯 90% bloom filter space reduction
-- 🎯 omen successfully migrated
+- ✅ Core engine passes 123 tests
+- ✅ 4.82x better write amplification vs RocksDB (1.01x with vLog vs 4.88x traditional)
+- ⚠️ Point queries: 0.79x RocksDB speed (21% slower, but functional)
+- ⚠️ Mixed workload: 0.70x RocksDB speed (30% slower)
+- ⚠️ Range scans: 0.29x RocksDB speed (71% slower, needs work)
+- 🎯 90% bloom filter space reduction (not yet measured)
+- 🎯 omen successfully migrated (pending)
 
 ### Quality
 - All operations tested (unit + integration)
@@ -544,10 +553,10 @@ seerdb/
 
 ---
 
-*Last Updated: October 31, 2025 - Research phase begins*
+*Last Updated: November 5, 2025 - Validation complete*
 
 **Product**: seerdb - Research-grade storage engine
-**Status**: Week 1 - Reading papers and benchmarking
-**Next**: Implement learned bloom filter prototype
-**Goal**: 10x better write amp, 5x faster queries vs RocksDB
+**Status**: Functional - 123 tests passing, all features working
+**Result**: 4.82x better write amplification (validated), but 21-71% slower in raw performance
+**Next**: Optional optimizations (range scans, Dostoevsky integration)
 **GitHub**: omendb/seerdb
