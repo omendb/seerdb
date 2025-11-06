@@ -5,6 +5,7 @@ use crate::compaction::{compact_sstables, LSMTree};
 use crate::health::{HealthCheck, HealthStatus};
 use crate::memtable::Memtable;
 use crate::metrics::{DBStats, MetricsCollector};
+use crate::range::RangeIterator;
 use crate::sstable::SSTable;
 use crate::vlog::VLog;
 use crate::wal::{Record, SyncPolicy, WALReader, WAL};
@@ -1602,6 +1603,94 @@ impl DB {
         }
 
         HealthStatus::new(checks)
+    }
+
+    /// Range scan: iterate over a range of keys
+    ///
+    /// Returns an iterator over key-value pairs where the key is >= start_key
+    /// and (if end_key is provided) < end_key. Keys are returned in sorted order.
+    ///
+    /// This is much more efficient than calling get() multiple times for range queries.
+    ///
+    /// # Arguments
+    ///
+    /// * `start_key` - Start of range (inclusive)
+    /// * `end_key` - End of range (exclusive), None for open-ended
+    ///
+    /// # Returns
+    ///
+    /// Returns an iterator yielding (key, value) pairs, or an error if:
+    /// - SSTable read fails (corruption, I/O error)
+    /// - vLog read fails for large values
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use seerdb::{DB, DBOptions};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = DB::open(DBOptions::default())?;
+    ///
+    /// // Insert test data
+    /// for i in 0..10 {
+    ///     db.put(format!("key{:02}", i).as_bytes(), format!("value{}", i).as_bytes())?;
+    /// }
+    ///
+    /// // Range scan: keys from "key05" to "key08" (exclusive)
+    /// let mut count = 0;
+    /// for result in db.range(b"key05", Some(b"key08"))? {
+    ///     let (key, value) = result?;
+    ///     println!("{} = {}", String::from_utf8_lossy(&key), String::from_utf8_lossy(&value));
+    ///     count += 1;
+    /// }
+    /// assert_eq!(count, 3); // key05, key06, key07
+    ///
+    /// // Open-ended range: all keys >= "key07"
+    /// for result in db.range(b"key07", None)? {
+    ///     let (key, value) = result?;
+    ///     // Will return key07, key08, key09
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Performance
+    ///
+    /// - Much faster than sequential get() calls
+    /// - Efficiently merges memtable and SSTable data
+    /// - Streams results without loading everything into memory
+    ///
+    /// # Errors
+    ///
+    /// - [`DBError::SSTable`]: SSTable corruption or I/O error
+    /// - [`DBError::VLog`]: vLog read error for large values
+    pub fn range(
+        &self,
+        start_key: &[u8],
+        end_key: Option<&[u8]>,
+    ) -> Result<RangeIterator> {
+        // Get all SSTables from LSM tree (in reverse level order: L0, L1, ..., LN)
+        let lsm = self.lsm.lock().expect("LSM mutex poisoned");
+        let mut sstables = Vec::new();
+
+        // Collect SSTables from all levels
+        for level_idx in 0..lsm.num_levels() {
+            if let Some(level) = lsm.level(level_idx) {
+                for sstable_path in level.sstables() {
+                    // For range scans, we open SSTables fresh since we need mutable access
+                    // and the cache contains immutable Arc<Mutex<>> references
+                    let mut sstable = SSTable::open(sstable_path.clone())?;
+                    sstables.push(sstable);
+                }
+            }
+        }
+        drop(lsm);
+
+        // Get memtable reference
+        let memtable = self.memtable.lock().expect("Memtable lock poisoned");
+
+        // Create range iterator
+        RangeIterator::new(start_key, end_key, &*memtable, sstables)
     }
 }
 

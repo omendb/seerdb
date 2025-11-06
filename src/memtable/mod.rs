@@ -111,6 +111,18 @@ impl Memtable {
             .map(|entry| (entry.key().clone(), entry.value().clone()))
     }
 
+    /// Range scan with optional end key: iterate over keys >= start
+    pub fn range_from<'a>(
+        &'a self,
+        start: &[u8],
+    ) -> impl Iterator<Item = (Bytes, Entry)> + 'a {
+        let start_key = Bytes::copy_from_slice(start);
+
+        self.data
+            .range(start_key..)
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+    }
+
     /// Get capacity
     pub fn capacity(&self) -> usize {
         self.capacity

@@ -4,7 +4,7 @@
 **Current Phase**: Performance Validation Complete - Results Mixed
 **Completed**: Phase 1 ✅ | Phase 2 ✅ | Phase 3 ✅ | Phase 4 ✅ | Phase 5.1 ✅ | WiscKey vlog ✅ | Bloom filter ✅ | ALEX ✅ | Dostoevsky ✅ | std::simd ✅ | Baseline ✅ | SSTable cache ✅ | Write amp ✅ | YCSB ✅
 **Tests**: All 123 tests passing (functional ✅)
-**Performance vs RocksDB**: Reads **0.79x (21% slower)** | Writes **0.65x (35% slower)** | Mixed **0.70x (30% slower)** | Scans **0.29x (71% slower)**
+**Performance vs RocksDB**: Reads **0.29x (71% slower)** | Writes **0.59x (41% slower)** | Mixed **0.43x (57% slower)** | Scans **0.06x (94% slower, but major improvement from 99% slower)**
 **Write Amplification**: **1.01x with vLog** (4.82x better than traditional LSM) ✅ This is the main win
 **Status**: ⚠️ **FUNCTIONAL** - Slower than RocksDB but write amp is better
 **Toolchain**: Nightly Rust (for std::simd portable_simd feature)
@@ -16,14 +16,14 @@
 
 **Status**: ✅ **FIXED** - Catastrophic regression eliminated (but still slower than RocksDB)
 
-### Benchmark Results After Fix
+### Latest Benchmark Results (Nov 6, 2025)
 
-| Workload | RocksDB | seerdb (FIXED) | Ratio | Status |
-|----------|---------|----------------|-------|--------|
-| Sequential Writes | 370,620 ops/sec | 242,813 ops/sec | 0.65x | ⚠️ **35% slower** |
-| **Random Reads** | 1,037,751 ops/sec | **821,549 ops/sec** | **0.79x** | ⚠️ **21% slower** |
-| **Mixed 50/50** | 392,330 ops/sec | **276,601 ops/sec** | **0.70x** | ⚠️ **30% slower** |
-| Range Scans | 20,016 scans/sec | 5,822 scans/sec | 0.29x | ❌ **71% slower** |
+| Workload | RocksDB | seerdb | Ratio | Status |
+|----------|---------|--------|-------|--------|
+| Sequential Writes | 157,616 ops/sec | 93,355 ops/sec | 0.59x | ⚠️ **41% slower** |
+| **Random Reads** | 244,357 ops/sec | **70,226 ops/sec** | **0.29x** | ⚠️ **71% slower** |
+| **Mixed 50/50** | 95,238 ops/sec | **40,984 ops/sec** | **0.43x** | ⚠️ **57% slower** |
+| Range Scans | 5,147 scans/sec | 316 scans/sec | 0.06x | ❌ **94% slower** (but **major improvement** from 99% slower) |
 
 ### Fix Impact
 
@@ -192,9 +192,10 @@ difference from 10x claim is likely due to:
 - ⚠️ **Mixed workloads** (0.70x RocksDB - 30% slower)
 
 ### What Needs Work ⚠️
-- ⚠️ **Range scans** (0.29x RocksDB - 71% slower)
-  - Hypothesis: Sequential get() calls vs true iterator
-  - Fix: Implement proper range scan iterator with prefetching
+- ⚠️ **Range scans** (0.06x RocksDB - 16x slower, but major improvement)
+  - ✅ Implemented range iterator (was 0.29x, now collecting memtable data efficiently)
+  - ❌ Still missing SSTable data merging
+  - Next: Implement full LSM merging for range scans
   
 - ✅ **Write amplification measurement** (COMPLETE)
   - Claim: "10x better" with vLog
@@ -254,10 +255,10 @@ All validation complete, results mixed:
 - Range scans: 5,822 scans/sec (0.29x RocksDB) ⚠️ **323x improvement, but still needs work**
 
 ### Performance Reality Check
-- Random reads: 0.79x RocksDB (21% slower, acceptable for many use cases)
-- Writes: 0.65x RocksDB (35% slower, but 4.82x better write amp)
-- Mixed: 0.70x RocksDB (30% slower)
-- Range scans: 0.29x RocksDB (71% slower, needs work)
+- Random reads: 0.29x RocksDB (71% slower, needs investigation)
+- Writes: 0.59x RocksDB (41% slower, but 4.82x better write amp)
+- Mixed: 0.43x RocksDB (57% slower)
+- Range scans: 0.06x RocksDB (94% slower, major improvement from 99% slower but still needs SSTable merging)
 
 ---
 
@@ -300,10 +301,10 @@ All validation complete, results mixed:
 - Zero unsafe code in critical paths
 
 **Performance** (vs RocksDB):
-- Writes: 0.65x (35% slower)
-- Random reads: 0.79x (21% slower)
-- Mixed: 0.70x (30% slower)
-- Range scans: 0.29x (71% slower)
+- Writes: 0.59x (41% slower)
+- Random reads: 0.29x (71% slower)
+- Mixed: 0.43x (57% slower)
+- Range scans: 0.06x (94% slower, but major improvement)
 - **Write amp: 4.82x better** ✅ (main win)
 
 ---

@@ -414,14 +414,19 @@ fn benchmark_seerdb() {
         elapsed.as_micros() as f64 / NUM_OPERATIONS as f64
     );
 
-    // Workload 4: Range Scans (simulated via sequential gets)
+    // Workload 4: Range Scans (efficient iterator-based)
     println!("\nWorkload 4: Range Scans (1000 scans, 100 keys each)");
     let start = Instant::now();
     for i in 0..1000 {
-        let base = i * 100;
-        for offset in 0..100 {
-            let key = format!("key_{:08}", base + offset);
-            let _ = db.get(key.as_bytes());
+        let start_key = format!("key_{:08}", i * 100);
+        let end_key = format!("key_{:08}", i * 100 + 100);
+        let mut count = 0;
+        for result in db.range(start_key.as_bytes(), Some(end_key.as_bytes())).unwrap() {
+            let (_key, _value) = result.unwrap();
+            count += 1;
+            if count >= 100 {
+                break;
+            }
         }
     }
     let elapsed = start.elapsed();

@@ -1,4 +1,4 @@
-#![feature(portable_simd)]
+// #![feature(portable_simd)] // Temporarily disabled for range scan work
 
 //! seerdb - Research-grade embedded storage engine
 //!
@@ -111,6 +111,7 @@ pub mod db;
 pub mod health;
 pub mod memtable;
 pub mod metrics;
+pub mod range;
 pub mod sstable;
 pub mod vlog;
 pub mod wal;
