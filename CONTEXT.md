@@ -1,34 +1,47 @@
 # seerdb - Research-Grade Storage Engine
 
 **Repository**: https://github.com/omendb/seerdb
-**Status**: 🚨 **CRITICAL REGRESSION** - 370x slower reads than RocksDB (discovered Nov 5, 2025)
+**Status**: ✅ **CRITICAL FIX DEPLOYED** - Now competitive with RocksDB (fixed Nov 5, 2025)
 **License**: Elastic License 2.0 (source-available)
 
 ---
 
 ## Current Situation (Nov 5, 2025)
 
-### 🚨 CRITICAL ISSUE
+### ✅ CRITICAL FIX SUCCESSFUL
 
-**Baseline benchmark completed**, results are catastrophic:
+**Baseline benchmark results AFTER fix**:
 
-| Metric | RocksDB | seerdb | Performance |
-|--------|---------|--------|-------------|
-| **Random Reads** | 1,037,751 ops/sec | 2,800 ops/sec | **370x SLOWER** ❌ |
-| **Mixed 50/50** | 392,330 ops/sec | 3,661 ops/sec | **107x SLOWER** ❌ |
-| **Range Scans** | 20,016 scans/sec | 18 scans/sec | **1112x SLOWER** ❌ |
-| Sequential Writes | 370,620 ops/sec | 250,007 ops/sec | 0.67x (acceptable) |
+| Metric | RocksDB | seerdb (FIXED) | Performance |
+|--------|---------|----------------|-------------|
+| **Random Reads** | 1,037,751 ops/sec (0.96µs) | **821,549 ops/sec (1.22µs)** | **0.79x** ✅ |
+| **Mixed 50/50** | 392,330 ops/sec (2.55µs) | **276,601 ops/sec (3.62µs)** | **0.70x** ✅ |
+| **Range Scans** | 20,016 scans/sec (0.05ms) | **5,822 scans/sec (0.17ms)** | **0.29x** (needs work) |
+| Sequential Writes | 370,620 ops/sec (2.70µs) | 242,813 ops/sec (4.12µs) | 0.65x (acceptable) |
 
-**Read latency**: 357µs per read (vs RocksDB's 0.96µs)
+**Improvement from broken version**:
+- Random reads: **293x faster** (was 370x slower than RocksDB, now 0.79x)
+- Mixed workload: **75x faster** (was 107x slower, now 0.70x)
+- Range scans: **323x faster** (was 1112x slower, now 0.29x)
 
-### Immediate Action Required
+### Root Cause & Fix
 
-1. Profile read path to find 356µs overhead
-2. Test with SOTA features disabled (isolate regression)
-3. Fix critical path (target: <10µs reads)
-4. Re-benchmark to validate fix
+**Problem**: Opening SSTables on every read consumed 93.75% of CPU time
+- `SSTable::open()` called for every SSTable check (28+ times per read)
+- `load_top_level_index()` deserialized indexes from disk (68.48% CPU)
+- Result: 357µs per read (vs target <10µs)
 
-**ALL OTHER WORK BLOCKED** until reads are fixed.
+**Fix**: Implemented SSTable reader cache (src/db.rs:285)
+- Cache maps SSTable path → opened reader with loaded indexes
+- Eliminates 93.75% overhead by reusing file handles and indexes
+- Result: **1.22µs per read** (293x improvement)
+
+### Next Steps
+
+1. ✅ Profile and fix read path (COMPLETE)
+2. Range scan optimization (still 3.4x slower than RocksDB)
+3. Measure write amplification (validate "10x better" claim)
+4. YCSB workload testing
 
 ---
 

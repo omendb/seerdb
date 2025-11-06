@@ -280,6 +280,9 @@ pub struct DB {
     compaction_worker: Option<JoinHandle<()>>,
     /// Flush mutex to serialize flush operations and prevent concurrent flush races
     flush_mutex: Arc<Mutex<()>>,
+    /// SSTable reader cache to avoid re-opening files on every read (CRITICAL for performance)
+    /// Maps SSTable path -> opened SSTable with loaded indexes and bloom filters
+    sstable_cache: Arc<Mutex<std::collections::HashMap<PathBuf, Arc<Mutex<SSTable>>>>>,
 }
 
 impl DB {
@@ -468,6 +471,7 @@ impl DB {
             compaction_tx,
             compaction_worker,
             flush_mutex: Arc::new(Mutex::new(())),
+            sstable_cache: Arc::new(Mutex::new(std::collections::HashMap::new())),
         };
 
         // Flush memtable if it filled up during recovery
@@ -729,13 +733,22 @@ impl DB {
 
                 // Check each SSTable in this level
                 for sstable_path in sstables {
-                    let mut sstable = if has_vlog {
-                        // Attach vLog for reading value pointers
-                        let vlog = VLog::open(&vlog_path)?;
-                        SSTable::open(sstable_path)?.with_vlog(vlog)
-                    } else {
-                        SSTable::open(sstable_path)?
+                    // Use cached SSTable reader (avoids expensive re-opening and index deserialization)
+                    let cached_sstable = {
+                        let mut cache = self.sstable_cache.lock().expect("SSTable cache lock poisoned");
+                        cache.entry(sstable_path.clone()).or_insert_with(|| {
+                            // Cache miss - open SSTable and store in cache
+                            let sstable = if has_vlog {
+                                let vlog = VLog::open(&vlog_path).expect("Failed to open vLog");
+                                SSTable::open(sstable_path).expect("Failed to open SSTable").with_vlog(vlog)
+                            } else {
+                                SSTable::open(sstable_path).expect("Failed to open SSTable")
+                            };
+                            Arc::new(Mutex::new(sstable))
+                        }).clone()
                     };
+
+                    let mut sstable = cached_sstable.lock().expect("SSTable lock poisoned");
 
                     // For L0, if bloom filter says key exists but get() returns None, it's a tombstone
                     // Stop searching immediately (don't check older SSTables)
