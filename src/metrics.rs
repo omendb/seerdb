@@ -50,6 +50,11 @@ pub struct DBStats {
     pub level_sizes_bytes: Vec<u64>,
     pub total_sstables: usize,
 
+    // Write amplification tracking
+    pub logical_bytes_written: u64,      // Bytes written by user (put values)
+    pub physical_bytes_written: u64,     // Bytes written to disk (WAL, SSTable, vLog, compaction)
+    pub write_amplification: f64,        // physical / logical
+
     // Uptime
     pub uptime_seconds: u64,
 }
@@ -62,6 +67,10 @@ pub(crate) struct MetricsCollector {
     pub(crate) total_deletes: AtomicU64,
     pub(crate) total_flushes: AtomicU64,
     pub(crate) total_compactions: AtomicU64,
+
+    // Write amplification tracking
+    pub(crate) logical_bytes_written: AtomicU64,   // User data bytes
+    pub(crate) physical_bytes_written: AtomicU64,  // Disk bytes
 
     // Latency histograms (require locking)
     pub(crate) put_latencies: std::sync::Mutex<Histogram<u64>>,
@@ -81,6 +90,9 @@ impl MetricsCollector {
             total_deletes: AtomicU64::new(0),
             total_flushes: AtomicU64::new(0),
             total_compactions: AtomicU64::new(0),
+
+            logical_bytes_written: AtomicU64::new(0),
+            physical_bytes_written: AtomicU64::new(0),
 
             // High dynamic range histograms: 1us to 1 minute, 3 sig figs
             put_latencies: std::sync::Mutex::new(
@@ -142,6 +154,18 @@ impl MetricsCollector {
     #[allow(dead_code)] // Will be used when compaction metrics are added
     pub fn record_compaction(&self) {
         self.total_compactions.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record logical bytes written (user data)
+    #[inline]
+    pub fn record_logical_bytes(&self, bytes: u64) {
+        self.logical_bytes_written.fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    /// Record physical bytes written to disk (WAL, SSTable, vLog, compaction)
+    #[inline]
+    pub fn record_physical_bytes(&self, bytes: u64) {
+        self.physical_bytes_written.fetch_add(bytes, Ordering::Relaxed);
     }
 
     /// Get current operation counts

@@ -10,6 +10,7 @@ use crate::vlog::VLog;
 use crate::wal::{Record, SyncPolicy, WALReader, WAL};
 use bytes::Bytes;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -422,6 +423,9 @@ impl DB {
 
         let sstable_counter = Arc::new(Mutex::new(max_counter + 1));
 
+        // Create metrics early (needed by background worker)
+        let metrics = Arc::new(MetricsCollector::new());
+
         // Start background compaction worker if enabled
         let (compaction_tx, compaction_worker) = if options.background_compaction {
             let (tx, rx) = channel::<CompactionTask>();
@@ -430,6 +434,7 @@ impl DB {
             let lsm_clone = Arc::clone(&lsm);
             let sstable_counter_clone = Arc::clone(&sstable_counter);
             let data_dir = options.data_dir.clone();
+            let metrics_clone = Arc::clone(&metrics);
 
             // Spawn compaction worker thread
             let worker = thread::spawn(move || {
@@ -442,6 +447,7 @@ impl DB {
                                 &sstable_counter_clone,
                                 &data_dir,
                                 level_num,
+                                &metrics_clone,
                             ) {
                                 error!(error = %e, level = level_num, "Background compaction failed");
                             }
@@ -467,7 +473,7 @@ impl DB {
             lsm,
             vlog: Arc::new(Mutex::new(vlog)),
             sstable_counter,
-            metrics: Arc::new(MetricsCollector::new()),
+            metrics,
             compaction_tx,
             compaction_worker,
             flush_mutex: Arc::new(Mutex::new(())),
@@ -580,15 +586,23 @@ impl DB {
         let key = Bytes::copy_from_slice(key.as_ref());
         let value = Bytes::copy_from_slice(value.as_ref());
 
+        // Track logical bytes written (user data)
+        let logical_bytes = (key.len() + value.len()) as u64;
+        self.metrics.record_logical_bytes(logical_bytes);
+
         // Write to WAL first (durability)
         let record = Record::Put {
             key: key.clone(),
             value: value.clone(),
         };
+        let wal_bytes = record.encode().len() as u64;
         self.wal
             .lock()
             .expect("WAL mutex poisoned")
             .write(&record)?;
+
+        // Track physical bytes written to WAL
+        self.metrics.record_physical_bytes(wal_bytes);
 
         // Write to memtable
         let mt = self.memtable.lock().expect("Memtable lock poisoned");
@@ -964,6 +978,9 @@ impl DB {
             pending_mt.flush(&pending_sstable_path)?;
             let pending_size = std::fs::metadata(&pending_sstable_path)?.len();
 
+            // Track physical bytes written to SSTable (retry case)
+            self.metrics.record_physical_bytes(pending_size);
+
             // Add to LSM tree
             let mut lsm = self.lsm.lock().expect("LSM mutex poisoned");
             lsm.add_l0_sstable(pending_sstable_path.clone(), pending_size);
@@ -1049,6 +1066,9 @@ impl DB {
 
         let size = std::fs::metadata(&sstable_path)?.len();
 
+        // Track physical bytes written to SSTable
+        self.metrics.record_physical_bytes(size);
+
         // Add to LSM tree L0
         let mut lsm = self.lsm.lock().expect("LSM mutex poisoned");
         let sstable_path_for_log = sstable_path.clone();
@@ -1102,6 +1122,7 @@ impl DB {
             &self.sstable_counter,
             &self.options.data_dir,
             level_num,
+            &self.metrics,
         )
     }
 
@@ -1111,6 +1132,7 @@ impl DB {
         sstable_counter: &Arc<Mutex<u64>>,
         data_dir: &Path,
         level_num: usize,
+        metrics: &Arc<MetricsCollector>,
     ) -> Result<()> {
         let compaction_start = Instant::now();
         let lsm_lock = lsm.lock().expect("LSM mutex poisoned");
@@ -1142,6 +1164,9 @@ impl DB {
 
         // Compact SSTables
         let (result_path, size) = compact_sstables(&input_paths, &output_path)?;
+
+        // Track physical bytes written during compaction
+        metrics.record_physical_bytes(size);
 
         // Update LSM tree - add to next level and remove from current level
         let mut lsm = lsm.lock().expect("LSM mutex poisoned");
@@ -1175,8 +1200,9 @@ impl DB {
         sstable_counter: &Arc<Mutex<u64>>,
         data_dir: &Path,
         level_num: usize,
+        metrics: &Arc<MetricsCollector>,
     ) -> Result<()> {
-        Self::do_compact_level(lsm, sstable_counter, data_dir, level_num)
+        Self::do_compact_level(lsm, sstable_counter, data_dir, level_num, metrics)
     }
 
     /// Get current memtable size
@@ -1310,6 +1336,15 @@ impl DB {
             .unwrap_or(0);
         total_disk_bytes += vlog_size;
 
+        // Calculate write amplification
+        let logical_bytes = self.metrics.logical_bytes_written.load(Ordering::Relaxed);
+        let physical_bytes = self.metrics.physical_bytes_written.load(Ordering::Relaxed);
+        let write_amplification = if logical_bytes > 0 {
+            physical_bytes as f64 / logical_bytes as f64
+        } else {
+            0.0
+        };
+
         DBStats {
             // Throughput
             writes_per_sec,
@@ -1349,6 +1384,11 @@ impl DB {
             sstables_per_level,
             level_sizes_bytes,
             total_sstables,
+
+            // Write amplification
+            logical_bytes_written: logical_bytes,
+            physical_bytes_written: physical_bytes,
+            write_amplification,
 
             // Uptime
             uptime_seconds: self.metrics.uptime_seconds(),
