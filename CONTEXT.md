@@ -1,12 +1,12 @@
 # seerdb - Research-Grade Storage Engine
 
 **Repository**: https://github.com/omendb/seerdb
-**Status**: ✅ **FUNCTIONAL** - Slower than RocksDB, but significantly better write amplification (Nov 5, 2025)
+**Status**: ✅ **FUNCTIONAL** - Slower than RocksDB, but significantly better write amplification (Nov 6, 2025)
 **License**: Elastic License 2.0 (source-available)
 
 ---
 
-## Current Situation (Nov 5, 2025)
+## Current Situation (Nov 6, 2025)
 
 ### ✅ ALL VALIDATIONS COMPLETE
 
@@ -267,4 +267,35 @@ cargo flamegraph --example baseline_benchmark --features baseline-benchmarks
 ---
 
 **Status**: ✅ FUNCTIONAL - All validations complete, honest assessment documented
-**Updated**: November 5, 2025
+**Updated**: November 6, 2025
+
+---
+
+## Optional Next Steps (Post-Core Validation)
+
+Now that core validation is complete, here are optional optimizations to consider:
+
+### 1. Range Scan Performance (Priority: Medium)
+- **Current**: 0.29x RocksDB speed (71% slower)
+- **Issue**: Sequential get() calls instead of proper iterator
+- **Solution**: Implement SSTable range iterator with prefetching
+- **Expected**: 0.8-1.0x RocksDB performance
+- **Effort**: High (requires SSTable range iterator implementation)
+
+### 2. Dostoevsky Adaptive Compaction (Priority: Low)
+- **Current**: Fixed compaction strategy
+- **Opportunity**: Workload-aware adaptive tuning
+- **Benefit**: Better performance for specific workloads
+- **Effort**: Medium (wire into metrics, benchmark strategies)
+
+### 3. Blocked Bloom Filters (Priority: Low)
+- **Benefit**: 3x speedup through cache locality
+- **Implementation**: Multi-word bit operations
+- **Effort**: Low (5-10% overall gain)
+
+### Decision Framework
+- **For omen integration**: Focus on range scans if vector search is critical
+- **For research**: Dostoevsky integration validates adaptive claims
+- **For production**: Range scans most impactful for real workloads
+
+**Ready for omen evaluation**: seerdb is functional with validated write amplification benefits, but slower raw performance. Evaluate fit for write-heavy workloads prioritizing efficiency over speed.
