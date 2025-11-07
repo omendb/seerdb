@@ -15,8 +15,8 @@ bytes = "1.9"
 # Async I/O (tokio default, secure)
 tokio = { version = "1.41", features = ["full"] }
 
-# WAL and data integrity
-crc32fast = "1.4"
+# WAL and data integrity (hardware-accelerated CRC32C)
+crc32c = "0.6"
 
 # Memtable (concurrent skiplist)
 crossbeam-skiplist = "0.1"

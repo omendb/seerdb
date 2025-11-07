@@ -7,7 +7,6 @@
 // - Benefit: Compaction only rewrites keys, not values (10-100x less write amp)
 
 use bytes::{Bytes, BytesMut};
-use crc32fast::Hasher;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -64,13 +63,11 @@ impl VLogRecord {
         buf.extend_from_slice(&value_len.to_le_bytes());
         buf.extend_from_slice(&self.value);
 
-        // Calculate CRC over key + value
-        let mut hasher = Hasher::new();
-        hasher.update(&key_len.to_le_bytes());
-        hasher.update(&self.key);
-        hasher.update(&value_len.to_le_bytes());
-        hasher.update(&self.value);
-        let crc = hasher.finalize();
+        // Calculate CRC over key + value (hardware-accelerated CRC32C)
+        let mut crc = crc32c::crc32c(&key_len.to_le_bytes());
+        crc = crc32c::crc32c_append(crc, &self.key);
+        crc = crc32c::crc32c_append(crc, &value_len.to_le_bytes());
+        crc = crc32c::crc32c_append(crc, &self.value);
 
         buf.extend_from_slice(&crc.to_le_bytes());
 
@@ -127,13 +124,11 @@ impl VLogRecord {
             data[offset + 3],
         ]);
 
-        // Verify CRC
-        let mut hasher = Hasher::new();
-        hasher.update(&(key_len as u32).to_le_bytes());
-        hasher.update(&key);
-        hasher.update(&(value_len as u32).to_le_bytes());
-        hasher.update(&value);
-        let computed_crc = hasher.finalize();
+        // Verify CRC (hardware-accelerated CRC32C)
+        let mut computed_crc = crc32c::crc32c(&(key_len as u32).to_le_bytes());
+        computed_crc = crc32c::crc32c_append(computed_crc, &key);
+        computed_crc = crc32c::crc32c_append(computed_crc, &(value_len as u32).to_le_bytes());
+        computed_crc = crc32c::crc32c_append(computed_crc, &value);
 
         if stored_crc != computed_crc {
             return Err(VLogError::CrcMismatch {

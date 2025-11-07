@@ -35,6 +35,24 @@ pub enum SyncPolicy {
     None,
 }
 
+/// Configuration for WAL batching
+#[derive(Debug, Clone, Copy)]
+pub struct BatchConfig {
+    /// Maximum batch size in bytes before forcing flush (default: 4MB)
+    pub max_batch_size: usize,
+    /// Maximum time to wait before forcing flush (default: 50ms)
+    pub max_batch_timeout: Duration,
+}
+
+impl Default for BatchConfig {
+    fn default() -> Self {
+        Self {
+            max_batch_size: 4 * 1024 * 1024, // 4MB (increased from 1MB)
+            max_batch_timeout: Duration::from_millis(50), // 50ms (increased from 10ms)
+        }
+    }
+}
+
 /// Write-Ahead Log writer with automatic batching
 pub struct WAL {
     file: Arc<Mutex<File>>,
@@ -44,16 +62,22 @@ pub struct WAL {
     // Batching fields
     batch: Vec<Record>,
     batch_size_bytes: usize,
-    batch_timeout: Duration,
+    batch_config: BatchConfig,
     last_flush: Instant,
 }
 
-const DEFAULT_BATCH_SIZE: usize = 1024 * 1024; // 1MB
-const DEFAULT_BATCH_TIMEOUT_MS: u64 = 10; // 10ms
-
 impl WAL {
-    /// Create a new WAL file
+    /// Create a new WAL file with default batch configuration
     pub fn create(path: impl AsRef<Path>, sync_policy: SyncPolicy) -> Result<Self> {
+        Self::create_with_batch_config(path, sync_policy, BatchConfig::default())
+    }
+
+    /// Create a new WAL file with custom batch configuration
+    pub fn create_with_batch_config(
+        path: impl AsRef<Path>,
+        sync_policy: SyncPolicy,
+        batch_config: BatchConfig,
+    ) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         let file = OpenOptions::new().create(true).append(true).open(&path)?;
 
@@ -64,13 +88,22 @@ impl WAL {
             sync_policy,
             batch: Vec::new(),
             batch_size_bytes: 0,
-            batch_timeout: Duration::from_millis(DEFAULT_BATCH_TIMEOUT_MS),
+            batch_config,
             last_flush: Instant::now(),
         })
     }
 
-    /// Open an existing WAL file
+    /// Open an existing WAL file with default batch configuration
     pub fn open(path: impl AsRef<Path>, sync_policy: SyncPolicy) -> Result<Self> {
+        Self::open_with_batch_config(path, sync_policy, BatchConfig::default())
+    }
+
+    /// Open an existing WAL file with custom batch configuration
+    pub fn open_with_batch_config(
+        path: impl AsRef<Path>,
+        sync_policy: SyncPolicy,
+        batch_config: BatchConfig,
+    ) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         let file = OpenOptions::new().append(true).open(&path)?;
 
@@ -83,7 +116,7 @@ impl WAL {
             sync_policy,
             batch: Vec::new(),
             batch_size_bytes: 0,
-            batch_timeout: Duration::from_millis(DEFAULT_BATCH_TIMEOUT_MS),
+            batch_config,
             last_flush: Instant::now(),
         })
     }
@@ -99,8 +132,8 @@ impl WAL {
 
         // Check if we should flush
         let should_flush =
-            self.batch_size_bytes >= DEFAULT_BATCH_SIZE ||
-            self.last_flush.elapsed() >= self.batch_timeout;
+            self.batch_size_bytes >= self.batch_config.max_batch_size ||
+            self.last_flush.elapsed() >= self.batch_config.max_batch_timeout;
 
         if should_flush {
             self.flush_batch()?;

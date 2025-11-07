@@ -16,7 +16,6 @@
 // └─────────────────────────────────────┘
 
 use bytes::{Bytes, BytesMut};
-use crc32fast::Hasher;
 use std::io;
 use thiserror::Error;
 
@@ -128,10 +127,8 @@ impl BlockBuilder {
         // Write number of restart points
         self.buffer.extend_from_slice(&(self.restart_points.len() as u32).to_le_bytes());
 
-        // Calculate checksum over data + restart info
-        let mut hasher = Hasher::new();
-        hasher.update(&self.buffer);
-        let checksum = hasher.finalize();
+        // Calculate checksum over data + restart info (hardware-accelerated CRC32C)
+        let checksum = crc32c::crc32c(&self.buffer);
         self.buffer.extend_from_slice(&checksum.to_le_bytes());
 
         self.buffer.freeze()
@@ -178,9 +175,8 @@ impl Block {
         ]);
 
         // Verify checksum (everything except checksum itself)
-        let mut hasher = Hasher::new();
-        hasher.update(&data[..data.len() - 4]);
-        let computed_checksum = hasher.finalize();
+        // Uses hardware-accelerated CRC32C (SSE4.2 on x86, CRC on ARM)
+        let computed_checksum = crc32c::crc32c(&data[..data.len() - 4]);
 
         if stored_checksum != computed_checksum {
             return Err(BlockError::Corruption);

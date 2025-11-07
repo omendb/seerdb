@@ -8,7 +8,6 @@ use crate::bloom::BloomFilter;
 use block::{BlockBuilder, BlockError, Block, DEFAULT_BLOCK_SIZE};
 use crate::vlog::{VLog, ValuePointer};
 use bytes::{Bytes, BytesMut};
-use crc32fast::Hasher;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -336,18 +335,16 @@ impl SSTableBuilder {
         let footer_start = self.current_offset;
 
         self.file.seek(SeekFrom::Start(0))?;
-        let mut hasher = Hasher::new();
+        let mut checksum = 0u32;
         let mut buf = vec![0u8; 4096];
         let mut remaining = footer_start;
 
         while remaining > 0 {
             let to_read = remaining.min(4096) as usize;
             self.file.read_exact(&mut buf[..to_read])?;
-            hasher.update(&buf[..to_read]);
+            checksum = crc32c::crc32c_append(checksum, &buf[..to_read]);
             remaining -= to_read as u64;
         }
-
-        let checksum = hasher.finalize();
         self.file.seek(SeekFrom::Start(footer_start))?;
 
         self.file.write_all(&self.index_blocks_start.to_le_bytes())?;

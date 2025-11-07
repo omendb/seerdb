@@ -57,8 +57,8 @@ impl Record {
             }
         }
 
-        // Calculate CRC32 of the data (excluding length prefix we'll add)
-        let crc = crc32fast::hash(&buf);
+        // Calculate CRC32C of the data (hardware-accelerated)
+        let crc = crc32c::crc32c(&buf);
 
         // Build final record: [total_length][data][crc32]
         let mut final_buf = BytesMut::new();
@@ -88,8 +88,8 @@ impl Record {
         let record_data = data.split_to(data_len);
         let expected_crc = data.get_u32();
 
-        // Verify checksum
-        let actual_crc = crc32fast::hash(&record_data);
+        // Verify checksum (hardware-accelerated)
+        let actual_crc = crc32c::crc32c(&record_data);
         if actual_crc != expected_crc {
             return Err(RecordError::ChecksumMismatch {
                 expected: expected_crc,
