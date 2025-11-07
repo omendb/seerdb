@@ -710,7 +710,6 @@ impl SSTable {
         let file_size = std::fs::metadata(&self.path)?.len();
 
         for top_entry in &self.top_level_index {
-            // Check if offset + size is within file bounds
             if top_entry.offset + (top_entry.size as u64) > file_size {
                 return Err(SSTableError::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
@@ -719,11 +718,9 @@ impl SSTable {
                 )));
             }
 
-            // Load and validate index block
             let index_block_data = self.load_block(top_entry.offset, top_entry.size)?;
             let index_block = Block::new(index_block_data)?;
 
-            // Iterate through index entries to validate data blocks
             for result in index_block.iter() {
                 let (_key_bytes, value_bytes) = result?;
 
@@ -732,7 +729,6 @@ impl SSTable {
                     continue;
                 }
 
-                // Read key_len to skip the key
                 let key_len = u32::from_le_bytes(value_bytes[..4].try_into().unwrap()) as usize;
                 let offset_start = 4 + key_len;
 
@@ -743,7 +739,6 @@ impl SSTable {
                 let offset = u64::from_le_bytes(value_bytes[offset_start..offset_start+8].try_into().unwrap());
                 let size = u32::from_le_bytes(value_bytes[offset_start+8..offset_start+12].try_into().unwrap());
 
-                // Check if data block is within file bounds
                 if offset + (size as u64) > file_size {
                     return Err(SSTableError::Io(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
@@ -752,7 +747,6 @@ impl SSTable {
                     )));
                 }
 
-                // Load and validate data block
                 let data_block_data = self.load_block(offset, size)?;
                 let _data_block = Block::new(data_block_data)?;
             }
@@ -774,16 +768,13 @@ impl SSTable {
     pub fn iter(&mut self) -> Result<SSTableIterator> {
         let mut entries = Vec::new();
 
-        // Iterate through all data blocks
         for top_entry in &self.top_level_index {
-            // Load index block
             let index_block_data = self.load_block(top_entry.offset, top_entry.size)?;
             let index_block = Block::new(index_block_data)?;
 
-            // Iterate through index entries to get data blocks
             for idx_entry in index_block.iter() {
                 let (_index_key, index_value) = idx_entry?;
-                
+
                 let value_len = index_value.len();
                 if value_len < 12 {
                     continue;
@@ -797,11 +788,9 @@ impl SSTable {
                 let data_offset = u64::from_le_bytes(offset_bytes);
                 let data_size = u32::from_le_bytes(size_bytes);
 
-                // Load data block
                 let data_block_data = self.load_block(data_offset, data_size)?;
                 let data_block = Block::new(data_block_data)?;
 
-                // Iterate through data block entries
                 for data_entry in data_block.iter() {
                     let (key, entry_value) = data_entry?;
 
@@ -878,11 +867,9 @@ impl SSTable {
                 continue;
             }
 
-            // Load index block
             let index_block_data = self.load_block(top_entry.offset, top_entry.size)?;
             let index_block = Block::new(index_block_data)?;
 
-            // Iterate through index entries to get data blocks
             for idx_entry in index_block.iter() {
                 let (_index_key, index_value) = idx_entry?;
 
@@ -899,21 +886,18 @@ impl SSTable {
                 let data_offset = u64::from_le_bytes(offset_bytes);
                 let data_size = u32::from_le_bytes(size_bytes);
 
-                // Load data block
                 let data_block_data = self.load_block(data_offset, data_size)?;
                 let data_block = Block::new(data_block_data)?;
 
-                // Iterate through data block entries
                 for data_entry in data_block.iter() {
                     let (key, entry_value) = data_entry?;
 
-                    // Check if key is in range
                     if key.as_ref() < start_key {
                         continue;
                     }
                     if let Some(end) = end_key {
                         if key.as_ref() >= end {
-                            // Keys are sorted, so we can stop early
+                            // Keys are sorted, can break early
                             break;
                         }
                     }

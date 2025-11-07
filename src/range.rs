@@ -65,12 +65,10 @@ impl RangeIterator {
                 .collect()
         };
 
-        // Memtable has highest priority
         for (key, value_opt) in memtable_entries {
             merged.insert(key, value_opt);
         }
 
-        // Convert to final result, filtering out tombstones
         let entries: Vec<RangeItem> = merged
             .into_iter()
             .filter_map(|(key, value_opt)| value_opt.map(|value| (key, value)))
