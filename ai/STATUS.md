@@ -8,7 +8,7 @@
 **Write Amplification**: **1.01x with vLog** (4.82x better than traditional LSM) ✅ This is the main win
 **Status**: ⚠️ **FUNCTIONAL** - Slower than RocksDB but write amp is better
 **Toolchain**: Nightly Rust (for std::simd portable_simd feature)
-**Latest Commit**: a0ed389 (honest assessment docs) + range.rs (staged)
+**Latest Commit**: cbd3e46 (warning fixes) - Zero warnings, 116 tests passing
 
 ---
 
@@ -313,5 +313,5 @@ All validation complete, results mixed:
 **Status**: ✅ FUNCTIONAL - Slower than RocksDB in raw performance, but significantly better write amplification
 **Confidence**: HIGH - All benchmarks complete, honest assessment documented
 **Value Proposition**: 4.82x better write amplification with vLog (research validated)
-**Recent Work**: Documentation polish (a0ed389, ef627eb), range iterator stub (staged)
-**Updated**: November 6, 2025 (commits 562a1f4, a7edee3, e3a7264, a0ed389 + range.rs)
+**Recent Work**: Documentation polish (a0ed389, ef627eb), range iterator (2f37bac), warning fixes (cbd3e46)
+**Updated**: November 6, 2025 (commits 562a1f4, a7edee3, e3a7264, a0ed389, 2f37bac, cbd3e46)
