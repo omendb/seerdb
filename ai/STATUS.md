@@ -1,21 +1,20 @@
 # STATUS - seerdb
 
-**Last Updated**: November 7, 2025 - 🎉 **NOW BEATING ROCKSDB!**
-**Current Phase**: Phase 8 Complete - Batching Optimization (127% write improvement!)
+**Last Updated**: November 7, 2025 - Phase 9: Background Flush + SOTA Planning
+**Current Phase**: Background flush implemented, planning SOTA algorithmic optimizations
 **Tests**: All 126 tests passing (functional ✅)
-**Performance vs RocksDB**: Writes **1.33x** 🚀 | Reads **1.10x** 🚀 | Mixed **1.03x** 🚀 | Scans **0.86x** ⚠️
-**Performance vs fjall**: Writes **1.16x** 🚀 | Reads **1.62x** 🚀 | Mixed **0.74x** ⚠️ | Scans **1.44x** ✅
-**Write Amplification**: **1.01x** (4.82x better than traditional LSM) 🏆 **BEST-IN-CLASS**
-**Market Position**: **UNIQUE** - Only Rust LSM with learned components + **FASTEST** writes/reads!
-**Status**: 🎉 **Production-ready** - Beating RocksDB and fjall on writes/reads!
+**Performance** (100K ops): Writes 218K/sec | Reads 872K/sec | Mixed 311K/sec | Scans 17K/sec
+**Performance** (1M ops): Writes 341K/sec (473K with BG flush) | Mixed 420K/sec
+**Write Amplification**: **1.01x** (4.82x better than traditional LSM) 🏆
+**Status**: Production-ready, optimizing for SOTA performance
 **Latest Work**:
-- 🎉 Batching optimization: 218K → 495K writes/sec (+127% improvement!)
-- 🎉 Now beating RocksDB across the board (writes, reads, mixed)
-- 🎉 Now beating fjall on writes (1.16x) and reads (1.62x)
+- ✅ Background flush implemented (+39% write-heavy workloads)
+- ✅ Large-scale benchmarking (1M ops = 1GB) validates BG flush
+- 📊 Profiling analysis identifies SOTA optimization opportunities
+- 📝 Planning: 6 research-backed algorithmic improvements
 **Latest Commits**:
-- c489000: batching optimization (+127% writes, now beating RocksDB!)
-- 6a0c73e: k-way merge implementation
-- 5e4dc0c: SSTable range filtering (+19.6x scans)
+- 2b163db: feat: implement non-blocking background flush
+- Previous: batching optimization, k-way merge, range filtering
 
 ---
 
@@ -58,6 +57,71 @@
 - Syscalls: **~80K → ~3K per 100K ops** (97% reduction!)
 
 **Impact**: Single optimization beat both RocksDB and fjall using ONLY std::fs (sync I/O)!
+
+### Phase 9: Background Flush Implementation (Nov 7, 2025)
+
+**Implemented**: Non-blocking memtable flush with background thread (commit 2b163db)
+
+**Architecture**:
+- Fast path: Atomic memtable swap in foreground (~1µs)
+- Slow path: SSTable building in background thread (~10-100ms)
+- Disabled by default (correct for general use)
+
+**Large Benchmark Results** (1M ops = 1GB dataset):
+
+| Workload | Without BG Flush | With BG Flush | Impact |
+|----------|-----------------|---------------|---------|
+| Pure Writes | 341K ops/sec | **473K ops/sec** | **+39% ✅** |
+| Mixed 50/50 | 420K ops/sec | 360K ops/sec | **-14% ❌** |
+
+**Key Findings**:
+1. ✅ **Background flush works** for write-heavy workloads (+39%)
+2. ❌ **Hurts mixed workloads** (-14%) due to CPU/cache contention
+3. ✅ **Current default (disabled) is correct** for general-purpose use
+
+**When to enable**: Write-heavy applications (>70% writes) with large datasets (>1GB)
+
+**Docs**: BACKGROUND_FLUSH_IMPLEMENTATION.md, PERFORMANCE_FINDINGS.md
+
+### Next Phase: SOTA Algorithmic Optimizations
+
+**Current Gap**: Writes still 2x slower than fjall (218K vs 423K on 100K benchmark)
+
+**Target**: 218K → 500K writes (+129%) via research-backed algorithms
+
+**Planned Optimizations** (from SOTA_ALGORITHMIC_IMPROVEMENTS.md):
+
+1. **Dostoevsky LSM Tuning** (Dayan et al., 2018)
+   - Lazy leveling compaction strategy
+   - Workload-aware level ratios
+   - Expected: +20-30% writes
+
+2. **Prefix Compression** (Standard in LevelDB/RocksDB)
+   - Store shared prefixes once, suffixes only
+   - 30-50% space reduction
+   - Expected: +15-25% writes
+
+3. **Partitioned Memtables** (Tucana 2020, FASTER 2018)
+   - 16 hash-partitioned memtables
+   - 16x less lock contention
+   - Expected: +25-40% writes
+
+4. **SIMD Key Comparisons** (Standard optimization)
+   - 16-32 bytes at once with AVX2
+   - Expected: +5-15% overall
+
+5. **Lock-Free Memtable Access** (Fraser 2004)
+   - AtomicPtr instead of Arc<Mutex>
+   - Expected: +10-20% writes
+
+6. **Bloom Filter SIMD**
+   - Parallel hash checks
+   - Expected: +3-5%
+
+**Timeline**: 4-6 weeks for all optimizations
+**Result**: Beat fjall (500K vs 423K = 1.18x)
+
+**NOT implementing**: Parameter tweaking without algorithmic justification
 
 ### Major Breakthrough: SSTable Range Filtering (Nov 7, 2025)
 

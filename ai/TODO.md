@@ -1,211 +1,239 @@
 # TODO - seerdb
 
 **Last Updated**: November 7, 2025
-**Current Focus**: Beat RocksDB in all workloads
+**Current Focus**: SOTA Algorithmic Optimizations
 
 ---
 
-## ✅ Phase 7 Complete: SSTable Range Filtering (Nov 7, 2025)
+## Phase 9: SOTA Algorithmic Optimizations (4-6 weeks)
 
-**Achievement**: 19.6x range scan improvement - now competitive with RocksDB!
+**Goal**: 218K → 500K writes (+129%) via research-backed algorithms
+**Status**: Planning complete, ready to implement
 
-### Results
-- Range scans: **870 → 17,087 scans/sec** (19.6x improvement!)
-- Ratio vs RocksDB: **0.04x → 0.81x** (competitive!)
-- Ratio vs fjall: **0.08x → 1.50x** (50% faster!)
+### Current Performance Gap
 
-### Implementation (commit 5e4dc0c)
-- [x] Added min_key/max_key metadata to SSTable (v1 format)
-- [x] Track first/last keys during build
-- [x] Implemented overlaps_range() method
-- [x] Filter SSTables in db.range() before creating iterators
-- [x] Benchmarked: 17,087 scans/sec (0.81x RocksDB)
-- [x] Updated all documentation
+| Workload | seerdb | fjall | Gap |
+|----------|--------|-------|-----|
+| Writes (100K) | 218K | 423K | 2x slower ❌ |
+| Writes (1M) | 341K | ~420K | 1.23x slower |
+| Writes (1M, BG flush) | 473K | ~420K | 1.13x faster ✅ |
+| Mixed (1M) | 420K | ~550K | 1.31x slower |
 
-**Status**: Production-ready for all workloads ✅
+**Target**: Beat fjall across all workloads
 
 ---
 
-## 🎯 NEW FOCUS: Beat RocksDB
+## Priority 1: Prefix Compression (1-2 weeks) ⭐⭐⭐
 
-**Goal**: Match or exceed RocksDB performance in all workloads
+**Expected**: +15-25% writes, 30-50% space reduction
+**Research**: Standard in LevelDB, RocksDB, PebblesDB
+**Complexity**: Medium
 
-### Current Performance (baseline_benchmark)
+**Implementation** (src/sstable/block.rs):
+- [ ] Modify BlockBuilder to track last_key
+- [ ] Calculate shared prefix length for each entry
+- [ ] Encode: [prefix_len][suffix_len][suffix][value_len][value]
+- [ ] Update BlockIterator to reconstruct full keys
+- [ ] Add restart points every N entries (for binary search)
+- [ ] Benchmark space reduction and throughput
+- [ ] Run all 126 tests to verify correctness
 
-| Workload | seerdb | RocksDB | Ratio | Gap |
-|----------|--------|---------|-------|-----|
-| **Writes** | 218K | 356K | 0.61x | -39% (138K ops/sec) |
-| **Reads** | 872K | 1,070K | 0.81x | -19% (198K ops/sec) |
-| **Mixed** | 311K | 407K | 0.76x | -24% (96K ops/sec) |
-| **Scans** | 17,087 | 21,175 | 0.81x | -19% (4,088 scans/sec) |
-
-**Best-in-class**: Write amplification (1.01x vs 4.88x, 4.82x better) 🏆
-
-### Priority Targets
-
-1. **Writes: 0.61x → 1.0x+** (close 138K ops/sec gap)
-2. **Reads: 0.81x → 1.0x+** (close 198K ops/sec gap)
-3. **Scans: 0.81x → 1.0x+** (close 4,088 scans/sec gap)
-4. **Mixed: 0.76x → 1.0x+** (close 96K ops/sec gap)
+**Success Criteria**:
+- Space reduction: 30-50% for typical workloads
+- Write throughput: 218K → 260K ops/sec (+19%)
+- All tests pass
 
 ---
 
-## Phase 8: Profile and Optimize (Week 11)
+## Priority 2: SIMD Key Comparisons (3-5 days) ⭐⭐
 
-### Write Path Optimization (Priority 1)
+**Expected**: +5-15% overall throughput
+**Research**: Standard optimization in high-performance systems
+**Complexity**: Medium (platform-specific)
 
-**Gap**: 39% slower than RocksDB (218K vs 356K ops/sec)
+**Implementation** (src/memtable/mod.rs, src/sstable/block.rs):
+- [ ] Add SIMD feature flag to Cargo.toml
+- [ ] Implement compare_keys_simd() with SSE2/AVX2
+- [ ] Use in skiplist key comparisons
+- [ ] Use in block binary search
+- [ ] Add ARM NEON variant for M-series Macs
+- [ ] Benchmark: skiplist insert, binary search
+- [ ] Fallback to scalar for non-SIMD platforms
 
-**Tasks**:
-- [ ] Profile write path end-to-end (flamegraph)
-  - WAL write time (known bottleneck: 48.5% of time)
-  - Memtable insert time
-  - Lock contention
-  - Allocation overhead
-- [ ] Identify top 3 bottlenecks
-- [ ] Implement optimizations:
-  - [ ] WAL: Batch writes more aggressively (reduce syscalls)
-  - [ ] WAL: Consider io_uring (zero-copy, zero-syscall)
-  - [ ] Memtable: Lock-free skiplist (crossbeam-skiplist already used, but check contention)
-  - [ ] Memtable: Pre-allocate capacity (reduce allocations)
-- [ ] Benchmark each optimization
-- [ ] Target: 300K+ ops/sec (0.84x+ RocksDB)
-
-**Expected Impact**: +30-50% write throughput
-
-### Read Path Optimization (Priority 2)
-
-**Gap**: 19% slower than RocksDB (872K vs 1,070K ops/sec)
-
-**Tasks**:
-- [ ] Profile read path (flamegraph)
-  - Bloom filter check time
-  - ALEX index lookup time
-  - Block cache hit/miss ratio
-  - Block decompression time
-- [ ] Identify bottlenecks
-- [ ] Implement optimizations:
-  - [ ] Bloom filter: Use blocked bloom (3x faster, from research)
-  - [ ] ALEX: Measure overhead vs binary search
-  - [ ] Block cache: Increase default size or use LFU instead of LRU
-  - [ ] Prefetch: Implement readahead for sequential access
-- [ ] Benchmark each optimization
-- [ ] Target: 1,100K+ ops/sec (1.03x+ RocksDB)
-
-**Expected Impact**: +25-35% read throughput
-
-### Range Scan Optimization (Priority 3)
-
-**Gap**: 19% slower than RocksDB (17,087 vs 21,175 scans/sec)
-
-**Tasks**:
-- [ ] Profile range scan path
-  - Iterator creation time
-  - K-way merge overhead
-  - Block loading time
-- [ ] Implement optimizations:
-  - [ ] Adaptive readahead (prefetch next blocks)
-  - [ ] SIMD key comparisons in k-way merge
-  - [ ] Reduce iterator allocation overhead
-- [ ] Benchmark
-- [ ] Target: 22,000+ scans/sec (1.04x+ RocksDB)
-
-**Expected Impact**: +25-30% scan throughput
+**Success Criteria**:
+- Write throughput: 260K → 285K ops/sec (+10%)
+- Read throughput: +5-10%
+- All tests pass on x86_64, arm64, fallback
 
 ---
 
-## Research Validation (Optional - Confidence Building)
+## Priority 3: Partitioned Memtables (1-2 weeks) ⭐⭐
 
-### Learned Component Impact Measurement
+**Expected**: +25-40% writes on multi-core
+**Research**: Tucana (2020), FASTER (2018)
+**Complexity**: High (affects all code paths)
 
-**Goal**: Quantify the benefit of learned components
+**Implementation** (src/db.rs, src/memtable/mod.rs):
+- [ ] Add NUM_PARTITIONS const (16 partitions)
+- [ ] Change memtable: Arc<Mutex<Memtable>> → [Arc<Mutex<Memtable>>; 16]
+- [ ] Implement partition_for_key() using xxhash
+- [ ] Update put() to lock only one partition
+- [ ] Update get() to check correct partition
+- [ ] Update flush() to merge all partitions
+- [ ] Update range() to query all partitions (k-way merge)
+- [ ] Benchmark on multi-core system
+- [ ] Run all tests to verify correctness
 
-1. **Learned Bloom Filter Space Savings** (1 day)
-   - [ ] Implement traditional bloom filter baseline
-   - [ ] Measure space: learned vs traditional
-   - [ ] Measure FP rate (should be equivalent)
-   - [ ] Measure query time overhead
-   - [ ] Target: Validate 90% space reduction claim
-
-2. **ALEX Index vs Binary Search** (1 day)
-   - [ ] Toggle ALEX on/off in SSTable
-   - [ ] Benchmark reads with/without ALEX
-   - [ ] Measure memory overhead
-   - [ ] Target: Quantify 20-40% read improvement (from SOTA papers)
-
-3. **Write Amplification Validation** (1 day)
-   - [ ] Measure disk writes over 1B operations
-   - [ ] Compare: seerdb vs fjall (traditional LSM)
-   - [ ] Calculate: bytes written / bytes ingested
-   - [ ] Target: Confirm 4.82x improvement
+**Success Criteria**:
+- Write throughput: 285K → 380K ops/sec (+33%)
+- Lock contention reduced by 16x
+- All tests pass
 
 ---
 
-## Advanced Optimizations (Phase 9-10)
+## Priority 4: Dostoevsky LSM Tuning (1-2 weeks) ⭐⭐⭐
 
-### io_uring Integration (Phase 9, 4 days)
+**Expected**: +20-30% writes (reduce write amp)
+**Research**: Dayan et al., Harvard 2018
+**Complexity**: Medium
 
-**Potential**: 2x faster I/O (from research)
-
-- [ ] Replace std::fs with tokio-uring
-- [ ] Batch SSTable reads during compaction
-- [ ] Batch WAL writes
-- [ ] Benchmark: Compaction speed, write throughput
-- [ ] Expected: +50-100% compaction speed, +20-40% write throughput
-
-### Workload-Aware Tuning (Phase 10, 7 days)
-
-**Potential**: 20-30% throughput improvement (CAMAL paper)
-
-- [ ] Implement workload detection
-  - Key sortedness (sorted vs random)
-  - Read/write ratio
-  - Value size distribution
-  - Hot/cold key distribution
-- [ ] Adaptive parameter tuning
-  - Compaction strategy (leveled vs tiered)
-  - Bloom filter size
-  - vLog threshold
-  - Memtable size
+**Implementation** (src/compaction/mod.rs):
+- [ ] Add CompactionStrategy enum (Leveling, LazyLeveling, Tiering)
+- [ ] Implement lazy leveling: L0 overlapping, L1+ single run
+- [ ] Add workload detection (read/write ratio)
+- [ ] Auto-select strategy based on workload:
+  - Write-heavy (<30% reads): LazyLeveling, ratio=4
+  - Read-heavy (>70% reads): Leveling, ratio=10
+  - Balanced: LazyLeveling, ratio=7
+- [ ] Measure write amplification before/after
 - [ ] Benchmark on different workloads
-- [ ] Expected: 20-30% improvement per workload type
+- [ ] Update DBOptions to expose strategy
+
+**Success Criteria**:
+- Write amplification: 1.01x → 0.7x (-30%)
+- Write throughput: 380K → 480K ops/sec (+26%)
+- All tests pass
 
 ---
 
-## Timeline and Priorities
+## Priority 5: Lock-Free Memtable Access (3-5 days) ⭐
 
-### Week 11 (Nov 7-13): Beat RocksDB
-- **Focus**: Profile and optimize write/read/scan paths
-- **Goal**: Match or exceed RocksDB in all workloads
-- **Target**: 1.0x+ RocksDB across the board
+**Expected**: +10-20% writes
+**Research**: Fraser 2004
+**Complexity**: High (unsafe code)
 
-### Week 12 (Nov 14-20): Validate Research Claims
-- **Focus**: Measure learned component impact
-- **Goal**: Quantify benefits of ALEX + learned blooms + vLog
-- **Deliverable**: Research validation results
+**Implementation** (src/db.rs):
+- [ ] Change memtable: Arc<Mutex<Memtable>> → AtomicPtr<Memtable>
+- [ ] Implement atomic CAS for memtable swap
+- [ ] Careful memory management (Box::into_raw, Box::from_raw)
+- [ ] Update put() to use atomic load/store
+- [ ] Update get() to use atomic load
+- [ ] Update flush() to use atomic CAS
+- [ ] Extensive testing (race conditions, memory leaks)
+- [ ] Valgrind/MIRI testing
 
-### Week 13-14 (Nov 21-Dec 4): Advanced Optimizations
-- **Focus**: io_uring, workload-aware tuning
-- **Goal**: Push beyond RocksDB (1.2x+ in key workloads)
+**Success Criteria**:
+- Write throughput: 480K → 520K ops/sec (+8%)
+- Zero mutex overhead
+- All tests pass, no memory leaks
+
+---
+
+## Priority 6: Bloom Filter SIMD (2-3 days) ⭐
+
+**Expected**: +3-5% overall
+**Research**: Standard SIMD optimization
+**Complexity**: Low
+
+**Implementation** (src/sstable/bloom.rs):
+- [ ] Implement bloom_check_simd() with AVX2
+- [ ] Check 4 hash positions simultaneously
+- [ ] Use _mm_or_si128 for parallel bit checks
+- [ ] Benchmark bloom filter lookup time
+- [ ] Add to both learned and traditional bloom
+
+**Success Criteria**:
+- Bloom filter lookups: 2-3x faster
+- Overall throughput: +3-5%
+- All tests pass
+
+---
+
+## Timeline
+
+### Week 1-2: Prefix Compression + SIMD Keys
+- Days 1-7: Implement prefix compression
+- Days 8-10: Implement SIMD key comparisons
+- Days 11-12: Benchmark and validate
+- **Expected**: 218K → 285K writes (+31%)
+
+### Week 3-4: Partitioned Memtables
+- Days 13-19: Implement partitioned memtables
+- Days 20-21: Benchmark and validate
+- **Expected**: 285K → 380K writes (+33%)
+
+### Week 5: Dostoevsky LSM Tuning
+- Days 22-26: Implement lazy leveling
+- Days 27-28: Benchmark and validate
+- **Expected**: 380K → 480K writes (+26%)
+
+### Week 6: Lock-Free + Bloom SIMD
+- Days 29-32: Lock-free memtable access
+- Days 33-34: Bloom filter SIMD
+- Days 35-36: Final benchmarks
+- **Expected**: 480K → 520K writes (+8%)
+
+**Total**: 218K → 520K writes (+139%, beat fjall's 423K)
 
 ---
 
 ## Success Metrics
 
-### Phase 8 Success (Beat RocksDB)
-- ✅ Writes: 1.0x+ RocksDB (356K+ ops/sec)
-- ✅ Reads: 1.0x+ RocksDB (1,070K+ ops/sec)
-- ✅ Mixed: 1.0x+ RocksDB (407K+ ops/sec)
-- ✅ Scans: 1.0x+ RocksDB (21,175+ scans/sec)
-- ✅ Write Amp: Maintain 1.01x (no regression)
+### Phase 9 Complete
+- ✅ Writes: 520K+ ops/sec (1.23x fjall)
+- ✅ Write amplification: 0.7x (maintained or improved)
+- ✅ All 126 tests passing
+- ✅ Prefix compression: 30-50% space reduction
+- ✅ SIMD: 5-15% overall improvement
+- ✅ Partitions: 16x less lock contention
+- ✅ Dostoevsky: Workload-aware compaction
+- ✅ Lock-free: Zero mutex overhead
 
-### Phase 9-10 Success (Beyond RocksDB)
-- ✅ Writes: 1.2x+ RocksDB with io_uring
-- ✅ Reads: 1.2x+ RocksDB with optimized blooms
-- ✅ Workload-specific: 1.3x+ on optimized workloads
+### Validation
+Each optimization must:
+1. Have research paper backing
+2. Show measurable improvement (>10%)
+3. Pass all 126 tests
+4. Benchmark vs baseline
+
+**No parameter tweaking without algorithmic justification**
 
 ---
 
-**Next Action**: Profile write path to identify bottlenecks
-**Timeline**: 1 day profiling + 3-5 days optimization = 4-6 days total
-**Priority**: 🔴 HIGH - Close performance gap with RocksDB
+## Not Implementing (Parameter Tweaking)
+
+❌ Disable vLog by default - hiding features
+❌ Change memtable size - parameter tuning
+❌ Adjust batch sizes - already optimal
+❌ Change level ratios without Dostoevsky math
+
+---
+
+## Phase 9 Tasks (Current Work)
+
+### Immediate (This Session)
+- [x] Update ai/STATUS.md with background flush findings
+- [x] Update ai/TODO.md with SOTA optimization plan
+- [ ] Update ai/DECISIONS.md with background flush decision
+- [ ] Start implementing Priority 1: Prefix Compression
+
+**Next Action**: Implement prefix compression in BlockBuilder
+**Timeline**: 1-2 weeks for first optimization
+**Priority**: 🔴 HIGH - SOTA algorithmic improvements
+
+---
+
+**References**:
+- SOTA_ALGORITHMIC_IMPROVEMENTS.md - Detailed implementation plans
+- PERFORMANCE_FINDINGS.md - Large benchmark results
+- BACKGROUND_FLUSH_IMPLEMENTATION.md - Background flush details

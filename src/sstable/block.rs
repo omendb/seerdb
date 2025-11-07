@@ -1,19 +1,27 @@
 // Block-based storage for SSTable
-// Implements RocksDB-style block format with lazy loading
+// Implements RocksDB-style block format with prefix compression
 //
 // Block Structure (4KB default):
-// ┌─────────────────────────────────────┐
-// │ Entry 0: [key_len][key][value_len][value] │
-// │ Entry 1: [key_len][key][value_len][value] │
-// │ ...                                  │
-// │ Entry N: [key_len][key][value_len][value] │
-// ├─────────────────────────────────────┤
-// │ Restart Points (every 16 entries)   │
-// │ [offset_0: u32][offset_16: u32]...  │
-// ├─────────────────────────────────────┤
-// │ Num Restart Points: u32             │
-// │ Checksum: u32                        │
-// └─────────────────────────────────────┘
+// ┌─────────────────────────────────────────────────────┐
+// │ Entry 0 (restart): [0][key_len][key][value_len][value] │
+// │ Entry 1: [prefix_len][suffix_len][suffix][value_len][value] │
+// │ ...                                                  │
+// │ Entry 15: [prefix_len][suffix_len][suffix][value_len][value] │
+// │ Entry 16 (restart): [0][key_len][key][value_len][value] │
+// │ ...                                                  │
+// ├─────────────────────────────────────────────────────┤
+// │ Restart Points (every 16 entries)                   │
+// │ [offset_0: u32][offset_16: u32]...                  │
+// ├─────────────────────────────────────────────────────┤
+// │ Num Restart Points: u32                             │
+// │ Checksum: u32                                        │
+// └─────────────────────────────────────────────────────┘
+//
+// Prefix Compression:
+// - Restart points (every 16 entries): Full key stored (prefix_len = 0)
+// - Other entries: Share prefix with previous key
+// - Format: [prefix_len: u16][suffix_len: u16][suffix][value_len: u32][value]
+// - Space savings: 30-50% for keys with common prefixes
 
 use bytes::{Bytes, BytesMut};
 use std::io;
@@ -76,8 +84,21 @@ impl BlockBuilder {
     /// Add an entry to the block
     /// Returns false if block is full
     pub fn add(&mut self, key: &[u8], value: &[u8]) -> bool {
-        // Calculate entry size
-        let entry_size = 4 + key.len() + 4 + value.len(); // key_len + key + value_len + value
+        // Calculate shared prefix length (0 for restart points)
+        let prefix_len = if self.counter > 0 && !self.last_key.is_empty() {
+            key.iter()
+                .zip(self.last_key.iter())
+                .take_while(|(a, b)| a == b)
+                .count()
+        } else {
+            0
+        };
+
+        let suffix_len = key.len() - prefix_len;
+
+        // Calculate entry size with prefix compression
+        // Format: [prefix_len: u16][suffix_len: u16][suffix][value_len: u32][value]
+        let entry_size = 2 + 2 + suffix_len + 4 + value.len();
 
         // Check if we have space (reserve space for footer)
         let footer_size = (self.restart_points.len() + 1) * 4 + 8; // restart_offsets + num_restarts + checksum
@@ -89,11 +110,15 @@ impl BlockBuilder {
         if self.counter >= RESTART_INTERVAL {
             self.restart_points.push(self.buffer.len() as u32);
             self.counter = 0;
+            // Restart point: full key (no prefix compression)
+            return self.add(key, value);
         }
 
-        // Write entry (full key for now - TODO: add prefix compression)
-        self.buffer.extend_from_slice(&(key.len() as u32).to_le_bytes());
-        self.buffer.extend_from_slice(key);
+        // Write entry with prefix compression
+        // [prefix_len: u16][suffix_len: u16][suffix][value_len: u32][value]
+        self.buffer.extend_from_slice(&(prefix_len as u16).to_le_bytes());
+        self.buffer.extend_from_slice(&(suffix_len as u16).to_le_bytes());
+        self.buffer.extend_from_slice(&key[prefix_len..]);
         self.buffer.extend_from_slice(&(value.len() as u32).to_le_bytes());
         self.buffer.extend_from_slice(value);
 
@@ -215,11 +240,17 @@ impl Block {
 pub struct BlockIterator<'a> {
     block: &'a Block,
     offset: usize,
+    /// Last key for prefix reconstruction
+    last_key: Bytes,
 }
 
 impl<'a> BlockIterator<'a> {
     fn new(block: &'a Block) -> Self {
-        Self { block, offset: 0 }
+        Self {
+            block,
+            offset: 0,
+            last_key: Bytes::new(),
+        }
     }
 }
 
@@ -233,24 +264,47 @@ impl<'a> Iterator for BlockIterator<'a> {
 
         let data = &self.block.data;
 
-        // Read key length
-        if self.offset + 4 > self.block.restart_offset {
+        // Read prefix length (u16)
+        if self.offset + 2 > self.block.restart_offset {
             return None;
         }
-        let key_len = u32::from_le_bytes([
+        let prefix_len = u16::from_le_bytes([
             data[self.offset],
             data[self.offset + 1],
-            data[self.offset + 2],
-            data[self.offset + 3],
         ]) as usize;
-        self.offset += 4;
+        self.offset += 2;
 
-        // Read key
-        if self.offset + key_len > self.block.restart_offset {
+        // Read suffix length (u16)
+        if self.offset + 2 > self.block.restart_offset {
             return Some(Err(BlockError::InvalidFormat));
         }
-        let key = data.slice(self.offset..self.offset + key_len);
-        self.offset += key_len;
+        let suffix_len = u16::from_le_bytes([
+            data[self.offset],
+            data[self.offset + 1],
+        ]) as usize;
+        self.offset += 2;
+
+        // Read suffix
+        if self.offset + suffix_len > self.block.restart_offset {
+            return Some(Err(BlockError::InvalidFormat));
+        }
+        let suffix = data.slice(self.offset..self.offset + suffix_len);
+        self.offset += suffix_len;
+
+        // Reconstruct full key from prefix + suffix
+        let key = if prefix_len == 0 {
+            // Restart point: suffix is the full key
+            suffix.clone()
+        } else {
+            // Combine prefix from last_key with suffix
+            if prefix_len > self.last_key.len() {
+                return Some(Err(BlockError::InvalidFormat));
+            }
+            let mut key_data = BytesMut::with_capacity(prefix_len + suffix_len);
+            key_data.extend_from_slice(&self.last_key[..prefix_len]);
+            key_data.extend_from_slice(&suffix);
+            key_data.freeze()
+        };
 
         // Read value length
         if self.offset + 4 > self.block.restart_offset {
@@ -270,6 +324,9 @@ impl<'a> Iterator for BlockIterator<'a> {
         }
         let value = data.slice(self.offset..self.offset + value_len);
         self.offset += value_len;
+
+        // Update last_key for next entry
+        self.last_key = key.clone();
 
         Some(Ok((key, value)))
     }

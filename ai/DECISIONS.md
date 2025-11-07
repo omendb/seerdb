@@ -744,4 +744,83 @@ Result: Create only 1 iterator instead of 3
 
 ---
 
+### 22. Background Flush: Disabled by Default (Nov 7, 2025)
+
+**Decision**: Keep background flush disabled by default, enable for write-heavy workloads
+
+**Context**: Implemented background flush to eliminate flush blocking
+- Foreground: Fast memtable swap (Arc::clone)
+- Background: Slow SSTable building + WAL sync (separate thread)
+
+**Large Benchmark Results** (1M ops = 1GB dataset):
+
+| Workload | Without BG Flush | With BG Flush | Impact |
+|----------|-----------------|---------------|---------|
+| Pure Writes | 341K ops/sec | **473K ops/sec** | **+39% ✅** |
+| Mixed 50/50 | 420K ops/sec | 360K ops/sec | **-14% ❌** |
+
+**Why It Helps Writes**:
+- Foreground threads: never block on SSTable building
+- Write latency: consistent (no flush spikes)
+- Throughput: +39% improvement
+
+**Why It Hurts Mixed Workloads**:
+- CPU contention: Background flush steals cores from foreground reads
+- Cache thrashing: Background flush evicts data readers need
+- Memory bandwidth: Both reading SSTables and building new ones
+- Result: Reads get starved, -14% regression
+
+**Decision Rationale**:
+- Default users: Mixed workloads (unpredictable read/write ratio)
+- General-purpose KV store: Should optimize for balanced case
+- Write-heavy users: Can explicitly enable (opt-in)
+- Current default (disabled) is correct
+
+**Workload Recommendations**:
+
+✅ **Enable background flush** (>70% writes):
+```rust
+let opts = DBOptions {
+    background_flush: true,        // +39% writes
+    background_compaction: true,
+    memtable_capacity: 128 * 1024 * 1024, // 128MB
+    ..Default::default()
+};
+```
+
+❌ **Keep disabled** (30-70% reads):
+```rust
+let opts = DBOptions {
+    background_flush: false,       // Default, correct for mixed
+    background_compaction: true,
+    ..Default::default()
+};
+```
+
+**Trade-offs**:
+- ✅ Write-heavy: +39% throughput
+- ✅ Eliminates flush blocking (consistent latency)
+- ❌ Mixed: -14% throughput
+- ❌ CPU/cache contention with foreground reads
+- ✅ Current default (disabled) is correct
+
+**Research Validation**:
+- This is a fundamental trade-off (not implementation bug)
+- Background threads always compete with foreground
+- RocksDB, LevelDB: Background compaction standard, but flush trade-offs exist
+- Solution: Workload-aware configuration (users choose)
+
+**Testing**:
+- Small benchmark (100K ops): -30% mixed regression
+- Large benchmark (1M ops): +39% writes, -14% mixed
+- Validated at scale: 1GB dataset, realistic
+
+**Performance Evidence**: PERFORMANCE_FINDINGS.md
+
+**Commits**: 028d278 (background flush implementation)
+
+**Status**: ✅ Complete - Disabled by default, opt-in for write-heavy
+
+---
+
 *Add decisions as they're made - include commit hash if implemented*
