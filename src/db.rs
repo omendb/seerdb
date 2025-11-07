@@ -29,10 +29,6 @@ use std::hash::{Hash, Hasher};
 ///
 /// Expected improvement: +25-40% write throughput on multi-core systems
 /// Research backing: Tucana (2020), FASTER (2018)
-///
-/// TODO: Currently unused - implementation in progress
-/// See PARTITIONED_MEMTABLES_PLAN.md for full implementation plan
-#[allow(dead_code)]
 const NUM_PARTITIONS: usize = 16;
 
 /// Calculate which partition a key belongs to using xxhash
@@ -40,10 +36,6 @@ const NUM_PARTITIONS: usize = 16;
 /// Uses fast xxhash algorithm to distribute keys evenly across partitions.
 /// The hash is stable (same key always goes to same partition), which is
 /// critical for correctness.
-///
-/// TODO: Currently unused - will be used once partitioned memtables are implemented
-/// See PARTITIONED_MEMTABLES_PLAN.md for usage examples
-#[allow(dead_code)]
 #[inline]
 fn partition_for_key(key: &[u8]) -> usize {
     let mut hasher = XxHash64::default();
@@ -321,11 +313,12 @@ pub struct DB {
     options: DBOptions,
     /// Write-ahead log
     wal: Arc<Mutex<WAL>>,
-    /// Active memtable (Mutex allows swapping after flush)
-    memtable: Arc<Mutex<Memtable>>,
-    /// Immutable memtable being flushed (RocksDB-style)
+    /// Active memtables (16 partitions for reduced lock contention)
+    /// Each partition is independently locked, allowing concurrent writes
+    memtables: [Arc<Mutex<Memtable>>; NUM_PARTITIONS],
+    /// Immutable memtables being flushed (RocksDB-style, but per-partition)
     /// Readers check this before SSTables to avoid data loss during flush
-    immutable_memtable: Arc<Mutex<Option<Memtable>>>,
+    immutable_memtables: Arc<Mutex<Option<Vec<Memtable>>>>,
     /// LSM tree for level management
     lsm: Arc<Mutex<LSMTree>>,
     /// Value log for KV separation (optional)
@@ -407,15 +400,19 @@ impl DB {
         let wal_path = options.data_dir.join("wal.log");
         let vlog_path = options.data_dir.join("values.vlog");
 
-        // Create memtable
-        let memtable = Memtable::new(options.memtable_capacity);
+        // Create 16 partitioned memtables (divide capacity by NUM_PARTITIONS)
+        let capacity_per_partition = options.memtable_capacity / NUM_PARTITIONS;
+        let memtables_vec: Vec<Memtable> = (0..NUM_PARTITIONS)
+            .map(|_| Memtable::new(capacity_per_partition))
+            .collect();
 
         // Recover from WAL if it exists
         if wal_path.exists() {
             info!("Recovering from WAL");
-            let entries = memtable.len();
-            Self::recover(&wal_path, &memtable)?;
-            let recovered = memtable.len() - entries;
+            let total_entries_before: usize = memtables_vec.iter().map(|mt| mt.len()).sum();
+            Self::recover_partitioned(&wal_path, &memtables_vec)?;
+            let total_entries_after: usize = memtables_vec.iter().map(|mt| mt.len()).sum();
+            let recovered = total_entries_after - total_entries_before;
             info!(entries = recovered, "WAL recovery complete");
         } else {
             info!("No existing WAL found, starting fresh");
@@ -460,8 +457,12 @@ impl DB {
         let has_vlog = vlog.is_some();
 
         // Wrap in Arc<Mutex<>> for sharing with background workers
-        let memtable = Arc::new(Mutex::new(memtable));
-        let immutable_memtable = Arc::new(Mutex::new(None));
+        // Convert Vec<Memtable> into [Arc<Mutex<Memtable>>; NUM_PARTITIONS]
+        let mut memtables_iter = memtables_vec.into_iter();
+        let memtables: [Arc<Mutex<Memtable>>; NUM_PARTITIONS] = std::array::from_fn(|_| {
+            Arc::new(Mutex::new(memtables_iter.next().expect("Not enough partitions")))
+        });
+        let immutable_memtables = Arc::new(Mutex::new(None));
         let wal = Arc::new(Mutex::new(wal));
         let vlog = Arc::new(Mutex::new(vlog));
         let lsm = Arc::new(Mutex::new(lsm));
@@ -543,9 +544,10 @@ impl DB {
         let (flush_tx, flush_worker) = if options.background_flush {
             let (tx, rx) = channel::<FlushTask>();
 
-            // Clone references for worker thread
-            let memtable_ref = Arc::clone(&memtable);
-            let immutable_memtable_ref = Arc::clone(&immutable_memtable);
+            // Clone references for worker thread (clone each partition reference)
+            let memtables_refs: [Arc<Mutex<Memtable>>; NUM_PARTITIONS] =
+                std::array::from_fn(|i| Arc::clone(&memtables[i]));
+            let immutable_memtables_ref = Arc::clone(&immutable_memtables);
             let wal_ref = Arc::clone(&wal);
             let lsm_clone = Arc::clone(&lsm);
             let vlog_clone = Arc::clone(&vlog);
@@ -561,10 +563,10 @@ impl DB {
                 while let Ok(task) = rx.recv() {
                     match task {
                         FlushTask::Flush => {
-                            // Perform background flush
-                            if let Err(e) = Self::run_background_flush(
-                                &memtable_ref,
-                                &immutable_memtable_ref,
+                            // Perform background flush (now with partitioned memtables)
+                            if let Err(e) = Self::run_background_flush_partitioned(
+                                &memtables_refs,
+                                &immutable_memtables_ref,
                                 &wal_ref,
                                 &lsm_clone,
                                 &vlog_clone,
@@ -594,8 +596,8 @@ impl DB {
         let db = Self {
             options: options.clone(),
             wal,
-            memtable,
-            immutable_memtable,
+            memtables,
+            immutable_memtables,
             lsm,
             vlog,
             sstable_counter,
@@ -609,14 +611,14 @@ impl DB {
             has_vlog: std::sync::atomic::AtomicBool::new(has_vlog),
         };
 
-        // Flush memtable if it filled up during recovery
-        let should_flush = db
-            .memtable
-            .lock()
-            .expect("Memtable lock poisoned")
-            .should_flush();
+        // Flush memtables if any partition filled up during recovery
+        let should_flush = db.memtables.iter().any(|mt| {
+            mt.lock()
+                .expect("Memtable lock poisoned")
+                .should_flush()
+        });
         if should_flush {
-            info!("Memtable full after recovery, flushing");
+            info!("One or more memtable partitions full after recovery, flushing");
             db.flush()?;
         }
 
@@ -625,11 +627,12 @@ impl DB {
         Ok(db)
     }
 
-    /// Recover memtable from WAL
+    /// Recover partitioned memtables from WAL
     ///
-    /// Reads records one by one and stops gracefully if corruption or truncation is encountered.
+    /// Reads records one by one and distributes them across partitions using hash function.
+    /// Stops gracefully if corruption or truncation is encountered.
     /// This ensures we recover all valid records before the corruption point.
-    fn recover(wal_path: &Path, memtable: &Memtable) -> Result<()> {
+    fn recover_partitioned(wal_path: &Path, memtables: &[Memtable]) -> Result<()> {
         let mut reader =
             WALReader::open(wal_path).map_err(|e| DBError::Io(std::io::Error::other(e)))?;
 
@@ -638,10 +641,14 @@ impl DB {
             match reader.read_next() {
                 Ok(Some(record)) => match record {
                     Record::Put { key, value } => {
-                        memtable.put(key, value);
+                        // Hash key to determine partition
+                        let partition = partition_for_key(&key);
+                        memtables[partition].put(key, value);
                     }
                     Record::Delete { key } => {
-                        memtable.delete(key);
+                        // Hash key to determine partition
+                        let partition = partition_for_key(&key);
+                        memtables[partition].delete(key);
                     }
                 },
                 Ok(None) => {
@@ -733,13 +740,16 @@ impl DB {
         // Track physical bytes written to WAL
         self.metrics.record_physical_bytes(wal_bytes);
 
-        // Write to memtable
-        let mt = self.memtable.lock().expect("Memtable lock poisoned");
+        // Write to correct partition (reduced lock contention)
+        let partition = partition_for_key(&key);
+        let mt = self.memtables[partition].lock().expect("Memtable lock poisoned");
         mt.put(key, value);
-        let should_flush = mt.should_flush();
-        drop(mt); // Release lock
+        drop(mt); // Release lock early
 
-        // Check if memtable should be flushed
+        // Check if ANY partition should be flushed (since we have multiple partitions)
+        let should_flush = self.memtables.iter().any(|mt| {
+            mt.lock().expect("Memtable lock poisoned").should_flush()
+        });
         if should_flush {
             if let Some(ref tx) = self.flush_tx {
                 // Background flush: swap memtable immediately (fast), then signal background thread
@@ -821,50 +831,58 @@ impl DB {
         let start = Instant::now();
         let key = key.as_ref();
 
-        // Check memtable first (most recent data)
-        let mt = self.memtable.lock().expect("Memtable lock poisoned");
+        // Check correct partition first (most recent data)
+        let partition = partition_for_key(key);
+        let mt = self.memtables[partition].lock().expect("Memtable lock poisoned");
         let result = mt.get(key);
         let contains = mt.contains(key);
         drop(mt); // Release lock
 
         match result {
             Some(value) => {
-                // Found value in memtable
+                // Found value in memtable partition
                 self.metrics.record_get(start.elapsed());
                 return Ok(Some(value));
             }
             None if contains => {
-                // Key exists in memtable as tombstone - don't check immutable or SSTables
+                // Key exists in memtable partition as tombstone - don't check immutable or SSTables
                 self.metrics.record_get(start.elapsed());
                 return Ok(None);
             }
             None => {
-                // Key not in active memtable - check immutable memtable
+                // Key not in active partition - check immutable partitions
             }
         }
 
-        // Check immutable memtable (if flush is in progress)
-        let immut = self.immutable_memtable.lock().expect("Immutable memtable lock poisoned");
-        if let Some(ref immutable_mt) = *immut {
-            let immut_result = immutable_mt.get(key);
-            let immut_contains = immutable_mt.contains(key);
-            drop(immut);
+        // Check immutable partitions (if flush is in progress)
+        // We need to check ALL partitions since the key could be in any one
+        let immut = self.immutable_memtables.lock().expect("Immutable memtables lock poisoned");
+        if let Some(ref immutable_partitions) = *immut {
+            // Check all partitions for the key
+            for partition_mt in immutable_partitions.iter() {
+                let immut_result = partition_mt.get(key);
+                let immut_contains = partition_mt.contains(key);
 
-            match immut_result {
-                Some(value) => {
-                    // Found value in immutable memtable
-                    self.metrics.record_get(start.elapsed());
-                    return Ok(Some(value));
-                }
-                None if immut_contains => {
-                    // Key exists as tombstone in immutable memtable
-                    self.metrics.record_get(start.elapsed());
-                    return Ok(None);
-                }
-                None => {
-                    // Key not in immutable memtable - continue to SSTables
+                match immut_result {
+                    Some(value) => {
+                        // Found value in immutable partition
+                        drop(immut);
+                        self.metrics.record_get(start.elapsed());
+                        return Ok(Some(value));
+                    }
+                    None if immut_contains => {
+                        // Key exists as tombstone in immutable partition
+                        drop(immut);
+                        self.metrics.record_get(start.elapsed());
+                        return Ok(None);
+                    }
+                    None => {
+                        // Key not in this partition - check next partition
+                        continue;
+                    }
                 }
             }
+            drop(immut);
         } else {
             drop(immut);
         }
@@ -1013,13 +1031,16 @@ impl DB {
             .expect("WAL mutex poisoned")
             .write(&record)?;
 
-        // Write tombstone to memtable
-        let mt = self.memtable.lock().expect("Memtable lock poisoned");
+        // Write tombstone to correct partition
+        let partition = partition_for_key(&key);
+        let mt = self.memtables[partition].lock().expect("Memtable lock poisoned");
         mt.delete(key);
-        let should_flush = mt.should_flush();
-        drop(mt); // Release lock
+        drop(mt); // Release lock early
 
-        // Check if memtable should be flushed
+        // Check if ANY partition should be flushed
+        let should_flush = self.memtables.iter().any(|mt| {
+            mt.lock().expect("Memtable lock poisoned").should_flush()
+        });
         if should_flush {
             if let Some(ref tx) = self.flush_tx {
                 // Background flush: swap memtable immediately (fast), then signal background thread
