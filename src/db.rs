@@ -1692,14 +1692,33 @@ impl DB {
         let lsm = self.lsm.lock().expect("LSM mutex poisoned");
         let mut sstables = Vec::new();
 
-        // Collect SSTables from all levels
+        // Collect SSTables from all levels using cache
         for level_idx in 0..lsm.num_levels() {
             if let Some(level) = lsm.level(level_idx) {
                 for sstable_path in level.sstables() {
-                    // For range scans, we open SSTables fresh since we need mutable access
-                    // and the cache contains immutable Arc<Mutex<>> references
-                    let sstable = SSTable::open(sstable_path.clone())?;
-                    sstables.push(sstable);
+                    // Try cache first
+                    let cache = self.sstable_cache.lock().expect("SSTable cache lock poisoned");
+                    let sstable_arc = if let Some(cached) = cache.get(sstable_path) {
+                        cached.clone()
+                    } else {
+                        drop(cache); // Drop lock before expensive open
+                        let sstable = SSTable::open(sstable_path.clone())?;
+                        let sstable_arc = Arc::new(Mutex::new(sstable));
+
+                        // Insert into cache
+                        let mut cache = self.sstable_cache.lock().expect("SSTable cache lock poisoned");
+                        cache.entry(sstable_path.clone())
+                            .or_insert_with(|| sstable_arc.clone())
+                            .clone()
+                    };
+
+                    // Create SSTableRangeIterator which holds its own Arc references
+                    // (no need to clone the SSTable, scan_range() only needs &self)
+                    let sstable_guard = sstable_arc.lock().expect("SSTable lock poisoned");
+                    let iter = sstable_guard.scan_range(start_key, end_key);
+                    drop(sstable_guard); // Release lock immediately
+
+                    sstables.push(iter);
                 }
             }
         }

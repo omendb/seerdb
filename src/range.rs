@@ -2,7 +2,7 @@
 
 use crate::memtable::Entry;
 use crate::range_merge::KWayMergeIterator;
-use crate::sstable::SSTable;
+use crate::sstable::SSTableRangeIterator;
 use bytes::Bytes;
 
 /// Iterator item: (key, value) pair
@@ -49,12 +49,12 @@ impl RangeIterator {
     /// * `start_key` - Start of range (inclusive)
     /// * `end_key` - End of range (exclusive), None for open-ended
     /// * `memtable` - Memtable to extract range data from
-    /// * `sstables` - SSTables to scan (in priority order: L0, L1, ..., LN)
+    /// * `sstable_iters` - Pre-created SSTable range iterators (in priority order: L0, L1, ..., LN)
     pub fn new(
         start_key: &[u8],
         end_key: Option<&[u8]>,
         memtable: &crate::memtable::Memtable,
-        sstables: Vec<SSTable>,
+        sstable_iters: Vec<SSTableRangeIterator>,
     ) -> crate::db::Result<Self> {
         let mut iterators: Vec<Box<dyn Iterator<Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>>>> = Vec::new();
 
@@ -74,14 +74,13 @@ impl RangeIterator {
                 })
                 .collect()
         };
+
         let memtable_iter: Box<dyn Iterator<Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>>> =
             Box::new(memtable_entries.into_iter().map(Ok));
         iterators.push(memtable_iter);
 
-        // Level 1+: SSTables (L0, L1, ..., LN in order)
-        // Don't reverse - k-way merge handles priority by level number
-        for sstable in sstables {
-            let sst_iter = sstable.scan_range(start_key, end_key);
+        // Level 1+: SSTable iterators (already created, just adapt them)
+        for sst_iter in sstable_iters {
             let adapted: Box<dyn Iterator<Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>>> =
                 Box::new(SSTableRangeAdapter::new(sst_iter));
             iterators.push(adapted);
