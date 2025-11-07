@@ -1124,35 +1124,36 @@ impl DB {
         use crate::sstable::SSTableBuilder;
 
         // **CRITICAL FIX**: Serialize all flushes to prevent concurrent flush races
-        // Without this lock, concurrent flushes can cause:
-        // 1. WAL cleared while writes are still in memtable (data loss)
-        // 2. Memtable swapped while being iterated (corruption)
-        // 3. Multiple flushes writing to same SSTable file (corruption)
         let _flush_lock = self.flush_mutex.lock().expect("Flush mutex poisoned");
 
         let flush_start = Instant::now();
-        let mt_size_before = self.memtable.lock().expect("Memtable lock poisoned").size();
 
-        // Early return if memtable is empty (nothing to flush)
-        if mt_size_before == 0 {
+        // Check total size across all partitions
+        let total_size: usize = self.memtables.iter()
+            .map(|mt| mt.lock().expect("Memtable lock poisoned").size())
+            .sum();
+
+        // Early return if all partitions are empty
+        if total_size == 0 {
             return Ok(());
         }
 
         info!(
-            memtable_size_bytes = mt_size_before,
-            "Starting memtable flush"
+            total_memtable_size_bytes = total_size,
+            partitions = NUM_PARTITIONS,
+            "Starting partitioned memtable flush"
         );
 
         // **CRITICAL**: Check if there's a previous failed flush
-        // If immutable_memtable is occupied, flush it first to avoid data loss
+        // If immutable_memtables is occupied, flush it first to avoid data loss
         let pending_immutable = {
-            let mut immut_guard = self.immutable_memtable.lock().expect("Immutable memtable lock poisoned");
+            let mut immut_guard = self.immutable_memtables.lock().expect("Immutable memtables lock poisoned");
             immut_guard.take()
         };
 
-        if let Some(pending_mt) = pending_immutable {
-            // Previous flush failed - retry flushing the existing immutable_memtable
-            warn!("Retrying flush of previously failed immutable memtable");
+        if let Some(pending_partitions) = pending_immutable {
+            // Previous flush failed - retry flushing the existing immutable partitions
+            warn!(partitions = pending_partitions.len(), "Retrying flush of previously failed immutable partitions");
 
             // Generate filename for pending flush
             let mut counter = self.sstable_counter.lock().expect("SSTable counter mutex poisoned");
@@ -1160,8 +1161,19 @@ impl DB {
             *counter += 1;
             drop(counter);
 
-            // Flush pending memtable to SSTable
-            pending_mt.flush(&pending_sstable_path)?;
+            // Collect and sort entries from all pending partitions
+            let mut all_entries = Vec::new();
+            for partition_mt in &pending_partitions {
+                for (key, entry) in partition_mt.iter() {
+                    all_entries.push((key, entry));
+                }
+            }
+
+            // Sort by key (deduplication handled by taking last value for each key)
+            all_entries.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
+
+            // Build SSTable from sorted entries
+            self.build_sstable_from_entries(&pending_sstable_path, all_entries.iter())?;
             let pending_size = std::fs::metadata(&pending_sstable_path)?.len();
 
             // Track physical bytes written to SSTable (retry case)
@@ -1177,12 +1189,15 @@ impl DB {
             wal.clear()?;
             drop(wal);
 
-            info!("Successfully flushed previously failed immutable memtable");
+            info!("Successfully flushed previously failed immutable partitions");
         }
 
-        // Now check if active memtable needs flushing
-        let mt_size = self.memtable.lock().expect("Memtable lock poisoned").size();
-        if mt_size == 0 {
+        // Now check if active partitions need flushing
+        let total_size: usize = self.memtables.iter()
+            .map(|mt| mt.lock().expect("Memtable lock poisoned").size())
+            .sum();
+
+        if total_size == 0 {
             return Ok(()); // Nothing to flush
         }
 
@@ -1192,63 +1207,42 @@ impl DB {
         *counter += 1;
         drop(counter);
 
-        // Swap memtable FIRST (RocksDB-style immutable memtable)
-        // 1. Lock memtable
-        // 2. Swap with new empty memtable (old one becomes immutable)
-        // 3. Store immutable memtable so readers can access it during flush
-        // 4. Release lock (new writes go to new memtable and stay in WAL)
-        // 5. Flush immutable memtable to SSTable
-        // 6. Clear immutable memtable + WAL (flushed data is in SSTable)
-        let mut mt_guard = self.memtable.lock().expect("Memtable lock poisoned");
-        let flushing_memtable = std::mem::replace(&mut *mt_guard, Memtable::new(self.options.memtable_capacity));
-        drop(mt_guard); // Release lock immediately - new writes go to new memtable
+        // Swap ALL 16 partitions atomically (RocksDB-style immutable memtables)
+        // 1. Lock each partition
+        // 2. Swap with new empty partition
+        // 3. Collect old partitions
+        // 4. Store as immutable partitions
+        // 5. Release locks
+        let capacity_per_partition = self.options.memtable_capacity / NUM_PARTITIONS;
+        let mut flushing_partitions = Vec::with_capacity(NUM_PARTITIONS);
 
-        // Store in immutable_memtable so readers can access during flush
-        {
-            let mut immut_guard = self.immutable_memtable.lock().expect("Immutable memtable lock poisoned");
-            *immut_guard = Some(flushing_memtable);
-        } // Release lock - readers can now access immutable memtable
-
-        // Build SSTable from immutable memtable (need to access it again)
-        // We clone the Arc pointer, not the data
-        let immut_clone = Arc::clone(&self.immutable_memtable);
-        let immut_guard = immut_clone.lock().expect("Immutable memtable lock poisoned");
-        let immutable_memtable = immut_guard.as_ref().expect("Immutable memtable should be present");
-
-        // Build SSTable with optional vLog support from immutable memtable
-        let mut vlog_guard = self.vlog.lock().expect("vLog mutex poisoned");
-
-        if let (Some(threshold), Some(ref mut vlog)) =
-            (self.options.vlog_threshold, vlog_guard.as_mut())
-        {
-            // KV separation enabled - use vLog for large values
-            let mut builder = SSTableBuilder::create(&sstable_path)?.with_vlog_threshold(threshold);
-
-            for (key, entry) in immutable_memtable.iter() {
-                match entry {
-                    Entry::Value(value) => {
-                        builder.add_with_vlog(key, value, vlog)?;
-                    }
-                    Entry::Tombstone => {
-                        // **CRITICAL FIX**: DO NOT skip tombstones!
-                        // Tombstones must be persisted to SSTables to mask older values
-                        // They are removed during compaction when all older versions are gone
-                        builder.add_tombstone(key)?;
-                    }
-                }
-            }
-
-            builder.finish()?;
-
-            // ALWAYS sync vLog after flush - we need it synced for reading
-            // (different file handles won't see buffered writes)
-            vlog.sync()?;
-        } else {
-            // No KV separation - traditional flush
-            drop(vlog_guard); // Release lock
-            immutable_memtable.flush(&sstable_path)?;
+        for partition_mt in &self.memtables {
+            let mut mt_guard = partition_mt.lock().expect("Memtable lock poisoned");
+            let old_partition = std::mem::replace(&mut *mt_guard, Memtable::new(capacity_per_partition));
+            flushing_partitions.push(old_partition);
+            drop(mt_guard); // Release lock immediately
         }
-        drop(immut_guard); // Release lock on immutable memtable
+
+        // Collect entries from ALL partitions FIRST (before storing in immutable)
+        let mut all_entries: Vec<(Bytes, Entry)> = Vec::new();
+        for partition_mt in &flushing_partitions {
+            for (key, entry) in partition_mt.iter() {
+                all_entries.push((key, entry));
+            }
+        }
+
+        // Store in immutable_memtables so readers can access during flush
+        {
+            let mut immut_guard = self.immutable_memtables.lock().expect("Immutable memtables lock poisoned");
+            *immut_guard = Some(flushing_partitions);
+        }
+
+        // Sort by key to build sorted SSTable
+        // If there are duplicates (same key in multiple partitions due to race), keep last one
+        all_entries.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
+
+        // Build SSTable from sorted entries
+        self.build_sstable_from_entries(&sstable_path, all_entries.iter())?;
 
         let size = std::fs::metadata(&sstable_path)?.len();
 
@@ -1260,10 +1254,8 @@ impl DB {
         let sstable_path_for_log = sstable_path.clone();
         lsm.add_l0_sstable(sstable_path, size);
 
-        // Clear immutable memtable + WAL after successful flush
-        // Data is now safely persisted in SSTable
-        // New writes (in new memtable) are still in WAL and safe
-        let mut immut_guard = self.immutable_memtable.lock().expect("Immutable memtable lock poisoned");
+        // Clear immutable partitions + WAL after successful flush
+        let mut immut_guard = self.immutable_memtables.lock().expect("Immutable memtables lock poisoned");
         *immut_guard = None;
         drop(immut_guard);
 
@@ -1276,7 +1268,8 @@ impl DB {
             duration_ms = flush_duration_ms,
             sstable_path = ?sstable_path_for_log,
             sstable_size_bytes = size,
-            "Memtable flush complete"
+            partitions_merged = NUM_PARTITIONS,
+            "Partitioned memtable flush complete"
         );
 
         // Check if compaction is needed
@@ -1300,6 +1293,60 @@ impl DB {
 
         Ok(())
     }
+
+    /// Helper: Build SSTable from iterator of (key, entry) pairs
+    /// Handles both normal values and vLog separation
+    fn build_sstable_from_entries<'a, I>(&self, sstable_path: &Path, entries: I) -> Result<()>
+    where
+        I: Iterator<Item = &'a (Bytes, Entry)>,
+    {
+        use crate::memtable::Entry;
+        use crate::sstable::SSTableBuilder;
+
+        let mut vlog_guard = self.vlog.lock().expect("vLog mutex poisoned");
+
+        if let (Some(threshold), Some(ref mut vlog)) = (self.options.vlog_threshold, vlog_guard.as_mut()) {
+            // KV separation enabled - use vLog for large values
+            let mut builder = SSTableBuilder::create(sstable_path)?.with_vlog_threshold(threshold);
+
+            for (key, entry) in entries {
+                match entry {
+                    Entry::Value(value) => {
+                        builder.add_with_vlog(key, value, vlog)?;
+                    }
+                    Entry::Tombstone => {
+                        builder.add_tombstone(key.clone())?;
+                    }
+                }
+            }
+
+            builder.finish()?;
+
+            // ALWAYS sync vLog after flush
+            vlog.sync()?;
+        } else {
+            // No KV separation - traditional flush
+            drop(vlog_guard);
+
+            let mut builder = SSTableBuilder::create(sstable_path)?;
+
+            for (key, entry) in entries {
+                match entry {
+                    Entry::Value(value) => {
+                        builder.add(key, value)?;
+                    }
+                    Entry::Tombstone => {
+                        builder.add_tombstone(key.clone())?;
+                    }
+                }
+            }
+
+            builder.finish()?;
+        }
+
+        Ok(())
+    }
+
 
     /// Try to atomically swap memtable for background flush
     ///
