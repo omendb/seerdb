@@ -48,36 +48,40 @@ impl RangeIterator {
     /// # Arguments
     /// * `start_key` - Start of range (inclusive)
     /// * `end_key` - End of range (exclusive), None for open-ended
-    /// * `memtable` - Memtable to extract range data from
+    /// * `memtables` - Memtable partitions to extract range data from (supports partitioned memtables)
     /// * `sstable_iters` - Pre-created SSTable range iterators (in priority order: L0, L1, ..., LN)
     pub fn new(
         start_key: &[u8],
         end_key: Option<&[u8]>,
-        memtable: &crate::memtable::Memtable,
+        memtables: &[&crate::memtable::Memtable],
         sstable_iters: Vec<SSTableRangeIterator>,
     ) -> crate::db::Result<Self> {
         let mut iterators: Vec<Box<dyn Iterator<Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>>>> = Vec::new();
 
-        // Level 0: Memtable (newest) - collect into Vec since it's behind Mutex
-        let memtable_entries: Vec<(Bytes, Option<Bytes>)> = if let Some(end_key) = end_key {
-            memtable.range(start_key, end_key)
-                .map(|(key, entry)| match entry {
-                    Entry::Value(value) => (key, Some(value)),
-                    Entry::Tombstone => (key, None),
-                })
-                .collect()
-        } else {
-            memtable.range_from(start_key)
-                .map(|(key, entry)| match entry {
-                    Entry::Value(value) => (key, Some(value)),
-                    Entry::Tombstone => (key, None),
-                })
-                .collect()
-        };
+        // Level 0: Each memtable partition as a SEPARATE iterator (for proper deduplication)
+        // K-way merge will deduplicate by picking the first (newest) occurrence of each key
+        for memtable in memtables {
+            let partition_entries: Vec<(Bytes, Option<Bytes>)> = if let Some(end_key) = end_key {
+                memtable.range(start_key, end_key)
+                    .map(|(key, entry)| match entry {
+                        Entry::Value(value) => (key, Some(value)),
+                        Entry::Tombstone => (key, None),
+                    })
+                    .collect()
+            } else {
+                memtable.range_from(start_key)
+                    .map(|(key, entry)| match entry {
+                        Entry::Value(value) => (key, Some(value)),
+                        Entry::Tombstone => (key, None),
+                    })
+                    .collect()
+            };
 
-        let memtable_iter: Box<dyn Iterator<Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>>> =
-            Box::new(memtable_entries.into_iter().map(Ok));
-        iterators.push(memtable_iter);
+            // Each partition gets its own iterator for k-way merge
+            let partition_iter: Box<dyn Iterator<Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>>> =
+                Box::new(partition_entries.into_iter().map(Ok));
+            iterators.push(partition_iter);
+        }
 
         // Level 1+: SSTable iterators (already created, just adapt them)
         for sst_iter in sstable_iters {
@@ -116,7 +120,8 @@ mod tests {
     #[test]
     fn test_range_iterator_empty() {
         let memtable = Memtable::new(1024 * 1024);
-        let range_iter = RangeIterator::new(b"start", None, &memtable, vec![]).unwrap();
+        let memtables = [&memtable];
+        let range_iter = RangeIterator::new(b"start", None, &memtables, vec![]).unwrap();
 
         assert_eq!(range_iter.count(), 0);
     }
@@ -130,8 +135,9 @@ mod tests {
         memtable.put(Bytes::from("key2"), Bytes::from("value2"));
         memtable.put(Bytes::from("key3"), Bytes::from("value3"));
 
+        let memtables = [&memtable];
         let mut range_iter =
-            RangeIterator::new(b"key1", Some(b"key3"), &memtable, vec![]).unwrap();
+            RangeIterator::new(b"key1", Some(b"key3"), &memtables, vec![]).unwrap();
 
         let mut results = vec![];
         while let Some(Ok((key, value))) = range_iter.next() {
@@ -158,7 +164,8 @@ mod tests {
         memtable.delete(Bytes::from("key2")); // Tombstone
         memtable.put(Bytes::from("key3"), Bytes::from("value3"));
 
-        let mut range_iter = RangeIterator::new(b"key1", None, &memtable, vec![]).unwrap();
+        let memtables = [&memtable];
+        let mut range_iter = RangeIterator::new(b"key1", None, &memtables, vec![]).unwrap();
 
         let mut results = vec![];
         while let Some(Ok((key, value))) = range_iter.next() {

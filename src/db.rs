@@ -2121,14 +2121,25 @@ impl DB {
         }
         drop(lsm);
 
-        // TODO: FIXME - Properly support partitioned memtables in range queries
-        // Currently only checking partition 0, which will miss keys in other partitions
-        // Need to update RangeIterator to support multiple memtables with k-way merge
-        // See PARTITIONED_MEMTABLES_PLAN.md section 8 for implementation details
-        let memtable = self.memtables[0].lock().expect("Memtable lock poisoned");
+        // Collect references to ALL active memtable partitions
+        let partition_guards: Vec<_> = self.memtables.iter()
+            .map(|mt| mt.lock().expect("Memtable lock poisoned"))
+            .collect();
+        let mut partition_refs: Vec<&Memtable> = partition_guards.iter()
+            .map(|guard| &**guard)
+            .collect();
 
-        // Create range iterator
-        RangeIterator::new(start_key, end_key, &memtable, sstables)
+        // Also include immutable partitions if they exist
+        let immutable_guard = self.immutable_memtables.lock().expect("Immutable memtables lock poisoned");
+        let immutable_refs: Vec<&Memtable> = if let Some(ref immutable_partitions) = *immutable_guard {
+            immutable_partitions.iter().collect()
+        } else {
+            Vec::new()
+        };
+        partition_refs.extend(immutable_refs);
+
+        // Create range iterator with all memtable partitions
+        RangeIterator::new(start_key, end_key, &partition_refs, sstables)
     }
 }
 
