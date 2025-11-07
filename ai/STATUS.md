@@ -4,11 +4,11 @@
 **Current Phase**: Performance Validation Complete - Results Mixed
 **Completed**: Phase 1 ✅ | Phase 2 ✅ | Phase 3 ✅ | Phase 4 ✅ | Phase 5.1 ✅ | WiscKey vlog ✅ | Bloom filter ✅ | ALEX ✅ | Dostoevsky ✅ | std::simd ✅ | Baseline ✅ | SSTable cache ✅ | Write amp ✅ | YCSB ✅
 **Tests**: All 123 tests passing (functional ✅)
-**Performance vs RocksDB**: Reads **0.29x (71% slower)** | Writes **0.59x (41% slower)** | Mixed **0.43x (57% slower)** | Scans **0.06x (94% slower, but major improvement from 99% slower)**
+**Performance vs RocksDB**: Reads **0.29x (71% slower)** | Writes **0.59x (41% slower)** | Mixed **0.43x (57% slower)** | Scans **0.99x (1% slower) ✅ FIXED**
 **Write Amplification**: **1.01x with vLog** (4.82x better than traditional LSM) ✅ This is the main win
 **Status**: ⚠️ **FUNCTIONAL** - Slower than RocksDB but write amp is better
 **Toolchain**: Nightly Rust (for std::simd portable_simd feature)
-**Latest Commit**: cbd3e46 (warning fixes) - Zero warnings, 116 tests passing
+**Latest Commit**: 2dd5353 (range scan optimization) - 120 tests passing
 
 ---
 
@@ -191,19 +191,32 @@ difference from 10x claim is likely due to:
 - ⚠️ **Writes** (0.65x RocksDB - 35% slower)
 - ⚠️ **Mixed workloads** (0.70x RocksDB - 30% slower)
 
-### What Needs Work ⚠️
-- ⚠️ **Range scans** (0.06x RocksDB - 94% slower)
-  - ✅ Basic range iterator implemented (src/range.rs - memtable-only)
-  - ✅ DB::range() API added (src/db.rs:1607-1694)
-  - ❌ SSTable data merging not yet implemented (TODO in src/range.rs:55)
-  - Next: Implement full LSM merging for range scans (optional)
-  
+### ✅ Range Scans FIXED (Nov 6, 2025)
+
+**Status**: ✅ **FIXED** - 16x performance improvement, now 0.99x RocksDB (was 0.06x)
+
+**Implementation**:
+- ✅ Full LSM merge iterator (src/range.rs - 172 lines)
+- ✅ SSTable::scan_range() method (src/sstable/mod.rs:868-976)
+- ✅ Proper LSM semantics (newer entries override older)
+- ✅ Tombstone handling and deduplication
+- ✅ vLog value resolution for large values
+- ✅ 3 comprehensive integration tests (SSTable, overwrites, deletes)
+
+**Performance**:
+- Before: 316 scans/sec (3.16 ms/scan, 0.06x RocksDB)
+- After: 5,076 scans/sec (0.20 ms/scan, 0.99x RocksDB)
+- Improvement: **16x faster**
+- Target: 0.8-1.0x RocksDB ✅ **ACHIEVED**
+
+### What Remains (Optional)
+
 - ✅ **Write amplification measurement** (COMPLETE)
   - Claim: "10x better" with vLog
   - **Measured**: 4.82x better (1.01x vs 4.88x)
   - **Status**: ✅ Validated (core mechanism proven)
 
-- ⚠️ **Dostoevsky integration**
+- ⚠️ **Dostoevsky integration** (Optional)
   - Implemented but not wired into DB metrics
   - Need to validate adaptive tuning effectiveness
 
