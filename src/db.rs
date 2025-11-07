@@ -1679,7 +1679,7 @@ impl DB {
                 for sstable_path in level.sstables() {
                     // For range scans, we open SSTables fresh since we need mutable access
                     // and the cache contains immutable Arc<Mutex<>> references
-                    let mut sstable = SSTable::open(sstable_path.clone())?;
+                    let sstable = SSTable::open(sstable_path.clone())?;
                     sstables.push(sstable);
                 }
             }
@@ -1690,7 +1690,7 @@ impl DB {
         let memtable = self.memtable.lock().expect("Memtable lock poisoned");
 
         // Create range iterator
-        RangeIterator::new(start_key, end_key, &*memtable, sstables)
+        RangeIterator::new(start_key, end_key, &memtable, sstables)
     }
 }
 

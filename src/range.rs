@@ -29,7 +29,7 @@ impl RangeIterator {
         start_key: &[u8],
         end_key: Option<&[u8]>,
         memtable: &crate::memtable::Memtable,
-        mut sstables: Vec<SSTable>,
+        sstables: Vec<SSTable>,
     ) -> crate::db::Result<Self> {
         let mut all_entries = Vec::new();
 

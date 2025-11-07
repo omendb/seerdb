@@ -23,8 +23,8 @@ pub struct AlexTree {
     /// Last leaf handles all remaining keys
     split_keys: Vec<i64>,
 
-    /// Default expansion factor for new nodes
-    expansion_factor: f64,
+    /// Default expansion factor for new nodes (reserved for future use)
+    _expansion_factor: f64,
 }
 
 impl AlexTree {
@@ -33,7 +33,7 @@ impl AlexTree {
         Self {
             leaves: vec![GappedNode::new(100, 1.0)], // Start with one leaf
             split_keys: vec![],
-            expansion_factor: 1.0,
+            _expansion_factor: 1.0,
         }
     }
 
@@ -42,7 +42,7 @@ impl AlexTree {
         Self {
             leaves: vec![GappedNode::new(100, expansion_factor)],
             split_keys: vec![],
-            expansion_factor,
+            _expansion_factor: expansion_factor,
         }
     }
 
@@ -124,16 +124,16 @@ impl AlexTree {
 
         // Adaptive retraining: Only retrain leaves with high model error
         // This prevents excessive splitting from over-accurate models
-        let mut retrained = 0;
+        let mut _retrained = 0;
         for leaf_idx in modified_leaves {
             if self.leaves[leaf_idx].needs_retrain() {
                 self.leaves[leaf_idx].retrain()?;
-                retrained += 1;
+                _retrained += 1;
             }
         }
 
         // Debug: Uncomment to see retrain rate
-        // eprintln!("Retrained {}/{} leaves", retrained, modified_leaves.len());
+        // eprintln!("Retrained {}/{} leaves", _retrained, modified_leaves.len());
 
         Ok(())
     }

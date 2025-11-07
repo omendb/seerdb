@@ -218,11 +218,10 @@ impl MultiLevelAlexTree {
 
             // Binary search on leaf boundaries
             for (i, leaf) in self.leaves.iter().enumerate() {
-                if let Some(max_key) = leaf.max_key() {
-                    if key <= max_key {
+                if let Some(max_key) = leaf.max_key()
+                    && key <= max_key {
                         return Ok(i);
                     }
-                }
             }
 
             // Key goes in last leaf

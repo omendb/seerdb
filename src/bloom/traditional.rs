@@ -73,6 +73,7 @@ impl BloomFilter {
     }
 
     /// Check if the bloom filter is empty
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.count == 0
     }
@@ -85,6 +86,7 @@ impl BloomFilter {
     }
 
     /// Calculate actual false positive rate based on current state
+    #[allow(dead_code)]
     pub fn false_positive_rate(&self) -> f64 {
         if self.count == 0 {
             return 0.0;

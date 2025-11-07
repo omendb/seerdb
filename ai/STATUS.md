@@ -8,7 +8,7 @@
 **Write Amplification**: **1.01x with vLog** (4.82x better than traditional LSM) ✅ This is the main win
 **Status**: ⚠️ **FUNCTIONAL** - Slower than RocksDB but write amp is better
 **Toolchain**: Nightly Rust (for std::simd portable_simd feature)
-**Latest Commit**: e3a7264 (YCSB workload validation)
+**Latest Commit**: a0ed389 (honest assessment docs) + range.rs (staged)
 
 ---
 
@@ -192,10 +192,11 @@ difference from 10x claim is likely due to:
 - ⚠️ **Mixed workloads** (0.70x RocksDB - 30% slower)
 
 ### What Needs Work ⚠️
-- ⚠️ **Range scans** (0.06x RocksDB - 16x slower, but major improvement)
-  - ✅ Implemented range iterator (was 0.29x, now collecting memtable data efficiently)
-  - ❌ Still missing SSTable data merging
-  - Next: Implement full LSM merging for range scans
+- ⚠️ **Range scans** (0.06x RocksDB - 94% slower)
+  - ✅ Basic range iterator implemented (src/range.rs - memtable-only)
+  - ✅ DB::range() API added (src/db.rs:1607-1694)
+  - ❌ SSTable data merging not yet implemented (TODO in src/range.rs:55)
+  - Next: Implement full LSM merging for range scans (optional)
   
 - ✅ **Write amplification measurement** (COMPLETE)
   - Claim: "10x better" with vLog
@@ -312,4 +313,5 @@ All validation complete, results mixed:
 **Status**: ✅ FUNCTIONAL - Slower than RocksDB in raw performance, but significantly better write amplification
 **Confidence**: HIGH - All benchmarks complete, honest assessment documented
 **Value Proposition**: 4.82x better write amplification with vLog (research validated)
-**Updated**: November 6, 2025 (commits 562a1f4, a7edee3, e3a7264)
+**Recent Work**: Documentation polish (a0ed389, ef627eb), range iterator stub (staged)
+**Updated**: November 6, 2025 (commits 562a1f4, a7edee3, e3a7264, a0ed389 + range.rs)

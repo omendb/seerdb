@@ -43,11 +43,10 @@ impl MergeIterator {
         let mut last_key: Option<Bytes> = None;
 
         for (key, value, _source_id) in all_entries {
-            if let Some(ref last) = last_key {
-                if key == last {
+            if let Some(ref last) = last_key
+                && key == last {
                     continue; // Duplicate, skip
                 }
-            }
 
             deduplicated.push((key.clone(), value));
             last_key = Some(key);

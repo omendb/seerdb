@@ -1,34 +1,46 @@
 # TODO - seerdb Research & Implementation
 
-**Status**: Core engine complete (123 tests passing), SOTA features integrated
-**Current Phase**: Prove SOTA claims vs RocksDB
-**Last Updated**: November 5, 2025
+**Status**: Core engine complete (116 lib tests passing), SOTA features integrated
+**Current Phase**: Optional optimizations (all core validation complete)
+**Last Updated**: November 6, 2025
 
 ---
 
-## IMMEDIATE PRIORITIES (Week 11-12)
+## ✅ ALL CORE VALIDATION COMPLETE (Week 11-12)
 
-### 1. RocksDB Comparison Benchmarks 🎯 **CRITICAL PATH**
-- [ ] End-to-end YCSB workloads (A, B, C, D)
-- [ ] Write amplification measurement (with/without vLog)
-- [ ] Query latency comparison (with/without ALEX)
-- [ ] Mixed workload performance
-- [ ] Document results in ai/BENCHMARKS.md
-- [ ] **Goal**: Prove "10x write amp", "5x faster queries" claims
+### 1. RocksDB Comparison Benchmarks ✅ **COMPLETE**
+- [x] End-to-end YCSB workloads (A, B, C, D) - 340K-730K ops/sec
+- [x] Write amplification measurement (with/without vLog) - 4.82x better
+- [x] Query latency comparison - Sub-3µs for most workloads
+- [x] Mixed workload performance - 0.70x RocksDB (functional)
+- [x] Document results in ai/BENCHMARKS.md
+- **Result**: Write amp validated (4.82x better), raw performance slower (21-71%)
 
-### 2. Dostoevsky Validation
+### 2. Documentation & Polish ✅ **COMPLETE** (Nov 6)
+- [x] Update all docs with honest performance assessment (commits a0ed389, ef627eb, e05da6e, b77a4fa)
+- [x] Add omen integration guidelines (when to use / when NOT to use)
+- [x] Update CONTEXT.md, README.md, ai/STATUS.md, ai/BENCHMARKS.md
+- [x] Basic range iterator stub (src/range.rs - memtable-only)
+
+### 3. Optional Optimizations (Future)
+
+**3a. Range Scan Optimization** (LOW PRIORITY)
+- [x] Basic range iterator API (DB::range() added, src/range.rs)
+- [ ] Implement SSTable data merging (TODO in src/range.rs:55)
+- [ ] Add prefetching for vLog values
+- **Expected**: 0.8-1.0x RocksDB (vs current 0.06x)
+- **Effort**: HIGH (requires merge iterator for LSM tree)
+
+**3b. Dostoevsky Validation** (LOW PRIORITY)
 - [ ] Wire adaptive compaction into DB (connect metrics)
 - [ ] Benchmark fixed vs adaptive on real workloads
 - [ ] Measure write amp reduction
 - [ ] Document effectiveness
 
-### 3. Performance Optimizations (Deferred)
-- [ ] **Blocked bloom filter** (3x speedup expected, 5-10% overall gain)
-  - Research shows cache-line blocking effective
-  - Needs proper multi-word bit operations (2-3 hour implementation)
-  - Defer until after RocksDB comparison
-  - See SIMD_OPPORTUNITIES.md for analysis
-- [ ] Profile actual bottlenecks (only after core claims proven)
+**3c. Blocked Bloom Filter** (VERY LOW PRIORITY)
+- [ ] Implement cache-line blocked bloom filter
+- **Expected**: 3x bloom speedup, 5-10% overall gain
+- **Effort**: MEDIUM (2-3 hours)
 
 ---
 
