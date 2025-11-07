@@ -88,20 +88,23 @@
 - ✅ Real-world workloads: 682K ops/sec point queries, 269K ops/sec mixed
 
 **Performance vs RocksDB** (After All Optimizations - baseline_benchmark.rs):
-- ✅ **Reads: 1.04x** (1,082K vs 1,042K ops/sec) - **Competitive** ✅
-- ⚠️ **Writes: 0.73x** (262K vs 360K ops/sec) - 27% slower (improved from 39%)
-- ⚠️ **Mixed: 0.67x** (~275K vs 408K ops/sec) - 33% slower
-- 🔴 **Scans: 0.04x** (802 vs 19,262/sec) - **96% slower, NOT production ready**
+- ✅ **Reads: 1.04x** (1,098K vs 1,054K ops/sec) - **Competitive** ✅
+- ⚠️ **Writes: 0.75x** (268K vs 357K ops/sec) - 25% slower (improved from 39%)
+- ⚠️ **Mixed: 0.78x** (297K vs 380K ops/sec) - 22% slower (improved from 35%)
+- 🔴 **Scans: 0.050x** (870 vs 17,332/sec) - **95% slower, NOT production ready**
 - ✅ **Write amp: 4.82x better** (1.01x vs 4.88x traditional LSM)
 
 **Optimization Results** (Nov 6, 2025):
-- ✅ **Write performance**: +19.6% improvement (219K → 262K ops/sec)
+- ✅ **Write performance**: +22.5% improvement (219K → 268K ops/sec)
   - Record encoding optimization: +14.6%
   - WAL batch tuning (8MB/100ms): +4.5%
+- ✅ **Range scans**: +8.5% improvement (802 → 870 scans/sec)
+  - Lazy SSTable iteration: Blocks loaded on-demand
+- ✅ **Mixed workload**: +8.0% improvement (275K → 297K ops/sec)
 - ✅ **Reads remain competitive**: 1.04x RocksDB
 - ✅ **Write amp is excellent**: 4.82x better than traditional LSM
-- ⚠️ **Writes still 27% slower** than RocksDB (architectural limit)
-- 🔴 **Range scans broken**: 96% slower (needs SSTable iterator refactor)
+- ⚠️ **Writes still 25% slower** than RocksDB (architectural limit)
+- 🔴 **Range scans still 95% slower**: Needs end-to-end lazy merge (RangeIterator → priority queue)
 
 **Use cases**:
 - ✅ **Good for**: Read-heavy workloads, vector DBs, document stores, append logs
