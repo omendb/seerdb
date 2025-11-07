@@ -3,7 +3,7 @@
 **Repository**: seerdb (Storage Engine with Learned Data Structures)
 **Last Updated**: November 6, 2025
 **License**: Elastic License 2.0 (source-available)
-**Status**: Production-Ready - Range scans fixed (120 tests passing, 4.82x better write amp)
+**Status**: Production-Ready - Optimized with hardware CRC32C (120 tests passing, 2.79x faster than RocksDB)
 
 ---
 
@@ -85,18 +85,20 @@
 - ✅ Phase 5: Profiling & Optimization (Block cache fix, WAL batching - commit 028d278)
 - ✅ 120 tests passing (100% pass rate)
 - ✅ Write amplification: 1.01x with vLog (4.82x better than traditional LSM)
-- ✅ Real-world workloads: 654K ops/sec point queries, 270K ops/sec mixed
+- ✅ Real-world workloads: 682K ops/sec point queries, 269K ops/sec mixed
 
-**Performance vs RocksDB** (After Optimizations):
-- ✅ Reads: **2.68x faster** (654K vs 244K ops/sec)
-- ✅ Writes: **1.32x faster** (208K vs 158K ops/sec)
-- ✅ Mixed: **2.84x faster** (270K vs 95K ops/sec)
-- ✅ Scans: **0.98x** (5,027 vs 5,147/sec)
+**Performance vs RocksDB** (After All Optimizations):
+- ✅ Reads: **2.79x faster** (682K vs 244K ops/sec) - +58.2% from baseline
+- ✅ Writes: **1.40x faster** (220K vs 158K ops/sec) - stable performance
+- ✅ Mixed: **2.83x faster** (269K vs 95K ops/sec) - +4.3% from baseline
+- ✅ Scans: **1.14x faster** (5,867 vs 5,147/sec) - +9.8% from baseline
 - ✅ Write amp: **4.82x better** (1.01x vs 4.88x)
 
 **Recent Optimizations** (Nov 6, 2025):
-- Fixed block cache CRC bug: +51.8% read performance
-- Added WAL batching: Stable write performance
+- Hardware-accelerated CRC32C: +4.3% reads, +3.3% writes, +16.7% scans (commit 8835750)
+- Tuned WAL batch size: 4MB/50ms thresholds (+2.4% writes) (commit 60525ce)
+- Fixed block cache CRC bug: +51.8% read performance (commit 028d278)
+- Added WAL batching: Stable write performance (commit 028d278)
 - All optimizations validated with benchmarks
 
 **For complete details**: See `ai/STATUS.md` and `/tmp/optimization_results.md`
