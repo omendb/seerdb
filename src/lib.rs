@@ -112,6 +112,7 @@ pub mod health;
 pub mod memtable;
 pub mod metrics;
 pub mod range;
+pub mod range_merge;
 pub mod sstable;
 pub mod vlog;
 pub mod wal;

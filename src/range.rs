@@ -1,27 +1,49 @@
 // Range scan iterator for efficient key range queries
 
 use crate::memtable::Entry;
+use crate::range_merge::KWayMergeIterator;
 use crate::sstable::SSTable;
 use bytes::Bytes;
-use std::collections::BTreeMap;
 
 /// Iterator item: (key, value) pair
 pub type RangeItem = (Bytes, Bytes);
 
-/// Range iterator that merges memtable and SSTable data
+/// Adapter to convert SSTable range iterator error types
+struct SSTableRangeAdapter<I> {
+    inner: I,
+}
+
+impl<I> SSTableRangeAdapter<I> {
+    fn new(inner: I) -> Self {
+        Self { inner }
+    }
+}
+
+impl<I> Iterator for SSTableRangeAdapter<I>
+where
+    I: Iterator<Item = crate::sstable::Result<(Bytes, Option<Bytes>)>>,
+{
+    type Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().map(|result| result.map_err(Into::into))
+    }
+}
+
+/// Range iterator that merges memtable and SSTable data using k-way merge
 ///
 /// LSM semantics:
 /// - Newer entries (memtable, then L0, L1, ... LN) override older entries
 /// - Tombstones hide older values
 ///
-/// Lazy iteration: Only materializes entries on-demand via Iterator::next()
+/// Truly lazy iteration: Loads blocks on-demand, no upfront materialization
 pub struct RangeIterator {
-    // Lazy iterator over merged BTreeMap (filters tombstones on-demand)
-    merged_iter: std::collections::btree_map::IntoIter<Bytes, Option<Bytes>>,
+    // K-way merge iterator (O(k log k) per entry, O(k) memory)
+    inner: KWayMergeIterator<Box<dyn Iterator<Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>>>>,
 }
 
 impl RangeIterator {
-    /// Create a new range iterator
+    /// Create a new range iterator using k-way merge
     ///
     /// # Arguments
     /// * `start_key` - Start of range (inclusive)
@@ -32,51 +54,44 @@ impl RangeIterator {
         start_key: &[u8],
         end_key: Option<&[u8]>,
         memtable: &crate::memtable::Memtable,
-        mut sstables: Vec<SSTable>,
+        sstables: Vec<SSTable>,
     ) -> crate::db::Result<Self> {
-        // Use BTreeMap for automatic sorting and deduplication
-        // Key already in map = newer version, don't override
-        let mut merged: BTreeMap<Bytes, Option<Bytes>> = BTreeMap::new();
+        let mut iterators: Vec<Box<dyn Iterator<Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>>>> = Vec::new();
 
-        // Collect SSTable entries (oldest to newest: LN → L1 → L0)
-        // Process in reverse so newer entries override older
-        sstables.reverse();
-        for sstable in &sstables {
-            let sstable_iter = sstable.scan_range(start_key, end_key);
-            for result in sstable_iter {
-                let (key, value_opt) = result?;
-                // Only insert if key not already present (LSM semantics: newer wins)
-                merged.entry(key).or_insert(value_opt);
-            }
-        }
-
-        // Collect memtable entries (newest data)
-        let memtable_entries: Vec<_> = if let Some(end_key) = end_key {
-            memtable
-                .range(start_key, end_key)
+        // Level 0: Memtable (newest) - collect into Vec since it's behind Mutex
+        let memtable_entries: Vec<(Bytes, Option<Bytes>)> = if let Some(end_key) = end_key {
+            memtable.range(start_key, end_key)
                 .map(|(key, entry)| match entry {
                     Entry::Value(value) => (key, Some(value)),
                     Entry::Tombstone => (key, None),
                 })
                 .collect()
         } else {
-            memtable
-                .range_from(start_key)
+            memtable.range_from(start_key)
                 .map(|(key, entry)| match entry {
                     Entry::Value(value) => (key, Some(value)),
                     Entry::Tombstone => (key, None),
                 })
                 .collect()
         };
+        let memtable_iter: Box<dyn Iterator<Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>>> =
+            Box::new(memtable_entries.into_iter().map(Ok));
+        iterators.push(memtable_iter);
 
-        for (key, value_opt) in memtable_entries {
-            merged.insert(key, value_opt);
+        // Level 1+: SSTables (L0, L1, ..., LN in order)
+        // Don't reverse - k-way merge handles priority by level number
+        for sstable in sstables {
+            let sst_iter = sstable.scan_range(start_key, end_key);
+            let adapted: Box<dyn Iterator<Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>>> =
+                Box::new(SSTableRangeAdapter::new(sst_iter));
+            iterators.push(adapted);
         }
 
-        // Return lazy iterator (doesn't materialize entries until next() is called)
-        Ok(RangeIterator {
-            merged_iter: merged.into_iter(),
-        })
+        // Create k-way merge iterator
+        let merge = KWayMergeIterator::new(iterators)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+        Ok(RangeIterator { inner: merge })
     }
 }
 
@@ -84,14 +99,13 @@ impl Iterator for RangeIterator {
     type Item = Result<RangeItem, Box<dyn std::error::Error>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // Lazy iteration: skip tombstones, return only live values
-        loop {
-            match self.merged_iter.next() {
-                Some((key, Some(value))) => return Some(Ok((key, value))),
-                Some((_, None)) => continue, // Skip tombstone
-                None => return None,
-            }
-        }
+        // K-way merge already filters tombstones and deduplicates
+        // Just unwrap the Option<Bytes> (always Some after tombstone filtering)
+        self.inner.next().map(|result| {
+            result
+                .map(|(key, value_opt)| (key, value_opt.unwrap()))
+                .map_err(|e| e as Box<dyn std::error::Error>)
+        })
     }
 }
 
