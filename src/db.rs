@@ -766,10 +766,10 @@ impl DB {
 
                                 // Second check: open SSTable outside lock (slow path)
                                 let sstable = if has_vlog {
-                                    let vlog = VLog::open(&vlog_path).expect("Failed to open vLog");
-                                    SSTable::open(sstable_path).expect("Failed to open SSTable").with_vlog(vlog)
+                                    let vlog = VLog::open(&vlog_path)?;
+                                    SSTable::open(sstable_path)?.with_vlog(vlog)
                                 } else {
-                                    SSTable::open(sstable_path).expect("Failed to open SSTable")
+                                    SSTable::open(sstable_path)?
                                 };
                                 let sstable_arc = Arc::new(Mutex::new(sstable));
 
