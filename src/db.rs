@@ -1712,13 +1712,19 @@ impl DB {
                             .clone()
                     };
 
-                    // Create SSTableRangeIterator which holds its own Arc references
-                    // (no need to clone the SSTable, scan_range() only needs &self)
+                    // Check if SSTable range overlaps with query range (CRITICAL OPTIMIZATION)
+                    // Skip SSTables whose key range doesn't overlap with [start_key, end_key)
                     let sstable_guard = sstable_arc.lock().expect("SSTable lock poisoned");
-                    let iter = sstable_guard.scan_range(start_key, end_key);
-                    drop(sstable_guard); // Release lock immediately
+                    let overlaps = sstable_guard.overlaps_range(start_key, end_key);
 
-                    sstables.push(iter);
+                    if overlaps {
+                        // Create SSTableRangeIterator which holds its own Arc references
+                        let iter = sstable_guard.scan_range(start_key, end_key);
+                        drop(sstable_guard); // Release lock immediately
+                        sstables.push(iter);
+                    } else {
+                        drop(sstable_guard); // Release lock - SSTable doesn't overlap
+                    }
                 }
             }
         }

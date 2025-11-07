@@ -40,7 +40,7 @@ pub type Result<T> = std::result::Result<T, SSTableError>;
 
 /// Magic number for SSTable format: "SSTB"
 const MAGIC: u32 = 0x53535442;
-const VERSION: u32 = 0x00000003; // v3: Bit-packed bloom filter (Vec<u64> storage)
+const VERSION: u32 = 0x00000001; // v1: Block-based with min_key/max_key metadata
 
 /// Entry value type flags
 pub const FLAG_INLINE: u8 = 0x00;
@@ -79,6 +79,8 @@ pub struct SSTableBuilder {
     num_entries: u64,
     current_offset: u64,
     index_blocks_start: u64,
+    min_key: Option<Bytes>,
+    max_key: Option<Bytes>,
 }
 
 impl SSTableBuilder {
@@ -106,6 +108,8 @@ impl SSTableBuilder {
             num_entries: 0,
             current_offset: header_size,
             index_blocks_start: 0,
+            min_key: None,
+            max_key: None,
         })
     }
 
@@ -115,6 +119,12 @@ impl SSTableBuilder {
     }
 
     pub fn add(&mut self, key: Bytes, value: Bytes) -> Result<()> {
+        // Track min/max keys for range filtering
+        if self.min_key.is_none() {
+            self.min_key = Some(key.clone());
+        }
+        self.max_key = Some(key.clone());
+
         self.bloom.insert(&key);
         let entry = self.encode_entry(&key, FLAG_INLINE, &value);
 
@@ -139,6 +149,12 @@ impl SSTableBuilder {
     /// Add a raw entry that already has a flag prefix (for compaction)
     /// This preserves the original encoding (FLAG_INLINE, FLAG_POINTER, etc.)
     pub fn add_raw(&mut self, key: Bytes, encoded_value: Bytes) -> Result<()> {
+        // Track min/max keys for range filtering
+        if self.min_key.is_none() {
+            self.min_key = Some(key.clone());
+        }
+        self.max_key = Some(key.clone());
+
         self.bloom.insert(&key);
 
         if !self.data_block.add(&key, &encoded_value) {
@@ -306,7 +322,11 @@ impl SSTableBuilder {
         self.file.write_all(&bloom_bytes)?;
         self.current_offset += 8 + bloom_bytes.len() as u64;
 
-        self.write_footer(top_level_offset, bloom_offset)?;
+        // Write min_key/max_key metadata
+        let metadata_offset = self.current_offset;
+        self.write_metadata()?;
+
+        self.write_footer(top_level_offset, bloom_offset, metadata_offset)?;
 
         self.file.seek(SeekFrom::Start(8))?;
         self.file.write_all(&0u64.to_le_bytes())?;
@@ -331,7 +351,23 @@ impl SSTableBuilder {
         Ok(())
     }
 
-    fn write_footer(&mut self, top_level_offset: u64, bloom_offset: u64) -> Result<()> {
+    fn write_metadata(&mut self) -> Result<()> {
+        // Write min_key
+        let min_key = self.min_key.as_ref().map(|k| k.as_ref()).unwrap_or(&[]);
+        self.file.write_all(&(min_key.len() as u32).to_le_bytes())?;
+        self.file.write_all(min_key)?;
+        self.current_offset += 4 + min_key.len() as u64;
+
+        // Write max_key
+        let max_key = self.max_key.as_ref().map(|k| k.as_ref()).unwrap_or(&[]);
+        self.file.write_all(&(max_key.len() as u32).to_le_bytes())?;
+        self.file.write_all(max_key)?;
+        self.current_offset += 4 + max_key.len() as u64;
+
+        Ok(())
+    }
+
+    fn write_footer(&mut self, top_level_offset: u64, bloom_offset: u64, metadata_offset: u64) -> Result<()> {
         let footer_start = self.current_offset;
 
         self.file.seek(SeekFrom::Start(0))?;
@@ -350,6 +386,7 @@ impl SSTableBuilder {
         self.file.write_all(&self.index_blocks_start.to_le_bytes())?;
         self.file.write_all(&top_level_offset.to_le_bytes())?;
         self.file.write_all(&bloom_offset.to_le_bytes())?;
+        self.file.write_all(&metadata_offset.to_le_bytes())?;
         self.file.write_all(&checksum.to_le_bytes())?;
         self.file.write_all(&MAGIC.to_le_bytes())?;
         self.file.write_all(&VERSION.to_le_bytes())?;
@@ -383,6 +420,8 @@ pub struct SSTable {
     num_entries: u64,
     vlog: Option<Arc<Mutex<VLog>>>,
     block_cache: Arc<Mutex<HashMap<u64, Block>>>,
+    min_key: Option<Bytes>,
+    max_key: Option<Bytes>,
 }
 
 impl SSTable {
@@ -391,9 +430,10 @@ impl SSTable {
         let mut file = File::open(&path)?;
 
         let (num_entries, _) = Self::read_header(&mut file)?;
-        let (top_level_offset, bloom_offset) = Self::read_footer(&mut file)?;
+        let (top_level_offset, bloom_offset, metadata_offset) = Self::read_footer(&mut file)?;
         let top_level_index = Self::load_top_level_index(&mut file, top_level_offset)?;
         let bloom = Self::load_bloom_filter(&mut file, bloom_offset)?;
+        let (min_key, max_key) = Self::load_metadata(&mut file, metadata_offset)?;
 
         // Build ALEX learned index for faster top-level index lookups
         let alex_index = if !top_level_index.is_empty() {
@@ -421,12 +461,48 @@ impl SSTable {
             num_entries,
             vlog: None,
             block_cache: Arc::new(Mutex::new(HashMap::new())),
+            min_key,
+            max_key,
         })
     }
 
     pub fn with_vlog(mut self, vlog: VLog) -> Self {
         self.vlog = Some(Arc::new(Mutex::new(vlog)));
         self
+    }
+
+    /// Get the minimum key in this SSTable (for range filtering)
+    pub fn min_key(&self) -> Option<&Bytes> {
+        self.min_key.as_ref()
+    }
+
+    /// Get the maximum key in this SSTable (for range filtering)
+    pub fn max_key(&self) -> Option<&Bytes> {
+        self.max_key.as_ref()
+    }
+
+    /// Check if this SSTable's key range overlaps with [start_key, end_key)
+    pub fn overlaps_range(&self, start_key: &[u8], end_key: Option<&[u8]>) -> bool {
+        // If we don't have metadata, assume it overlaps (conservative)
+        let (min, max) = match (&self.min_key, &self.max_key) {
+            (Some(min), Some(max)) => (min, max),
+            _ => return true,
+        };
+
+        // Check if ranges overlap
+        // Range [min, max] overlaps with [start_key, end_key) if:
+        // max >= start_key AND (end_key is None OR min < end_key)
+        if max.as_ref() < start_key {
+            return false; // SSTable range is entirely before query range
+        }
+
+        if let Some(end) = end_key {
+            if min.as_ref() >= end {
+                return false; // SSTable range is entirely after query range
+            }
+        }
+
+        true // Ranges overlap
     }
 
     /// Check if key might be in this SSTable (bloom filter check)
@@ -616,11 +692,11 @@ impl SSTable {
         Ok((num_entries, 0))
     }
 
-    fn read_footer(file: &mut File) -> Result<(u64, u64)> {
+    fn read_footer(file: &mut File) -> Result<(u64, u64, u64)> {
         let file_size = file.metadata()?.len();
-        file.seek(SeekFrom::Start(file_size - 40))?;
+        file.seek(SeekFrom::Start(file_size - 48))?; // v4: 48 bytes (added metadata_offset)
 
-        let mut footer = [0u8; 40];
+        let mut footer = [0u8; 48];
         file.read_exact(&mut footer)?;
 
         let _index_blocks_offset = u64::from_le_bytes([
@@ -635,15 +711,49 @@ impl SSTable {
             footer[16], footer[17], footer[18], footer[19],
             footer[20], footer[21], footer[22], footer[23],
         ]);
+        let metadata_offset = u64::from_le_bytes([
+            footer[24], footer[25], footer[26], footer[27],
+            footer[28], footer[29], footer[30], footer[31],
+        ]);
 
-        let magic = u32::from_le_bytes([footer[28], footer[29], footer[30], footer[31]]);
-        let version = u32::from_le_bytes([footer[32], footer[33], footer[34], footer[35]]);
+        let _checksum = u32::from_le_bytes([footer[32], footer[33], footer[34], footer[35]]);
+        let magic = u32::from_le_bytes([footer[36], footer[37], footer[38], footer[39]]);
+        let version = u32::from_le_bytes([footer[40], footer[41], footer[42], footer[43]]);
 
         if magic != MAGIC || version != VERSION {
             return Err(SSTableError::InvalidFormat);
         }
 
-        Ok((top_level_offset, bloom_offset))
+        Ok((top_level_offset, bloom_offset, metadata_offset))
+    }
+
+    fn load_metadata(file: &mut File, offset: u64) -> Result<(Option<Bytes>, Option<Bytes>)> {
+        file.seek(SeekFrom::Start(offset))?;
+
+        // Read min_key
+        let mut len_buf = [0u8; 4];
+        file.read_exact(&mut len_buf)?;
+        let min_key_len = u32::from_le_bytes(len_buf) as usize;
+        let min_key = if min_key_len > 0 {
+            let mut key_buf = vec![0u8; min_key_len];
+            file.read_exact(&mut key_buf)?;
+            Some(Bytes::from(key_buf))
+        } else {
+            None
+        };
+
+        // Read max_key
+        file.read_exact(&mut len_buf)?;
+        let max_key_len = u32::from_le_bytes(len_buf) as usize;
+        let max_key = if max_key_len > 0 {
+            let mut key_buf = vec![0u8; max_key_len];
+            file.read_exact(&mut key_buf)?;
+            Some(Bytes::from(key_buf))
+        } else {
+            None
+        };
+
+        Ok((min_key, max_key))
     }
 
     fn load_top_level_index(file: &mut File, offset: u64) -> Result<Vec<TopLevelIndexEntry>> {
