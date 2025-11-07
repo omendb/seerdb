@@ -546,8 +546,9 @@ impl SSTable {
     }
 
     fn find_index_block(&self, key: &[u8]) -> Option<(u64, u32)> {
-        // Try ALEX learned index first (O(1) expected)
-        let idx = if let Some(ref alex) = self.alex_index {
+        // ALEX learned index disabled - it was returning incorrect indices
+        // TODO: Fix ALEX training to use partition_point semantics
+        let idx = if false && let Some(ref alex) = self.alex_index {
             let key_i64 = bytes_to_i64(key);
             match alex.get(key_i64) {
                 Ok(Some(value)) => {
@@ -557,24 +558,22 @@ impl SSTable {
                         bytes.copy_from_slice(&value[..8]);
                         u64::from_le_bytes(bytes) as usize
                     } else {
-                        // Fall back to binary search on decode error
+                        // Fall back to partition_point on decode error
                         self.top_level_index
-                            .binary_search_by(|entry| entry.last_key.as_ref().cmp(key))
-                            .unwrap_or_else(|idx| idx)
+                            .partition_point(|entry| entry.last_key.as_ref() < key)
                     }
                 }
                 _ => {
-                    // ALEX lookup failed - fall back to binary search
+                    // ALEX lookup failed - fall back to partition_point
                     self.top_level_index
-                        .binary_search_by(|entry| entry.last_key.as_ref().cmp(key))
-                        .unwrap_or_else(|idx| idx)
+                        .partition_point(|entry| entry.last_key.as_ref() < key)
                 }
             }
         } else {
-            // No ALEX index - use binary search
+            // Use partition_point to find first block where last_key >= key
+            // This is the correct semantic for finding which block contains the key
             self.top_level_index
-                .binary_search_by(|entry| entry.last_key.as_ref().cmp(key))
-                .unwrap_or_else(|idx| idx)
+                .partition_point(|entry| entry.last_key.as_ref() < key)
         };
 
         if idx < self.top_level_index.len() {
