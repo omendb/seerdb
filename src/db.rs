@@ -285,6 +285,8 @@ pub struct DB {
     /// SSTable reader cache to avoid re-opening files on every read (CRITICAL for performance)
     /// Maps SSTable path -> opened SSTable with loaded indexes and bloom filters
     sstable_cache: Arc<Mutex<std::collections::HashMap<PathBuf, Arc<Mutex<SSTable>>>>>,
+    /// Cached vLog availability (avoids lock on every get())
+    has_vlog: std::sync::atomic::AtomicBool,
 }
 
 impl DB {
@@ -466,6 +468,8 @@ impl DB {
             (None, None)
         };
 
+        let has_vlog = vlog.is_some();
+
         let db = Self {
             options: options.clone(),
             wal: Arc::new(Mutex::new(wal)),
@@ -479,6 +483,7 @@ impl DB {
             compaction_worker,
             flush_mutex: Arc::new(Mutex::new(())),
             sstable_cache: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            has_vlog: std::sync::atomic::AtomicBool::new(has_vlog),
         };
 
         // Flush memtable if it filled up during recovery
@@ -732,7 +737,7 @@ impl DB {
 
         // Get vLog if available (need to clone for SSTable attachment)
         let vlog_path = self.options.data_dir.join("values.vlog");
-        let has_vlog = self.vlog.lock().expect("vLog mutex poisoned").is_some();
+        let has_vlog = self.has_vlog.load(std::sync::atomic::Ordering::Relaxed);
 
         // Check SSTables in LSM tree (L0 -> L6)
         let lsm = self.lsm.lock().expect("LSM mutex poisoned");
@@ -749,18 +754,32 @@ impl DB {
                 // Check each SSTable in this level
                 for sstable_path in sstables {
                     // Use cached SSTable reader (avoids expensive re-opening and index deserialization)
+                    // Double-checked locking to avoid holding lock during I/O
                     let cached_sstable = {
-                        let mut cache = self.sstable_cache.lock().expect("SSTable cache lock poisoned");
-                        cache.entry(sstable_path.clone()).or_insert_with(|| {
-                            // Cache miss - open SSTable and store in cache
-                            let sstable = if has_vlog {
-                                let vlog = VLog::open(&vlog_path).expect("Failed to open vLog");
-                                SSTable::open(sstable_path).expect("Failed to open SSTable").with_vlog(vlog)
+                        // First check: try to get from cache (fast path)
+                        {
+                            let cache = self.sstable_cache.lock().expect("SSTable cache lock poisoned");
+                            if let Some(sstable) = cache.get(sstable_path) {
+                                sstable.clone()
                             } else {
-                                SSTable::open(sstable_path).expect("Failed to open SSTable")
-                            };
-                            Arc::new(Mutex::new(sstable))
-                        }).clone()
+                                drop(cache);
+
+                                // Second check: open SSTable outside lock (slow path)
+                                let sstable = if has_vlog {
+                                    let vlog = VLog::open(&vlog_path).expect("Failed to open vLog");
+                                    SSTable::open(sstable_path).expect("Failed to open SSTable").with_vlog(vlog)
+                                } else {
+                                    SSTable::open(sstable_path).expect("Failed to open SSTable")
+                                };
+                                let sstable_arc = Arc::new(Mutex::new(sstable));
+
+                                // Insert into cache (reacquire lock briefly)
+                                let mut cache = self.sstable_cache.lock().expect("SSTable cache lock poisoned");
+                                cache.entry(sstable_path.clone())
+                                    .or_insert_with(|| sstable_arc.clone())
+                                    .clone()
+                            }
+                        }
                     };
 
                     let mut sstable = cached_sstable.lock().expect("SSTable lock poisoned");
