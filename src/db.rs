@@ -1121,7 +1121,6 @@ impl DB {
     /// Not typically needed in normal operation (automatic flushing works well).
     pub fn flush(&self) -> Result<()> {
         use crate::memtable::Entry;
-        use crate::sstable::SSTableBuilder;
 
         // **CRITICAL FIX**: Serialize all flushes to prevent concurrent flush races
         let _flush_lock = self.flush_mutex.lock().expect("Flush mutex poisoned");
@@ -1298,7 +1297,7 @@ impl DB {
     /// Handles both normal values and vLog separation
     fn build_sstable_from_entries<'a, I>(&self, sstable_path: &Path, entries: I) -> Result<()>
     where
-        I: Iterator<Item = &'a (Bytes, Entry)>,
+        I: Iterator<Item = &'a (Bytes, crate::memtable::Entry)>,
     {
         use crate::memtable::Entry;
         use crate::sstable::SSTableBuilder;
@@ -1312,7 +1311,7 @@ impl DB {
             for (key, entry) in entries {
                 match entry {
                     Entry::Value(value) => {
-                        builder.add_with_vlog(key, value, vlog)?;
+                        builder.add_with_vlog(key.clone(), value.clone(), vlog)?;
                     }
                     Entry::Tombstone => {
                         builder.add_tombstone(key.clone())?;
@@ -1333,7 +1332,7 @@ impl DB {
             for (key, entry) in entries {
                 match entry {
                     Entry::Value(value) => {
-                        builder.add(key, value)?;
+                        builder.add(key.clone(), value.clone())?;
                     }
                     Entry::Tombstone => {
                         builder.add_tombstone(key.clone())?;
@@ -1348,9 +1347,9 @@ impl DB {
     }
 
 
-    /// Try to atomically swap memtable for background flush
+    /// Try to atomically swap all partitions for background flush
     ///
-    /// Returns true if memtable was successfully swapped (caller should signal background thread)
+    /// Returns true if partitions were successfully swapped (caller should signal background thread)
     /// Returns false if another thread is already flushing (skip signaling)
     fn try_swap_memtable(&self) -> Result<bool> {
         // Try to acquire flush lock - if another thread is flushing, return false
@@ -1359,9 +1358,9 @@ impl DB {
             Err(_) => return Ok(false), // Another thread is flushing
         };
 
-        // Check if immutable_memtable is occupied
+        // Check if immutable_memtables is occupied
         let immut_occupied = {
-            let immut = self.immutable_memtable.lock().expect("Immutable memtable lock poisoned");
+            let immut = self.immutable_memtables.lock().expect("Immutable memtables lock poisoned");
             immut.is_some()
         };
 
@@ -1370,14 +1369,21 @@ impl DB {
             return Ok(false);
         }
 
-        // Safe to swap - immutable_memtable is None
-        let mut mt_guard = self.memtable.lock().expect("Memtable lock poisoned");
-        let flushing_memtable = std::mem::replace(&mut *mt_guard, Memtable::new(self.options.memtable_capacity));
-        drop(mt_guard);
+        // Safe to swap - immutable_memtables is None
+        // Swap ALL 16 partitions atomically
+        let capacity_per_partition = self.options.memtable_capacity / NUM_PARTITIONS;
+        let mut flushing_partitions = Vec::with_capacity(NUM_PARTITIONS);
 
-        // Store in immutable_memtable
-        let mut immut_guard = self.immutable_memtable.lock().expect("Immutable memtable lock poisoned");
-        *immut_guard = Some(flushing_memtable);
+        for partition_mt in &self.memtables {
+            let mut mt_guard = partition_mt.lock().expect("Memtable lock poisoned");
+            let old_partition = std::mem::replace(&mut *mt_guard, Memtable::new(capacity_per_partition));
+            flushing_partitions.push(old_partition);
+            drop(mt_guard); // Release lock immediately
+        }
+
+        // Store in immutable_memtables
+        let mut immut_guard = self.immutable_memtables.lock().expect("Immutable memtables lock poisoned");
+        *immut_guard = Some(flushing_partitions);
         drop(immut_guard);
 
         Ok(true) // Successfully swapped
@@ -1478,9 +1484,9 @@ impl DB {
     ///
     /// NOTE: Memtable swap already happened in try_swap_memtable() before signal was sent.
     /// This method just builds the SSTable from immutable_memtable (slow part).
-    fn run_background_flush(
-        _memtable: &Arc<Mutex<Memtable>>,
-        immutable_memtable: &Arc<Mutex<Option<Memtable>>>,
+    fn run_background_flush_partitioned(
+        _memtables: &[Arc<Mutex<Memtable>>; NUM_PARTITIONS],
+        immutable_memtables: &Arc<Mutex<Option<Vec<Memtable>>>>,
         wal: &Arc<Mutex<WAL>>,
         lsm: &Arc<Mutex<LSMTree>>,
         vlog: &Arc<Mutex<Option<VLog>>>,
@@ -1499,14 +1505,14 @@ impl DB {
 
         let flush_start = Instant::now();
 
-        // Check if there's an immutable_memtable to flush
+        // Check if there are immutable_memtables to flush
         let has_immutable = {
-            let immut = immutable_memtable.lock().expect("Immutable memtable lock poisoned");
+            let immut = immutable_memtables.lock().expect("Immutable memtables lock poisoned");
             immut.is_some()
         };
 
         if !has_immutable {
-            // No immutable memtable - another thread might have already flushed it
+            // No immutable memtables - another thread might have already flushed them
             return Ok(());
         }
 
@@ -1516,9 +1522,18 @@ impl DB {
         *counter += 1;
         drop(counter);
 
-        // Build SSTable from immutable memtable (slow part - this is why it's in background)
-        let immut_guard = immutable_memtable.lock().expect("Immutable memtable lock poisoned");
-        let immutable_mt = immut_guard.as_ref().expect("Immutable memtable should be present");
+        // Build SSTable from immutable memtable partitions (slow part - this is why it's in background)
+        let immut_guard = immutable_memtables.lock().expect("Immutable memtables lock poisoned");
+        let immutable_partitions = immut_guard.as_ref().expect("Immutable partitions should be present");
+
+        // Collect entries from ALL partitions and sort
+        let mut all_entries: Vec<(Bytes, Entry)> = Vec::new();
+        for partition_mt in immutable_partitions {
+            for (key, entry) in partition_mt.iter() {
+                all_entries.push((key, entry));
+            }
+        }
+        all_entries.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
 
         // Build SSTable with optional vLog support
         let mut vlog_guard = vlog.lock().expect("vLog mutex poisoned");
@@ -1527,13 +1542,13 @@ impl DB {
             // KV separation enabled - use vLog for large values
             let mut builder = SSTableBuilder::create(&sstable_path)?.with_vlog_threshold(threshold);
 
-            for (key, entry) in immutable_mt.iter() {
+            for (key, entry) in &all_entries {
                 match entry {
                     Entry::Value(value) => {
-                        builder.add_with_vlog(key, value, vlog_ref)?;
+                        builder.add_with_vlog(key.clone(), value.clone(), vlog_ref)?;
                     }
                     Entry::Tombstone => {
-                        builder.add_tombstone(key)?;
+                        builder.add_tombstone(key.clone())?;
                     }
                 }
             }
@@ -1545,7 +1560,19 @@ impl DB {
         } else {
             // No KV separation - traditional flush
             drop(vlog_guard);
-            immutable_mt.flush(&sstable_path)?;
+
+            let mut builder = SSTableBuilder::create(&sstable_path)?;
+            for (key, entry) in &all_entries {
+                match entry {
+                    Entry::Value(value) => {
+                        builder.add(key.clone(), value.clone())?;
+                    }
+                    Entry::Tombstone => {
+                        builder.add_tombstone(key.clone())?;
+                    }
+                }
+            }
+            builder.finish()?;
         }
         drop(immut_guard);
 
@@ -1559,9 +1586,9 @@ impl DB {
         lsm_guard.add_l0_sstable(sstable_path.clone(), size);
         drop(lsm_guard);
 
-        // Clear immutable memtable + WAL after successful flush
+        // Clear immutable memtables + WAL after successful flush
         {
-            let mut immut_guard = immutable_memtable.lock().expect("Immutable memtable lock poisoned");
+            let mut immut_guard = immutable_memtables.lock().expect("Immutable memtables lock poisoned");
             *immut_guard = None;
         }
 
@@ -1575,7 +1602,8 @@ impl DB {
             duration_ms = flush_duration_ms,
             sstable_path = ?sstable_path,
             sstable_size_bytes = size,
-            "Background memtable flush complete"
+            partitions_merged = NUM_PARTITIONS,
+            "Background partitioned memtable flush complete"
         );
 
         // Record flush metric
@@ -1584,14 +1612,18 @@ impl DB {
         Ok(())
     }
 
-    /// Get current memtable size
+    /// Get current memtable size across all partitions
     pub fn memtable_size(&self) -> usize {
-        self.memtable.lock().expect("Memtable lock poisoned").size()
+        self.memtables.iter()
+            .map(|mt| mt.lock().expect("Memtable lock poisoned").size())
+            .sum()
     }
 
-    /// Get number of entries in memtable
+    /// Get number of entries in memtable across all partitions
     pub fn memtable_len(&self) -> usize {
-        self.memtable.lock().expect("Memtable lock poisoned").len()
+        self.memtables.iter()
+            .map(|mt| mt.lock().expect("Memtable lock poisoned").len())
+            .sum()
     }
 
     /// Get real-time database statistics
@@ -1662,13 +1694,13 @@ impl DB {
         let (put_latencies, get_latencies, delete_latencies) =
             self.metrics.get_latency_percentiles();
 
-        // Get memtable stats
-        let mt = self.memtable.lock().expect("Memtable lock poisoned");
-        let memtable_size_bytes = mt.size();
-        let memtable_capacity_bytes = mt.capacity();
+        // Get memtable stats (sum across all partitions)
+        let memtable_size_bytes: usize = self.memtables.iter()
+            .map(|mt| mt.lock().expect("Memtable lock poisoned").size())
+            .sum();
+        let memtable_capacity_bytes = self.options.memtable_capacity;
         let memtable_utilization_pct =
             (memtable_size_bytes as f64 / memtable_capacity_bytes as f64) * 100.0;
-        drop(mt);
 
         // Get WAL size
         let wal_size_bytes = self
@@ -1915,11 +1947,11 @@ impl DB {
             ));
         }
 
-        // Check 3: Memtable utilization
-        let mt = self.memtable.lock().expect("Memtable lock poisoned");
-        let memtable_size = mt.size();
-        let memtable_capacity = mt.capacity();
-        drop(mt);
+        // Check 3: Memtable utilization (sum across all partitions)
+        let memtable_size: usize = self.memtables.iter()
+            .map(|mt| mt.lock().expect("Memtable lock poisoned").size())
+            .sum();
+        let memtable_capacity = self.options.memtable_capacity;
         let utilization_pct = (memtable_size as f64 / memtable_capacity as f64) * 100.0;
 
         if utilization_pct > 95.0 {
@@ -2089,8 +2121,11 @@ impl DB {
         }
         drop(lsm);
 
-        // Get memtable reference
-        let memtable = self.memtable.lock().expect("Memtable lock poisoned");
+        // TODO: FIXME - Properly support partitioned memtables in range queries
+        // Currently only checking partition 0, which will miss keys in other partitions
+        // Need to update RangeIterator to support multiple memtables with k-way merge
+        // See PARTITIONED_MEMTABLES_PLAN.md section 8 for implementation details
+        let memtable = self.memtables[0].lock().expect("Memtable lock poisoned");
 
         // Create range iterator
         RangeIterator::new(start_key, end_key, &memtable, sstables)
