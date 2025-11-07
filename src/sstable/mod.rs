@@ -337,32 +337,41 @@ impl SSTableBuilder {
     }
 
     fn write_top_level_index(&mut self) -> Result<()> {
-        self.file.write_all(&(self.top_level_index.len() as u32).to_le_bytes())?;
-        self.current_offset += 4;
+        // OPTIMIZATION: Batch all index entries into single buffer to reduce syscalls
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&(self.top_level_index.len() as u32).to_le_bytes());
 
         for entry in &self.top_level_index {
-            self.file.write_all(&(entry.last_key.len() as u32).to_le_bytes())?;
-            self.file.write_all(&entry.last_key)?;
-            self.file.write_all(&entry.offset.to_le_bytes())?;
-            self.file.write_all(&entry.size.to_le_bytes())?;
-            self.current_offset += 4 + entry.last_key.len() as u64 + 8 + 4;
+            buffer.extend_from_slice(&(entry.last_key.len() as u32).to_le_bytes());
+            buffer.extend_from_slice(&entry.last_key);
+            buffer.extend_from_slice(&entry.offset.to_le_bytes());
+            buffer.extend_from_slice(&entry.size.to_le_bytes());
         }
+
+        // Single syscall instead of N syscalls
+        self.file.write_all(&buffer)?;
+        self.current_offset += buffer.len() as u64;
 
         Ok(())
     }
 
     fn write_metadata(&mut self) -> Result<()> {
+        // OPTIMIZATION: Batch metadata writes into single buffer
+        let mut buffer = Vec::new();
+
         // Write min_key
         let min_key = self.min_key.as_ref().map(|k| k.as_ref()).unwrap_or(&[]);
-        self.file.write_all(&(min_key.len() as u32).to_le_bytes())?;
-        self.file.write_all(min_key)?;
-        self.current_offset += 4 + min_key.len() as u64;
+        buffer.extend_from_slice(&(min_key.len() as u32).to_le_bytes());
+        buffer.extend_from_slice(min_key);
 
         // Write max_key
         let max_key = self.max_key.as_ref().map(|k| k.as_ref()).unwrap_or(&[]);
-        self.file.write_all(&(max_key.len() as u32).to_le_bytes())?;
-        self.file.write_all(max_key)?;
-        self.current_offset += 4 + max_key.len() as u64;
+        buffer.extend_from_slice(&(max_key.len() as u32).to_le_bytes());
+        buffer.extend_from_slice(max_key);
+
+        // Single syscall instead of 4 syscalls
+        self.file.write_all(&buffer)?;
+        self.current_offset += buffer.len() as u64;
 
         Ok(())
     }
@@ -383,14 +392,18 @@ impl SSTableBuilder {
         }
         self.file.seek(SeekFrom::Start(footer_start))?;
 
-        self.file.write_all(&self.index_blocks_start.to_le_bytes())?;
-        self.file.write_all(&top_level_offset.to_le_bytes())?;
-        self.file.write_all(&bloom_offset.to_le_bytes())?;
-        self.file.write_all(&metadata_offset.to_le_bytes())?;
-        self.file.write_all(&checksum.to_le_bytes())?;
-        self.file.write_all(&MAGIC.to_le_bytes())?;
-        self.file.write_all(&VERSION.to_le_bytes())?;
-        self.file.write_all(&0u32.to_le_bytes())?;
+        // OPTIMIZATION: Batch footer writes into single buffer (8 syscalls → 1 syscall)
+        let mut footer_buffer = Vec::with_capacity(48); // Footer is exactly 48 bytes
+        footer_buffer.extend_from_slice(&self.index_blocks_start.to_le_bytes());
+        footer_buffer.extend_from_slice(&top_level_offset.to_le_bytes());
+        footer_buffer.extend_from_slice(&bloom_offset.to_le_bytes());
+        footer_buffer.extend_from_slice(&metadata_offset.to_le_bytes());
+        footer_buffer.extend_from_slice(&checksum.to_le_bytes());
+        footer_buffer.extend_from_slice(&MAGIC.to_le_bytes());
+        footer_buffer.extend_from_slice(&VERSION.to_le_bytes());
+        footer_buffer.extend_from_slice(&0u32.to_le_bytes());
+
+        self.file.write_all(&footer_buffer)?;
 
         Ok(())
     }
