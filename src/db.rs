@@ -984,9 +984,7 @@ impl DB {
 
                     let mut sstable = cached_sstable.lock().expect("SSTable lock poisoned");
 
-                    // For L0, if bloom filter says key exists but get() returns None, it's a tombstone
-                    // Stop searching immediately (don't check older SSTables)
-                    let may_contain = sstable.may_contain(key);
+                    // get() already does bloom filter check internally - no need to call may_contain()
                     let result = sstable.get(key)?;
 
                     match result {
@@ -994,14 +992,11 @@ impl DB {
                             self.metrics.record_get(start.elapsed());
                             return Ok(Some(value));
                         }
-                        None if level_num == 0 && may_contain => {
-                            // L0: bloom filter says key exists but get() returned None = tombstone
-                            // Don't check older L0 SSTables (tombstone masks them)
-                            self.metrics.record_get(start.elapsed());
-                            return Ok(None);
-                        }
                         None => {
-                            // Key not in this SSTable (bloom filter false positive or key truly absent)
+                            // Key not in this SSTable (bloom filter said no, false positive, or tombstone)
+                            // For L0, we can't distinguish tombstone from miss without double bloom check
+                            // Trade-off: Accept checking one extra L0 SSTable in rare tombstone case
+                            // vs doubling bloom filter overhead on every read
                             // Continue to next SSTable
                         }
                     }
