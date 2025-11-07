@@ -47,8 +47,8 @@ pub struct BatchConfig {
 impl Default for BatchConfig {
     fn default() -> Self {
         Self {
-            max_batch_size: 4 * 1024 * 1024, // 4MB (increased from 1MB)
-            max_batch_timeout: Duration::from_millis(50), // 50ms (increased from 10ms)
+            max_batch_size: 8 * 1024 * 1024, // 8MB (optimized for write-heavy workloads)
+            max_batch_timeout: Duration::from_millis(100), // 100ms (balanced latency/throughput)
         }
     }
 }
