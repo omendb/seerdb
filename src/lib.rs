@@ -1,4 +1,4 @@
-// #![feature(portable_simd)] // Temporarily disabled for range scan work
+#![feature(portable_simd)] // SIMD optimizations for key comparison, bloom filters, etc.
 
 //! seerdb - Research-grade embedded storage engine
 //!
@@ -113,6 +113,7 @@ pub mod memtable;
 pub mod metrics;
 pub mod range;
 pub mod range_merge;
+pub mod simd;
 pub mod sstable;
 pub mod vlog;
 pub mod wal;

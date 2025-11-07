@@ -27,6 +27,8 @@ use bytes::{Bytes, BytesMut};
 use std::io;
 use thiserror::Error;
 
+use crate::simd;
+
 #[derive(Debug, Error)]
 pub enum BlockError {
     #[error("IO error: {0}")]
@@ -84,12 +86,9 @@ impl BlockBuilder {
     /// Add an entry to the block
     /// Returns false if block is full
     pub fn add(&mut self, key: &[u8], value: &[u8]) -> bool {
-        // Calculate shared prefix length (0 for restart points)
+        // Calculate shared prefix length (0 for restart points) using SIMD
         let prefix_len = if self.counter > 0 && !self.last_key.is_empty() {
-            key.iter()
-                .zip(self.last_key.iter())
-                .take_while(|(a, b)| a == b)
-                .count()
+            simd::shared_prefix_len(key, &self.last_key)
         } else {
             0
         };
