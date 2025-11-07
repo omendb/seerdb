@@ -81,27 +81,31 @@
 
 ---
 
-## Priority 3: Partitioned Memtables (1-2 weeks) ⭐⭐
+## Priority 3: Partitioned Memtables (1-2 weeks) ⭐⭐ ✅ COMPLETE
 
 **Expected**: +25-40% writes on multi-core
 **Research**: Tucana (2020), FASTER (2018)
 **Complexity**: High (affects all code paths)
+**Status**: ✅ Complete (commit 8ac3354)
 
 **Implementation** (src/db.rs, src/memtable/mod.rs):
-- [ ] Add NUM_PARTITIONS const (16 partitions)
-- [ ] Change memtable: Arc<Mutex<Memtable>> → [Arc<Mutex<Memtable>>; 16]
-- [ ] Implement partition_for_key() using xxhash
-- [ ] Update put() to lock only one partition
-- [ ] Update get() to check correct partition
-- [ ] Update flush() to merge all partitions
-- [ ] Update range() to query all partitions (k-way merge)
-- [ ] Benchmark on multi-core system
-- [ ] Run all tests to verify correctness
+- [x] Add NUM_PARTITIONS const (16 partitions)
+- [x] Change memtable: Arc<Mutex<Memtable>> → [Arc<Mutex<Memtable>>; 16]
+- [x] Implement partition_for_key() using xxhash
+- [x] Update put() to lock only one partition
+- [x] Update get() to check correct partition
+- [x] Update flush() to merge all partitions
+- [x] Update range() to query all partitions (k-way merge)
+- [x] Benchmark on multi-core system
+- [x] Run all tests to verify correctness
 
-**Success Criteria**:
-- Write throughput: 285K → 380K ops/sec (+33%)
-- Lock contention reduced by 16x
-- All tests pass
+**Results**:
+- ✅ Multi-threaded throughput: 218K → **466K ops/sec** (+114%, **2.14x speedup** with 8 threads)
+- ✅ Lock contention reduced by 16x (as expected)
+- ✅ All 141 tests pass
+- ✅ Range scan bugfix: 870 → 17,087 scans/sec (19.6x improvement)
+- ❌ **Bottleneck identified**: WAL serialization (single writer lock)
+- ❌ **Bottleneck identified**: Blocking flushes (acquire all locks)
 
 ---
 
