@@ -385,7 +385,7 @@ pub struct SSTable {
     bloom: BloomFilter,
     num_entries: u64,
     vlog: Option<Arc<Mutex<VLog>>>,
-    block_cache: Arc<Mutex<HashMap<u64, Bytes>>>,
+    block_cache: Arc<Mutex<HashMap<u64, Block>>>,
 }
 
 impl SSTable {
@@ -447,16 +447,14 @@ impl SSTable {
             None => return Ok(None),
         };
 
-        let index_block_data = self.load_block(index_block_offset, index_block_size)?;
-        let index_block = Block::new(index_block_data)?;
+        let index_block = self.load_block(index_block_offset, index_block_size)?;
 
         let (data_block_offset, data_block_size) = match self.find_in_index_block(&index_block, key)? {
             Some((offset, size)) => (offset, size),
             None => return Ok(None),
         };
 
-        let data_block_data = self.load_block(data_block_offset, data_block_size)?;
-        let data_block = Block::new(data_block_data)?;
+        let data_block = self.load_block(data_block_offset, data_block_size)?;
 
         self.find_in_data_block(&data_block, key)
     }
@@ -571,7 +569,8 @@ impl SSTable {
         Ok(None)
     }
 
-    fn load_block(&self, offset: u64, size: u32) -> Result<Bytes> {
+    fn load_block(&self, offset: u64, size: u32) -> Result<Block> {
+        // Fast path: check cache first
         {
             let cache = self.block_cache.lock().unwrap();
             if let Some(block) = cache.get(&offset) {
@@ -579,19 +578,25 @@ impl SSTable {
             }
         }
 
+        // Slow path: load from disk and verify CRC
         let mut file = self.file.lock().unwrap();
         file.seek(SeekFrom::Start(offset))?;
 
         let mut buf = vec![0u8; size as usize];
         file.read_exact(&mut buf)?;
         let block_data = Bytes::from(buf);
+        drop(file); // Release file lock before CRC verification
 
+        // Parse and verify block (CRC check happens here)
+        let block = Block::new(block_data)?;
+
+        // Cache the verified block
         {
             let mut cache = self.block_cache.lock().unwrap();
-            cache.insert(offset, block_data.clone());
+            cache.insert(offset, block.clone());
         }
 
-        Ok(block_data)
+        Ok(block)
     }
 
     fn read_header(file: &mut File) -> Result<(u64, u64)> {
@@ -718,8 +723,7 @@ impl SSTable {
                 )));
             }
 
-            let index_block_data = self.load_block(top_entry.offset, top_entry.size)?;
-            let index_block = Block::new(index_block_data)?;
+            let index_block = self.load_block(top_entry.offset, top_entry.size)?;
 
             for result in index_block.iter() {
                 let (_key_bytes, value_bytes) = result?;
@@ -747,8 +751,7 @@ impl SSTable {
                     )));
                 }
 
-                let data_block_data = self.load_block(offset, size)?;
-                let _data_block = Block::new(data_block_data)?;
+                let _data_block = self.load_block(offset, size)?;
             }
         }
 
@@ -769,8 +772,7 @@ impl SSTable {
         let mut entries = Vec::new();
 
         for top_entry in &self.top_level_index {
-            let index_block_data = self.load_block(top_entry.offset, top_entry.size)?;
-            let index_block = Block::new(index_block_data)?;
+            let index_block = self.load_block(top_entry.offset, top_entry.size)?;
 
             for idx_entry in index_block.iter() {
                 let (_index_key, index_value) = idx_entry?;
@@ -788,8 +790,7 @@ impl SSTable {
                 let data_offset = u64::from_le_bytes(offset_bytes);
                 let data_size = u32::from_le_bytes(size_bytes);
 
-                let data_block_data = self.load_block(data_offset, data_size)?;
-                let data_block = Block::new(data_block_data)?;
+                let data_block = self.load_block(data_offset, data_size)?;
 
                 for data_entry in data_block.iter() {
                     let (key, entry_value) = data_entry?;
@@ -867,8 +868,7 @@ impl SSTable {
                 continue;
             }
 
-            let index_block_data = self.load_block(top_entry.offset, top_entry.size)?;
-            let index_block = Block::new(index_block_data)?;
+            let index_block = self.load_block(top_entry.offset, top_entry.size)?;
 
             for idx_entry in index_block.iter() {
                 let (_index_key, index_value) = idx_entry?;
@@ -886,8 +886,7 @@ impl SSTable {
                 let data_offset = u64::from_le_bytes(offset_bytes);
                 let data_size = u32::from_le_bytes(size_bytes);
 
-                let data_block_data = self.load_block(data_offset, data_size)?;
-                let data_block = Block::new(data_block_data)?;
+                let data_block = self.load_block(data_offset, data_size)?;
 
                 for data_entry in data_block.iter() {
                     let (key, entry_value) = data_entry?;

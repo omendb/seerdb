@@ -154,6 +154,7 @@ impl Default for BlockBuilder {
 }
 
 /// Block reader for parsing block data
+#[derive(Clone)]
 pub struct Block {
     data: Bytes,
     restart_offset: usize,

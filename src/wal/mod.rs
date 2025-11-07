@@ -8,6 +8,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use thiserror::Error;
 
 pub use reader::WALReader;
@@ -34,13 +35,21 @@ pub enum SyncPolicy {
     None,
 }
 
-/// Write-Ahead Log writer
+/// Write-Ahead Log writer with automatic batching
 pub struct WAL {
     file: Arc<Mutex<File>>,
     path: PathBuf,
     offset: u64,
     sync_policy: SyncPolicy,
+    // Batching fields
+    batch: Vec<Record>,
+    batch_size_bytes: usize,
+    batch_timeout: Duration,
+    last_flush: Instant,
 }
+
+const DEFAULT_BATCH_SIZE: usize = 1024 * 1024; // 1MB
+const DEFAULT_BATCH_TIMEOUT_MS: u64 = 10; // 10ms
 
 impl WAL {
     /// Create a new WAL file
@@ -53,6 +62,10 @@ impl WAL {
             path,
             offset: 0,
             sync_policy,
+            batch: Vec::new(),
+            batch_size_bytes: 0,
+            batch_timeout: Duration::from_millis(DEFAULT_BATCH_TIMEOUT_MS),
+            last_flush: Instant::now(),
         })
     }
 
@@ -68,27 +81,48 @@ impl WAL {
             path,
             offset,
             sync_policy,
+            batch: Vec::new(),
+            batch_size_bytes: 0,
+            batch_timeout: Duration::from_millis(DEFAULT_BATCH_TIMEOUT_MS),
+            last_flush: Instant::now(),
         })
     }
 
-    /// Write a record to the WAL
+    /// Write a record to the WAL with automatic batching
     pub fn write(&mut self, record: &Record) -> Result<u64> {
-        let encoded = record.encode();
-        let record_offset = self.offset;
+        let encoded_size = record.encode().len();
+        let record_offset = self.offset + self.batch_size_bytes as u64;
 
-        let mut file = self.file.lock().expect("WAL file mutex poisoned");
-        file.write_all(&encoded)?;
+        // Add to batch
+        self.batch.push(record.clone());
+        self.batch_size_bytes += encoded_size;
 
-        // Sync based on policy
-        match self.sync_policy {
-            SyncPolicy::SyncAll => file.sync_all()?,
-            SyncPolicy::SyncData => file.sync_data()?,
-            SyncPolicy::None => {}
+        // Check if we should flush
+        let should_flush =
+            self.batch_size_bytes >= DEFAULT_BATCH_SIZE ||
+            self.last_flush.elapsed() >= self.batch_timeout;
+
+        if should_flush {
+            self.flush_batch()?;
         }
 
-        self.offset += encoded.len() as u64;
-
         Ok(record_offset)
+    }
+
+    /// Force flush any pending batch
+    pub fn flush_batch(&mut self) -> Result<()> {
+        if self.batch.is_empty() {
+            return Ok(());
+        }
+
+        // Write all batched records
+        let records: Vec<Record> = self.batch.drain(..).collect();
+        self.write_batch(&records)?;
+
+        self.batch_size_bytes = 0;
+        self.last_flush = Instant::now();
+
+        Ok(())
     }
 
     /// Write a batch of records
@@ -137,11 +171,21 @@ impl WAL {
     ///
     /// This should be called after a successful flush to remove committed data.
     pub fn clear(&mut self) -> Result<()> {
+        // Flush any pending batch first
+        self.flush_batch()?;
+
         let file = self.file.lock().expect("WAL file mutex poisoned");
         file.set_len(0)?;
         file.sync_all()?;
         self.offset = 0;
         Ok(())
+    }
+}
+
+impl Drop for WAL {
+    fn drop(&mut self) {
+        // Flush any pending batch when WAL is dropped
+        let _ = self.flush_batch();
     }
 }
 
