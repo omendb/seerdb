@@ -48,7 +48,7 @@
 4. **Batching**: WAL batch size may be suboptimal
 
 **Optimization Opportunities**:
-- io_uring: Zero-copy, zero-syscall async I/O (+50-100% potential)
+- Tokio async I/O: Non-blocking async I/O (+30-50% potential, safer than io_uring)
 - WAL batching: More aggressive batching (+20-30%)
 - Lock-free memtable: Reduce contention (+10-20%)
 - Allocation pooling: Reuse BytesMut (+5-10%)
@@ -189,20 +189,26 @@ cargo flamegraph --example range_benchmark
 
 **Goal**: Reach 1.0x RocksDB in all workloads
 
-#### Task 1: io_uring Integration (4-5 days)
+#### Task 1: Tokio Async I/O Integration (3-4 days)
+
+**Decision**: Use tokio::fs instead of io_uring
+- ✅ Security: Pure Rust, no kernel CVEs (io_uring has several)
+- ✅ Cross-platform: Works on macOS (dev) + Linux (prod)
+- ✅ Safety: Battle-tested, no unsafe kernel interface
+- ⚠️ Performance: 20-30% less than io_uring, but acceptable trade-off
 
 **Implementation**:
-- Replace std::fs with tokio-uring (async I/O)
-- Zero-copy, zero-syscall I/O
-- Batch multiple WAL writes in single submission
-- Batch SSTable reads during compaction
+- Replace std::fs with tokio::fs (async I/O)
+- Non-blocking WAL writes (async/await)
+- Batch multiple writes efficiently
+- Async SSTable reads during compaction
 
 **Expected Impact**:
-- WAL writes: +50-100% (2x faster I/O)
-- Compaction: +50-100% (batch SSTable reads)
-- Overall writes: +30-50% (WAL is 48.5% of time)
+- WAL writes: +30-50% (non-blocking I/O)
+- Compaction: +50-100% (async batch reads)
+- Overall writes: +30-40% (WAL is 48.5% of time)
 
-**Target**: 320K+ write ops/sec (0.9x RocksDB)
+**Target**: 300K+ write ops/sec (0.84x RocksDB)
 
 #### Task 2: SIMD Optimizations (2-3 days)
 
@@ -286,7 +292,7 @@ cargo flamegraph --example range_benchmark
 | Phase | Duration | Goal | Key Optimizations |
 |-------|----------|------|-------------------|
 | **Phase 8** | 1-2 weeks | 0.9x RocksDB | WAL batching, blocked blooms, readahead |
-| **Phase 9** | 1-2 weeks | 1.0x RocksDB | io_uring, SIMD, lock-free memtable |
+| **Phase 9** | 1-2 weeks | 1.0x RocksDB | Tokio async I/O, SIMD, lock-free memtable |
 | **Phase 10** | 2-3 weeks | 1.2x RocksDB | Workload-aware, learned blooms, advanced caching |
 
 **Total**: 4-7 weeks to beat RocksDB
@@ -320,7 +326,7 @@ cargo flamegraph --example range_benchmark
 - Adaptive readahead: Standard optimization, used by RocksDB
 
 ### Medium Risk (70-80% confidence)
-- io_uring: Requires async/await rewrite, potential correctness issues
+- Tokio async I/O: Requires async/await rewrite, but battle-tested library
 - SIMD: Platform-specific, needs fallback for non-SIMD CPUs
 - Lock-free memtable: Complex, potential subtle bugs
 
