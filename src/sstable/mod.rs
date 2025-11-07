@@ -707,11 +707,9 @@ impl SSTable {
     /// Validate all blocks in the SSTable by loading and checking checksums
     /// This is expensive but useful for corruption detection
     pub fn validate(&mut self) -> Result<()> {
-        // Get file size to validate block offsets
         let file_size = std::fs::metadata(&self.path)?.len();
 
-        // Validate all index blocks and data blocks
-        for top_entry in &self.top_level_index.clone() {
+        for top_entry in &self.top_level_index {
             // Check if offset + size is within file bounds
             if top_entry.offset + (top_entry.size as u64) > file_size {
                 return Err(SSTableError::Io(std::io::Error::new(
@@ -769,8 +767,7 @@ impl SSTable {
 // ============================================================================
 
 pub struct SSTableIterator {
-    entries: Vec<(Bytes, Bytes)>,
-    position: usize,
+    entries: std::vec::IntoIter<(Bytes, Bytes)>,
 }
 
 impl SSTable {
@@ -860,8 +857,7 @@ impl SSTable {
         }
 
         Ok(SSTableIterator {
-            entries,
-            position: 0,
+            entries: entries.into_iter(),
         })
     }
 
@@ -875,8 +871,7 @@ impl SSTable {
     ) -> Result<Vec<(Bytes, Option<Bytes>)>> {
         let mut entries = Vec::new();
 
-        // Iterate through all data blocks
-        for top_entry in &self.top_level_index.clone() {
+        for top_entry in &self.top_level_index {
             // Check if this index block might contain keys in our range
             // If last_key < start_key, skip this block entirely
             if top_entry.last_key.as_ref() < start_key {
@@ -979,12 +974,6 @@ impl Iterator for SSTableIterator {
     type Item = Result<(Bytes, Bytes)>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.position >= self.entries.len() {
-            return None;
-        }
-
-        let entry = self.entries[self.position].clone();
-        self.position += 1;
-        Some(Ok(entry))
+        self.entries.next().map(Ok)
     }
 }

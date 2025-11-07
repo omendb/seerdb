@@ -14,10 +14,7 @@ pub type RangeItem = (Bytes, Bytes);
 /// - Newer entries (memtable, then L0, L1, ... LN) override older entries
 /// - Tombstones hide older values
 pub struct RangeIterator {
-    /// Merged entries in sorted order (deduplicated)
-    entries: Vec<RangeItem>,
-    /// Current position
-    position: usize,
+    entries: std::vec::IntoIter<RangeItem>,
 }
 
 impl RangeIterator {
@@ -80,8 +77,7 @@ impl RangeIterator {
             .collect();
 
         Ok(RangeIterator {
-            entries,
-            position: 0,
+            entries: entries.into_iter(),
         })
     }
 }
@@ -90,13 +86,7 @@ impl Iterator for RangeIterator {
     type Item = Result<RangeItem, Box<dyn std::error::Error>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.position >= self.entries.len() {
-            return None;
-        }
-
-        let item = self.entries[self.position].clone();
-        self.position += 1;
-        Some(Ok(item))
+        self.entries.next().map(Ok)
     }
 }
 

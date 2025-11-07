@@ -6,10 +6,7 @@ use bytes::Bytes;
 
 /// Merged entries from all SSTables, sorted by key
 pub struct MergeIterator {
-    /// All entries from all SSTables, sorted and deduplicated
-    entries: Vec<(Bytes, Bytes)>,
-    /// Current position
-    position: usize,
+    entries: std::vec::IntoIter<(Bytes, Bytes)>,
 }
 
 impl MergeIterator {
@@ -53,34 +50,16 @@ impl MergeIterator {
         }
 
         Ok(Self {
-            entries: deduplicated,
-            position: 0,
+            entries: deduplicated.into_iter(),
         })
-    }
-
-    /// Check if iterator is exhausted
-    pub fn is_empty(&self) -> bool {
-        self.position >= self.entries.len()
-    }
-
-    /// Get total number of entries
-    pub fn len(&self) -> usize {
-        self.entries.len()
     }
 }
 
-/// Iterator implementation for MergeIterator
 impl Iterator for MergeIterator {
     type Item = Result<(Bytes, Bytes), SSTableError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.position >= self.entries.len() {
-            return None;
-        }
-
-        let entry = self.entries[self.position].clone();
-        self.position += 1;
-        Some(Ok(entry))
+        self.entries.next().map(Ok)
     }
 }
 
