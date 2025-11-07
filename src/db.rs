@@ -111,12 +111,15 @@ pub struct DBOptions {
     /// Maximum size of the in-memory write buffer before flushing to disk.
     /// Larger values reduce flush frequency but increase memory usage and recovery time.
     ///
-    /// Default: `64 * 1024 * 1024` (64MB)
+    /// **Note**: With partitioned memtables (16 partitions), this capacity is divided
+    /// by 16, so 256MB = 16MB per partition. This is optimal for write performance.
+    ///
+    /// Default: `256 * 1024 * 1024` (256MB, 16MB per partition)
     ///
     /// Recommended:
-    /// - Low memory systems: 64 MB
-    /// - Normal systems: 128-256 MB
-    /// - High-throughput: 512 MB - 1 GB
+    /// - Memory-constrained systems: 128 MB (8MB per partition)
+    /// - Normal systems: 256-512 MB (16-32MB per partition)
+    /// - High-throughput servers: 512 MB - 1 GB (32-64MB per partition)
     pub memtable_capacity: usize,
 
     /// WAL sync policy
@@ -232,7 +235,7 @@ impl Default for DBOptions {
     fn default() -> Self {
         Self {
             data_dir: PathBuf::from("./seerdb_data"),
-            memtable_capacity: 64 * 1024 * 1024, // 64MB
+            memtable_capacity: 256 * 1024 * 1024, // 256MB (16MB per partition with 16-way partitioning)
             wal_sync_policy: SyncPolicy::SyncData,
             base_level_size: 10 * 1024 * 1024, // 10MB
             size_ratio: 10,
