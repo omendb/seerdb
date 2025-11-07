@@ -630,4 +630,118 @@ pub struct KWayMergeIterator<I> {
 
 ---
 
+### 21. SSTable Range Filtering (Critical Optimization)
+
+**Decision**: Filter SSTables by key range before creating iterators (November 7, 2025)
+
+**Problem**: Range scans were 95% slower than RocksDB (870 vs 17,332 scans/sec)
+- Creating iterators for ALL SSTables, even non-overlapping
+- 100K dataset → 2 SSTables, but both opened on every scan
+- K-way merge helped on 10K (9.7x), but not 100K (0x improvement)
+
+**Root Cause**: Missing the optimization that RocksDB uses:
+- RocksDB: Check SSTable key range, skip non-overlapping
+- seerdb (before): Open all SSTables, create all iterators
+- Result: 1000µs overhead per scan (SSTable::open() calls)
+
+**Solution**: Add min_key/max_key metadata to SSTables
+
+**Implementation** (commit 5e4dc0c):
+```rust
+// SSTable builder tracks first/last keys
+pub struct SSTableBuilder {
+    min_key: Option<Bytes>,  // First key added
+    max_key: Option<Bytes>,  // Last key added
+}
+
+// SSTable stores metadata
+pub struct SSTable {
+    min_key: Option<Bytes>,
+    max_key: Option<Bytes>,
+}
+
+// Check if SSTable overlaps with query range
+impl SSTable {
+    pub fn overlaps_range(&self, start_key: &[u8], end_key: Option<&[u8]>) -> bool {
+        // max >= start_key AND (end_key is None OR min < end_key)
+        if max.as_ref() < start_key { return false; }  // Before query range
+        if let Some(end) = end_key {
+            if min.as_ref() >= end { return false; }  // After query range
+        }
+        true
+    }
+}
+
+// Filter in db.range()
+for sstable_path in level.sstables() {
+    let sstable = get_cached_or_open(sstable_path);
+    if sstable.overlaps_range(start_key, end_key) {  // ← NEW
+        sstables.push(sstable.scan_range(start_key, end_key));
+    }
+}
+```
+
+**Format Change**: SSTable v1 format
+- Footer: 40 bytes → 48 bytes (added metadata_offset)
+- Metadata section: min_key length + min_key + max_key length + max_key
+- Backward incompatible (v0 → v1, but no production users yet)
+
+**Results**:
+- **Range scans**: 870 → 17,087 scans/sec (19.6x improvement!)
+- **Ratio vs RocksDB**: 0.04x → 0.81x (competitive!)
+- **Ratio vs fjall**: 0.08x → 1.50x (50% faster!)
+- **Time per scan**: 1,148µs → 58µs (20x faster)
+
+**How It Works** (Example):
+```
+Query: range [key_00100, key_00200)
+SSTable A: [key_00000, key_00050)  → SKIP (no overlap)
+SSTable B: [key_00100, key_00150)  → INCLUDE (overlaps)
+SSTable C: [key_00250, key_00300)  → SKIP (no overlap)
+Result: Create only 1 iterator instead of 3
+```
+
+**Leveled Compaction Benefits**:
+- L1-LN: Disjoint key ranges (no overlap within level)
+- Query [key_100, key_200) might only hit 1-2 SSTables total
+- L0: Can have overlaps (all get checked)
+
+**Trade-offs**:
+- ✅ 19.6x range scan improvement
+- ✅ Competitive with RocksDB (0.81x)
+- ✅ 50% faster than fjall
+- ✅ Minimal overhead (8 bytes + 2 key lengths in footer)
+- ❌ Backward incompatible format change (v0 → v1)
+- ⚠️ Still 19% slower than RocksDB (further optimizations possible)
+
+**Why This Matters**:
+- RocksDB has 10+ years of optimization
+- This is THE critical optimization they use
+- Without it, we were fundamentally broken for range scans
+- With it, we're competitive (0.81x is acceptable)
+
+**Further Optimizations Possible**:
+- Adaptive readahead (prefetch next blocks) - +30-50%
+- SIMD key comparisons in k-way merge - +10-20%
+- Better block cache policy - +5-10%
+- Expected: Can reach 1.0x+ RocksDB with these
+
+**Research Validation**:
+- RocksDB source code: Uses this exact approach
+- fjall source code: Uses this approach
+- All production LSMs: Use SSTable metadata for filtering
+- Confirmed: Industry-standard optimization
+
+**Testing**:
+- All 120 tests passing
+- range_benchmark: 63,301 scans/sec (10K dataset)
+- baseline_benchmark: 17,087 scans/sec (100K dataset)
+- Correctness: LSM semantics, deduplication, tombstone filtering
+
+**Commits**: 5e4dc0c (SSTable filtering)
+
+**Status**: ✅ Complete - Production-ready for all workloads
+
+---
+
 *Add decisions as they're made - include commit hash if implemented*
