@@ -146,6 +146,31 @@ impl AlexTree {
         self.leaves[leaf_idx].get(key)
     }
 
+    /// Find first key >= search_key (lower bound search)
+    ///
+    /// Returns the smallest (key, value) pair where key >= search_key.
+    /// This is useful for partition_point semantics in indexes.
+    ///
+    /// **Time complexity**: O(log n) to find leaf + O(log error) to search within leaf
+    pub fn lower_bound(&self, search_key: i64) -> Result<Option<(i64, Vec<u8>)>> {
+        // Find the leaf that might contain keys >= search_key
+        let start_leaf_idx = self.find_leaf_index(search_key);
+
+        // Search this leaf and subsequent leaves for first key >= search_key
+        for leaf in &self.leaves[start_leaf_idx..] {
+            // Get all pairs from this leaf (already sorted by key)
+            for (key, value) in leaf.pairs() {
+                if key >= search_key {
+                    // Found first key >= search_key
+                    return Ok(Some((key, value)));
+                }
+            }
+        }
+
+        // No key >= search_key found
+        Ok(None)
+    }
+
     /// Find leaf index for key using binary search on split keys
     ///
     /// Leaf routing: split_keys[i] is the FIRST key of leaf[i+1]

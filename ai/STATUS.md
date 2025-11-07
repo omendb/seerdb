@@ -1,10 +1,12 @@
 # STATUS - seerdb
 
-**Last Updated**: November 7, 2025 - Critical Bug Fix: SSTable Index Lookup ✅
-**Current Phase**: Post bug-fix baseline - identifying next optimizations
+**Last Updated**: November 7, 2025 - Bloom Filter Optimization + ALEX Investigation ✅
+**Current Phase**: Read performance optimization
 **Tests**: All 141 tests passing ✅
-**Data Integrity**: **100% - Critical bug fixed** ✅
-**Latest Commit**: `2165e5f` - fix: correct SSTable index lookup using partition_point
+**Data Integrity**: **100%** ✅
+**Latest Commits**:
+- `b3a74df` - perf: remove redundant bloom filter check (+7.7%)
+- `2165e5f` - fix: correct SSTable index lookup using partition_point
 
 ---
 
@@ -45,12 +47,14 @@ self.top_level_index
 
 | Workload | seerdb | RocksDB | fjall | vs RocksDB | vs fjall | Status |
 |----------|--------|---------|-------|------------|----------|--------|
-| **Writes** | **480K** | 363K | 430K | **+32%** ✅ | **+12%** ✅ | **WINNING** |
-| **Reads** | 415K | 1,048K | 740K | **-60%** ❌ | **-44%** ❌ | **SLOW** |
-| **Mixed** | 292K | 403K | 581K | **-28%** ❌ | **-50%** ❌ | **SLOW** |
-| **Scans** | **25K** | 20K | 12K | **+24%** ✅ | **+111%** ✅ | **WINNING** |
+| **Writes** | **445K** | 363K | 430K | **+23%** ✅ | **+3%** ✅ | **WINNING** |
+| **Reads** | **403K** | 1,048K | 740K | **-62%** ❌ | **-46%** ❌ | **SLOW** |
+| **Mixed** | 252K | 403K | 581K | **-37%** ❌ | **-57%** ❌ | **SLOW** |
+| **Scans** | **24K** | 20K | 12K | **+18%** ✅ | **+97%** ✅ | **WINNING** |
 
 **Write Amplification**: 1.01x (4.82x better than traditional LSM) 🏆 **BEST-IN-CLASS**
+
+**After bloom filter optimization** (+7.7% read improvement from `b3a74df`)
 
 ### Analysis
 
@@ -64,48 +68,124 @@ self.top_level_index
 - **Read performance**: 2.5x slower than RocksDB, 1.8x slower than fjall
 - **Mixed workload**: 1.4x slower than RocksDB, 2.0x slower than fjall
 
-**Why Reads Are Slow**:
-1. **ALEX learned index disabled**: Was returning incorrect indices, temporarily disabled
-   - Loss of O(1) learned index lookups
-   - Now using O(log n) partition_point binary search
-2. **Potential bloom filter issues**: May have high false positive rate
-3. **Block cache**: May not be optimal (unknown hit rate)
-4. **vLog overhead**: Extra lookup for large values
+**Why Reads Are Still Slow** (investigated Nov 7):
+1. **Block loading/decoding overhead** (PRIMARY BOTTLENECK)
+   - Cache hits: 749K ops/sec (potential)
+   - SSTable reads: 295K ops/sec (actual)
+   - 2.5x performance gap indicates expensive block operations
+   - Likely causes: Prefix compression decompression, varint decoding
+
+2. **Low cache hit rate** (LIKELY ISSUE)
+   - Potential is 749K, actual is 295K
+   - Suggests most reads are going to disk
+   - Need to instrument and measure actual hit rate
+
+3. **ALEX learned index disabled** (INVESTIGATED, NOT THE FIX)
+   - Attempted to re-enable: 45% performance regression
+   - Root cause: ALEX API doesn't support efficient range queries
+   - partition_point is O(log n) where n = 100-1000 blocks (acceptable)
+   - See `/tmp/alex_investigation_nov7.md` for details
+
+4. ✅ **Bloom filter** - NOT THE ISSUE
+   - Was checking twice (external + internal)
+   - Fixed in `b3a74df` (+7.7% improvement)
+   - False positive rate is acceptable
+
+5. **Mutex overhead** (POTENTIAL ISSUE)
+   - Two locks per read: sstable_cache lock + SSTable lock
+   - RocksDB likely has lockless reads
+   - Would require architectural changes
 
 ---
 
 ## Recent Work (November 7, 2025)
 
-### 1. 256MB Default Memtable (Before Bug Discovery)
-
-**Problem**: Partitioned memtables divide capacity by 16
-- 64MB / 16 partitions = 4MB per partition
-- 100MB data → 25 flushes (excessive overhead)
-
-**Solution**: Increased default from 64MB → 256MB
-- 256MB / 16 = 16MB per partition (4x larger)
-- Expected improvement: Fewer flushes
-
-**Result**: Discovered critical data loss bug during testing!
-
-### 2. Critical Bug Fix: SSTable Index Lookup
+### 1. Critical Bug Fix: SSTable Index Lookup ✅
 
 **Bug**: Only 23% of keys findable after flush
 **Cause**: `binary_search_by` doesn't provide correct "first containing block" semantics
 **Fix**: Replaced with `partition_point` (correct algorithm)
 **Result**: 100% data integrity restored ✅
+**Commit**: `2165e5f`
 
-**Files Changed**:
-- `src/sstable/mod.rs`: Fixed index lookup in 3 code paths
-- `examples/profile_reads.rs`: Added read profiling benchmark
-- `examples/test_flush_debug.rs`: Added flush debugging tool
+### 2. Detailed Read Path Profiling ✅
 
-### 3. ALEX Learned Index Disabled
+Created comprehensive profiling benchmarks to identify bottlenecks:
 
-**Issue**: ALEX was trained with wrong binary search semantics
-**Status**: Temporarily disabled (`if false &&`) in find_index_block()
-**Impact**: Loss of O(1) learned index benefit
-**TODO**: Retrain ALEX with partition_point semantics
+**Benchmarks Created**:
+- `examples/read_profiling_detailed.rs` - 5 different read patterns
+- `examples/bloom_filter_analysis.rs` - False positive rate testing
+- `examples/sstable_count_check.rs` - SSTable structure verification
+
+**Key Findings**:
+- Cache hits: 749K ops/sec (fast!)
+- SSTable reads: 295K ops/sec (2.5x slower than cache)
+- **Bottleneck identified**: Block loading/decoding, NOT bloom filters
+- Bloom filter working well (no excessive false positives)
+- Only 1 SSTable after flush (not a file count issue)
+
+### 3. Bloom Filter Optimization ✅
+
+**Issue**: Double bloom filter check on every SSTable read
+
+**Code in `src/db.rs:985-1003`**:
+```rust
+// BEFORE:
+let may_contain = sstable.may_contain(key);  // Check #1
+let result = sstable.get(key)?;              // Check #2 (internal)
+
+// AFTER:
+let result = sstable.get(key)?;  // Single check
+```
+
+**Trade-off**: Removed L0 tombstone early-exit optimization (rare case) to eliminate overhead on EVERY read
+
+**Result**:
+- Random reads: 274K → 295K ops/sec (+7.7%)
+- Cache hits: 671K → 749K ops/sec (+11.6%)
+- Non-existent: 219K → 235K ops/sec (+7.3%)
+
+**Commit**: `b3a74df`
+
+### 4. ALEX Learned Index Investigation ❌
+
+**Goal**: Replace O(log n) `partition_point` with O(1) ALEX lookups
+
+**Attempts**:
+1. **Fix #1: Range query** - 54% regression (421K → 194K ops/sec)
+   - `alex.range(key, MAX)` materializes ALL entries >= key
+   - Only needed first result
+
+2. **Fix #2: Custom lower_bound()** - 45% regression (421K → 231K ops/sec)
+   - Added `lower_bound()` method to AlexTree
+   - But calls `pairs()` which clones ALL values in leaf
+   - See `/tmp/alex_investigation_nov7.md` for details
+
+**Root Cause**: ALEX's API optimized for exact lookups, not range/lower_bound queries
+
+**Decision**: Disable ALEX until efficient API implemented
+- Need `lower_bound_key()` that doesn't materialize data
+- Would use linear model prediction + small forward scan
+- Expected improvement: 30-50% once implemented
+
+**Documentation**: Detailed TODO in `src/sstable/mod.rs:549-563`
+
+### Files Changed
+
+**Performance Benchmarks** (created):
+- `examples/read_profiling_detailed.rs`
+- `examples/bloom_filter_analysis.rs`
+- `examples/sstable_count_check.rs`
+
+**Code Optimizations**:
+- `src/db.rs:985-1003` - Removed redundant bloom filter check
+- `src/sstable/mod.rs:549-589` - ALEX investigation + detailed TODO
+- `src/alex/alex_tree.rs:149-172` - Added lower_bound() (for future use)
+
+**Documentation**:
+- `/tmp/session_progress_nov7.md` - Session summary
+- `/tmp/alex_investigation_nov7.md` - ALEX investigation details
+- `examples/test_flush_debug.rs` - Flush debugging tool
 
 ---
 
