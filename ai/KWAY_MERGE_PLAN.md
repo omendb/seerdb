@@ -1,12 +1,70 @@
 # K-Way Merge Implementation Plan
 
 **Created**: November 6, 2025
-**Status**: Ready for implementation
+**Status**: ✅ Implemented (commit 6a0c73e)
 **Priority**: 🔴 CRITICAL (range scans) + ⚠️ Optional (compaction)
 
 ---
 
-## Executive Summary
+## RESULTS (November 6, 2025)
+
+### Implementation Complete ✅
+
+**Commits**:
+- 6a0c73e - K-way merge implementation (src/range_merge.rs + src/range.rs)
+- 607f13c - Documentation updates
+
+**Tests**: All 126 tests passing (6 new k-way merge tests added)
+
+### Performance Results
+
+**10K Dataset** (range_benchmark.rs):
+- Before: 870 scans/sec
+- After: **8,459 scans/sec**
+- **Improvement: 9.7x** ✅
+
+**100K Dataset** (baseline_benchmark.rs):
+- Current: 877 scans/sec
+- Expected: 8,000-15,000 scans/sec
+- **Status: No improvement yet** 🔴
+- **Hypothesis**: Memtable collection overhead or SSTable count/size
+
+### Implementation Details
+
+**Files Created/Modified**:
+- `src/range_merge.rs` (264 lines): KWayMergeIterator with BinaryHeap
+- `src/range.rs` (modified): Uses k-way merge instead of BTreeMap
+- `src/lib.rs` (modified): Added range_merge module
+
+**Algorithm**:
+- Min-heap using `BinaryHeap<Reverse<HeapEntry<I>>>`
+- O(k log k) per entry where k = num levels (7-10)
+- O(k) memory for heap state + O(m) for memtable entries
+- Proper LSM semantics: level-based priority, deduplication, tombstone filtering
+
+**Trade-offs**:
+- ✅ SOTA algorithm implemented correctly
+- ✅ 9.7x improvement on 10K datasets
+- ✅ All tests passing
+- ⚠️ Memtable still collected upfront (O(m) memory)
+- 🔴 100K dataset needs investigation
+
+### Next Steps
+
+1. **Profile 100K dataset performance** (PRIORITY)
+   - Identify bottleneck (memtable collection? SSTable count?)
+   - Check number/size of SSTables generated
+   - Measure time spent in memtable collection vs k-way merge
+   - Consider fully lazy memtable iteration (lifetime challenges)
+
+2. **Optional: Compaction merge** (src/compaction/merge.rs)
+   - Lower priority (background operation)
+   - Can apply same k-way merge approach
+   - Expected: Lower memory usage, similar throughput
+
+---
+
+## Executive Summary (Original Plan)
 
 **Problem**: Two locations use eager materialization instead of lazy k-way merge:
 1. **Range scans** (src/range.rs) - 20x slower than RocksDB (CRITICAL)

@@ -552,4 +552,82 @@ entries.sort_by(|(k1, sid1, _), (k2, sid2, _)|
 
 ---
 
+### 20. K-way Merge for Range Scans (Nov 6, 2025)
+
+**Decision**: Use k-way merge with BinaryHeap, not BTreeMap materialization
+
+**Context**: Range scans were 20x slower than RocksDB (870 vs 17,332 scans/sec)
+
+**Root Cause Analysis**:
+```rust
+// OLD (src/range.rs): BTreeMap materialization
+let mut merged: BTreeMap<Bytes, Option<Bytes>> = BTreeMap::new();
+for sstable in &sstables {
+    for (key, value) in sstable.scan_range(start, end) {
+        merged.entry(key).or_insert(value);  // O(n log n) + O(n) memory
+    }
+}
+// Returns AFTER collecting ALL entries
+```
+
+**Problem**: Eager materialization
+- Time: O(n log n) upfront cost before returning first result
+- Memory: O(n) - must hold ALL range entries
+- Latency: 100K entry scan loads all 100K before returning anything
+
+**Solution**: K-way merge (SOTA for LSM trees)
+```rust
+// NEW (src/range_merge.rs): Lazy k-way merge
+pub struct KWayMergeIterator<I> {
+    heap: BinaryHeap<Reverse<HeapEntry<I>>>,  // Min-heap
+    last_key: Option<Bytes>,                   // Deduplication
+}
+```
+
+**Implementation Details**:
+1. **Memtable**: Collect upfront (O(m) - acceptable, already in-memory)
+2. **SSTables**: Lazy iteration (blocks loaded on-demand)
+3. **Merge**: BinaryHeap maintains k iterators (k = num levels, typically 7-10)
+4. **Deduplication**: Track last_key, skip duplicates (LSM: lower level = newer)
+5. **Tombstones**: Filter None values in merge loop
+
+**Complexity**:
+- Time: O(k log k) per entry where k = num levels (7-10)
+- Memory: O(k) heap state + O(m) memtable entries
+- Latency: First SSTable result immediate (after memtable collection)
+
+**Results**:
+- **10K dataset**: 870 → 8,459 scans/sec (9.7x improvement ✅)
+- **100K dataset**: 877 scans/sec (no improvement - investigation pending)
+
+**Research Validation** (ai/research/PAPERS.md):
+- SwiftKV, LearnedKV: Use learned indexes for point queries, k-way merge for ranges
+- GRF: Optimizes filtering (which SSTables), not merge algorithm
+- RocksDB, fjall, LevelDB: All use k-way merge with priority queue
+- Confirmed: K-way merge is SOTA (2018-2024 papers)
+
+**Trade-offs**:
+- ✅ 9.7x improvement on 10K dataset
+- ✅ SOTA algorithm, proven in production
+- ✅ Truly lazy for SSTables (blocks on-demand)
+- ✅ All 126 tests passing
+- ⚠️ Memtable still collected upfront (O(m) memory)
+- 🔴 100K dataset: no improvement yet (needs profiling)
+
+**Future Work**:
+- Profile 100K dataset performance (memtable size? SSTable count?)
+- Consider fully lazy memtable iteration (lifetime challenges)
+- May need to address SSTable iteration efficiency
+
+**Testing**:
+- 6 k-way merge unit tests (single, two, duplicates, tombstones, many, empty)
+- All existing range tests passing
+- Correctness: LSM semantics, deduplication, tombstone filtering
+
+**Commits**: 6a0c73e (k-way merge), 607f13c (documentation)
+
+**Status**: Implemented, works on small datasets, 100K performance under investigation
+
+---
+
 *Add decisions as they're made - include commit hash if implemented*
