@@ -864,6 +864,115 @@ impl SSTable {
             position: 0,
         })
     }
+
+    /// Scan a range of keys from this SSTable
+    ///
+    /// Returns (key, Option<value>) where None indicates a tombstone
+    pub fn scan_range(
+        &mut self,
+        start_key: &[u8],
+        end_key: Option<&[u8]>,
+    ) -> Result<Vec<(Bytes, Option<Bytes>)>> {
+        let mut entries = Vec::new();
+
+        // Iterate through all data blocks
+        for top_entry in &self.top_level_index.clone() {
+            // Check if this index block might contain keys in our range
+            // If last_key < start_key, skip this block entirely
+            if top_entry.last_key.as_ref() < start_key {
+                continue;
+            }
+
+            // Load index block
+            let index_block_data = self.load_block(top_entry.offset, top_entry.size)?;
+            let index_block = Block::new(index_block_data)?;
+
+            // Iterate through index entries to get data blocks
+            for idx_entry in index_block.iter() {
+                let (_index_key, index_value) = idx_entry?;
+
+                let value_len = index_value.len();
+                if value_len < 12 {
+                    continue;
+                }
+
+                let mut offset_bytes = [0u8; 8];
+                let mut size_bytes = [0u8; 4];
+                offset_bytes.copy_from_slice(&index_value[value_len - 12..value_len - 4]);
+                size_bytes.copy_from_slice(&index_value[value_len - 4..]);
+
+                let data_offset = u64::from_le_bytes(offset_bytes);
+                let data_size = u32::from_le_bytes(size_bytes);
+
+                // Load data block
+                let data_block_data = self.load_block(data_offset, data_size)?;
+                let data_block = Block::new(data_block_data)?;
+
+                // Iterate through data block entries
+                for data_entry in data_block.iter() {
+                    let (key, entry_value) = data_entry?;
+
+                    // Check if key is in range
+                    if key.as_ref() < start_key {
+                        continue;
+                    }
+                    if let Some(end) = end_key {
+                        if key.as_ref() >= end {
+                            // Keys are sorted, so we can stop early
+                            break;
+                        }
+                    }
+
+                    if entry_value.is_empty() {
+                        continue;
+                    }
+
+                    let flag = entry_value[0];
+                    let data = entry_value.slice(1..);
+
+                    let value_opt = match flag {
+                        FLAG_INLINE => Some(data),
+                        FLAG_POINTER => {
+                            if data.len() < 12 {
+                                continue;
+                            }
+
+                            let offset = u64::from_le_bytes([
+                                data[0], data[1], data[2], data[3], data[4], data[5], data[6],
+                                data[7],
+                            ]);
+                            let length = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
+
+                            if let Some(ref vlog) = self.vlog {
+                                let mut vlog_guard = vlog.lock().unwrap();
+                                let pointer = ValuePointer { offset, length };
+                                let value = vlog_guard
+                                    .read(pointer)
+                                    .map_err(|e| SSTableError::VLog(e.to_string()))?;
+                                Some(value)
+                            } else {
+                                return Err(SSTableError::VLog("VLog not attached".to_string()));
+                            }
+                        }
+                        FLAG_TOMBSTONE => None,
+                        _ => continue,
+                    };
+
+                    entries.push((key, value_opt));
+                }
+            }
+
+            // Early exit if we've passed the end_key range
+            // (since top_level_index is sorted by last_key)
+            if let Some(end) = end_key {
+                if top_entry.last_key.as_ref() >= end {
+                    break;
+                }
+            }
+        }
+
+        Ok(entries)
+    }
 }
 
 impl Iterator for SSTableIterator {

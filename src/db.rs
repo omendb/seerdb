@@ -2137,4 +2137,115 @@ mod tests {
         // Test display formatting (doesn't panic)
         let _display = format!("{}", health);
     }
+
+    #[test]
+    fn test_range_scan_with_sstables() {
+        let dir = tempdir().unwrap();
+        let mut opts = DBOptions::default();
+        opts.data_dir = dir.path().to_path_buf();
+        opts.memtable_capacity = 1024; // Small memtable to force flush
+        opts.background_compaction = false;
+
+        let db = DB::open(opts).unwrap();
+
+        // Insert enough data to trigger flush to SSTables
+        for i in 0..100 {
+            let key = format!("key{:03}", i);
+            let value = format!("value{}", i);
+            db.put(key.as_bytes(), value.as_bytes()).unwrap();
+        }
+
+        // Force flush to create SSTables
+        db.flush().unwrap();
+
+        // Range scan
+        let mut results = vec![];
+        for result in db.range(b"key010", Some(b"key020")).unwrap() {
+            let (key, value) = result.unwrap();
+            results.push((
+                String::from_utf8(key.to_vec()).unwrap(),
+                String::from_utf8(value.to_vec()).unwrap(),
+            ));
+        }
+
+        // Should get key010 through key019
+        assert_eq!(results.len(), 10);
+        assert_eq!(results[0].0, "key010");
+        assert_eq!(results[9].0, "key019");
+    }
+
+    #[test]
+    fn test_range_scan_with_overwrites() {
+        let dir = tempdir().unwrap();
+        let mut opts = DBOptions::default();
+        opts.data_dir = dir.path().to_path_buf();
+        opts.memtable_capacity = 1024;
+        opts.background_compaction = false;
+
+        let db = DB::open(opts).unwrap();
+
+        // Write initial data
+        for i in 0..50 {
+            let key = format!("key{:03}", i);
+            db.put(key.as_bytes(), b"old_value").unwrap();
+        }
+        db.flush().unwrap();
+
+        // Overwrite some keys
+        for i in 10..20 {
+            let key = format!("key{:03}", i);
+            db.put(key.as_bytes(), b"new_value").unwrap();
+        }
+
+        // Range scan - newer values should override
+        let mut results = vec![];
+        for result in db.range(b"key010", Some(b"key020")).unwrap() {
+            let (key, value) = result.unwrap();
+            results.push((
+                String::from_utf8(key.to_vec()).unwrap(),
+                String::from_utf8(value.to_vec()).unwrap(),
+            ));
+        }
+
+        assert_eq!(results.len(), 10);
+        // All should have new_value (memtable overrides SSTable)
+        for result in &results {
+            assert_eq!(result.1, "new_value");
+        }
+    }
+
+    #[test]
+    fn test_range_scan_with_deletes() {
+        let dir = tempdir().unwrap();
+        let mut opts = DBOptions::default();
+        opts.data_dir = dir.path().to_path_buf();
+        opts.memtable_capacity = 1024;
+        opts.background_compaction = false;
+
+        let db = DB::open(opts).unwrap();
+
+        // Write data
+        for i in 0..50 {
+            let key = format!("key{:03}", i);
+            db.put(key.as_bytes(), b"value").unwrap();
+        }
+        db.flush().unwrap();
+
+        // Delete some keys
+        for i in 10..20 {
+            let key = format!("key{:03}", i);
+            db.delete(key.as_bytes()).unwrap();
+        }
+
+        // Range scan - deleted keys should not appear
+        let mut results = vec![];
+        for result in db.range(b"key005", Some(b"key025")).unwrap() {
+            let (key, _value) = result.unwrap();
+            results.push(String::from_utf8(key.to_vec()).unwrap());
+        }
+
+        // Should get key005-key009 and key020-key024 (5 + 5 = 10 keys)
+        assert_eq!(results.len(), 10);
+        assert!(!results.iter().any(|k| k.as_str() >= "key010" && k.as_str() < "key020"));
+    }
 }
