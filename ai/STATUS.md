@@ -43,47 +43,48 @@
 
 ---
 
-## Critical Issue: Range Scans
+## Range Scans: K-way Merge Implemented
 
-**Status**: 🔴 **NOT PRODUCTION READY**
+**Status**: ⚠️ **PARTIALLY IMPROVED** (commit 6a0c73e)
 
-### The Problem
+### Results
 
-**Current**: 870 scans/sec (20x slower than RocksDB)
-- **fjall (Rust SOTA)**: 10,818 scans/sec → 12x faster than us
-- **RocksDB**: 17,332 scans/sec → 20x faster than us
-- **sled (B-tree)**: 40,948 scans/sec → 47x faster than us
+**10K dataset** (range_benchmark.rs):
+- **Before**: 870 scans/sec
+- **After**: 8,459 scans/sec
+- **Improvement**: 9.7x ✅
 
-**Root Cause**: Algorithm, not I/O
+**100K dataset** (baseline_benchmark.rs):
+- **Current**: 877 scans/sec (no improvement yet)
+- **Target**: 8,000-15,000 scans/sec (0.5-0.9x RocksDB's 20,633)
+- **Status**: Needs investigation 🔴
 
-### Our Implementation (src/range.rs:40-51)
+### Implementation (src/range_merge.rs + src/range.rs)
 
+**K-way Merge with Min-Heap** (SOTA approach):
 ```rust
-// THE PROBLEM: Materializes EVERYTHING before returning ANYTHING
-let mut merged: BTreeMap<Bytes, Option<Bytes>> = BTreeMap::new();
-
-for sstable in &sstables {
-    let sstable_iter = sstable.scan_range(start_key, end_key);
-    for result in sstable_iter {
-        let (key, value_opt) = result?;
-        merged.entry(key).or_insert(value_opt);  // Collects ALL entries upfront
-    }
+// src/range_merge.rs
+pub struct KWayMergeIterator<I> {
+    heap: BinaryHeap<Reverse<HeapEntry<I>>>,  // Min-heap for sorted merge
+    last_key: Option<Bytes>,                   // Deduplication
 }
 
-// Only AFTER collecting everything:
-Ok(RangeIterator { merged_iter: merged.into_iter() })
+// src/range.rs
+pub struct RangeIterator {
+    inner: KWayMergeIterator<Box<dyn Iterator<...>>>,
+}
 ```
 
-**Complexity**:
-- Time: O(n log n) upfront
-- Memory: O(n) materialization
-- Latency: Must load ALL entries before returning first result
+**Approach**:
+1. Collect memtable entries upfront (O(m), acceptable - already in-memory)
+2. Lazy SSTable iteration (blocks loaded on-demand)
+3. K-way merge with BinaryHeap (O(k log k) per entry)
+4. Deduplicate and filter tombstones in merge loop
 
-**Correct approach** (RocksDB, fjall, all production LSMs):
-- K-way merge with priority queue/heap
-- Time: O(k log k) per entry (k = num levels, typically 7-10)
-- Memory: O(k) - only heap state
-- Latency: First result immediate
+**Complexity**:
+- Time: O(k log k) per entry where k = num levels (7-10)
+- Memory: O(k) heap + O(m) memtable entries
+- Latency: First SSTable result immediate, memtable pre-collected
 
 ### Why This Matters
 

@@ -1,37 +1,38 @@
 # TODO - seerdb
 
 **Last Updated**: November 6, 2025
-**Current Focus**: Range scan optimization (CRITICAL)
+**Current Focus**: Range scan investigation (100K dataset issue)
 
 ---
 
-## 🔴 CRITICAL: Range Scan Fix (Blocking General Use)
+## ⚠️ INVESTIGATE: Range Scans - 100K Dataset Issue
 
-**Status**: Researching SOTA approaches before implementing
+**Status**: K-way merge implemented, works on small datasets, investigating large dataset performance
 
 ### Problem
-- **Current**: 870 scans/sec (0.050x RocksDB, 20x slower)
-- **Cause**: BTreeMap materialization - O(n log n) + O(n) memory upfront
-- **Target**: 8,000-15,000 scans/sec (0.5-0.9x RocksDB)
-- **Impact**: Blocks general-purpose use
+- **10K dataset**: 8,459 scans/sec (9.7x improvement ✅)
+- **100K dataset**: 877 scans/sec (no improvement 🔴)
+- **Hypothesis**: Memtable collection overhead, or SSTable count/size issue
+- **Target**: 8,000-15,000 scans/sec on 100K dataset
 
 ### Tasks
-- [x] Research fjall implementation (k-way merge confirmed)
-- [ ] **Research SOTA papers on LSM range scans**
-  - Check: Learned approaches, SIMD merge, workload-aware
-  - Validate: Is k-way merge still best, or is there newer research?
-- [ ] **Review other algorithmic issues in codebase**
-  - Compaction merge strategy
-  - Iterator patterns
-  - Cache eviction
-- [ ] Implement best approach
-- [ ] Benchmark (expect 10-20x improvement)
-- [ ] Run all tests
+- [x] Research SOTA papers on LSM range scans (k-way merge confirmed as SOTA)
+- [x] Implement k-way merge with BinaryHeap (commit 6a0c73e)
+- [x] Run all 126 tests (passing ✅)
+- [x] Benchmark on 10K dataset (9.7x improvement ✅)
+- [ ] **Investigate 100K dataset performance**
+  - Profile to identify bottleneck
+  - Check if memtable collection is issue (currently O(m))
+  - Check number/size of SSTables generated
+  - Consider making memtable iteration fully lazy (lifetime challenges)
+- [ ] Optimize based on profiling results
+- [ ] Benchmark to validate improvement
 
-### Expected Outcome
-- Range scans: 870 → 8,000-15,000 scans/sec
-- Makes seerdb viable for general use
-- Unblocks range-heavy workloads
+### Completed
+- K-way merge iterator (src/range_merge.rs)
+- Updated range.rs to use k-way merge
+- All tests passing
+- 10K dataset: 9.7x improvement
 
 ---
 
