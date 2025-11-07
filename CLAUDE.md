@@ -3,7 +3,7 @@
 **Repository**: seerdb (Storage Engine with Learned Data Structures)
 **Last Updated**: November 6, 2025
 **License**: Elastic License 2.0 (source-available)
-**Status**: Production-Ready - Optimized with hardware CRC32C (120 tests passing, 2.79x faster than RocksDB)
+**Status**: Production-Ready for Read-Heavy Workloads (120 tests passing, competitive reads, 4.82x better write amp)
 
 ---
 
@@ -87,21 +87,26 @@
 - ✅ Write amplification: 1.01x with vLog (4.82x better than traditional LSM)
 - ✅ Real-world workloads: 682K ops/sec point queries, 269K ops/sec mixed
 
-**Performance vs RocksDB** (After All Optimizations):
-- ✅ Reads: **2.79x faster** (682K vs 244K ops/sec) - +58.2% from baseline
-- ✅ Writes: **1.40x faster** (220K vs 158K ops/sec) - stable performance
-- ✅ Mixed: **2.83x faster** (269K vs 95K ops/sec) - +4.3% from baseline
-- ✅ Scans: **1.14x faster** (5,867 vs 5,147/sec) - +9.8% from baseline
-- ✅ Write amp: **4.82x better** (1.01x vs 4.88x)
+**Performance vs RocksDB** (Actual Numbers from baseline_benchmark.rs):
+- ✅ **Reads: 1.04x** (1,080K vs 1,042K ops/sec) - **Competitive**
+- ⚠️ **Writes: 0.61x** (219K vs 360K ops/sec) - 39% slower
+- ⚠️ **Mixed: 0.65x** (265K vs 408K ops/sec) - 35% slower
+- 🔴 **Scans: 0.04x** (813 vs 20,097/sec) - **96% slower, NOT production ready**
+- ✅ **Write amp: 4.82x better** (1.01x vs 4.88x traditional LSM)
 
-**Recent Optimizations** (Nov 6, 2025):
-- Hardware-accelerated CRC32C: +4.3% reads, +3.3% writes, +16.7% scans (commit 8835750)
-- Tuned WAL batch size: 4MB/50ms thresholds (+2.4% writes) (commit 60525ce)
-- Fixed block cache CRC bug: +51.8% read performance (commit 028d278)
-- Added WAL batching: Stable write performance (commit 028d278)
-- All optimizations validated with benchmarks
+**Honest Performance Assessment** (Nov 6, 2025):
+- ⚠️ **Previous claims were incorrect** (used wrong RocksDB baseline numbers)
+- ✅ **Reads are competitive**: 1.04x RocksDB (essentially equal)
+- ✅ **Write amp is excellent**: 4.82x better than traditional LSM
+- ⚠️ **Writes need work**: 39% slower than RocksDB, 48% slower than fjall
+- 🔴 **Range scans broken**: 96% slower (architectural issue in SSTable::scan_range)
 
-**For complete details**: See `ai/STATUS.md` and `/tmp/optimization_results.md`
+**Use cases**:
+- ✅ **Good for**: Read-heavy workloads, vector DBs, document stores (low write amp matters)
+- ⚠️ **Caution**: Write-heavy workloads (fjall is faster)
+- ❌ **Avoid**: Range-heavy workloads (24x slower than RocksDB)
+
+**For complete analysis**: See `/tmp/performance_reality.md`
 
 ### Key Papers to Read (Priority Order)
 

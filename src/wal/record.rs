@@ -32,41 +32,42 @@ impl Record {
     /// Encode record to bytes with format:
     /// [length: u32][type: u8][data][crc32: u32]
     pub fn encode(&self) -> Bytes {
-        let mut buf = BytesMut::new();
+        // Pre-calculate total size to avoid reallocation (single allocation)
+        let data_len = match self {
+            Record::Put { key, value } => 1 + 4 + key.len() + 4 + value.len(),
+            Record::Delete { key } => 1 + 4 + key.len(),
+        };
+        let total_len = 4 + data_len + 4; // length_prefix + data + crc32
 
+        let mut buf = BytesMut::with_capacity(total_len);
+
+        // Write length prefix
+        buf.put_u32((data_len + 4) as u32); // data + CRC32
+
+        // Mark data start for CRC calculation
+        let data_start = buf.len();
+
+        // Write record data
         match self {
             Record::Put { key, value } => {
-                // Type: 1 = Put
-                buf.put_u8(1);
-
-                // Key length + key
+                buf.put_u8(1); // Type: Put
                 buf.put_u32(key.len() as u32);
                 buf.put_slice(key);
-
-                // Value length + value
                 buf.put_u32(value.len() as u32);
                 buf.put_slice(value);
             }
             Record::Delete { key } => {
-                // Type: 2 = Delete
-                buf.put_u8(2);
-
-                // Key length + key
+                buf.put_u8(2); // Type: Delete
                 buf.put_u32(key.len() as u32);
                 buf.put_slice(key);
             }
         }
 
-        // Calculate CRC32C of the data (hardware-accelerated)
-        let crc = crc32c::crc32c(&buf);
+        // Calculate CRC32C over data only (hardware-accelerated)
+        let crc = crc32c::crc32c(&buf[data_start..]);
+        buf.put_u32(crc);
 
-        // Build final record: [total_length][data][crc32]
-        let mut final_buf = BytesMut::new();
-        final_buf.put_u32((buf.len() + 4) as u32); // +4 for CRC32
-        final_buf.put(buf);
-        final_buf.put_u32(crc);
-
-        final_buf.freeze()
+        buf.freeze()
     }
 
     /// Decode record from bytes
