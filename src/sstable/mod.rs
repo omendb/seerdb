@@ -764,6 +764,236 @@ pub struct SSTableIterator {
     entries: std::vec::IntoIter<(Bytes, Bytes)>,
 }
 
+// ============================================================================
+// SSTableRangeIterator - Lazy iterator over a key range
+// ============================================================================
+
+/// Lazy iterator that loads blocks on-demand during range scans
+pub struct SSTableRangeIterator {
+    file: Arc<Mutex<File>>,
+    block_cache: Arc<Mutex<HashMap<u64, Block>>>,
+    vlog: Option<Arc<Mutex<VLog>>>,
+    top_level_index: Vec<TopLevelIndexEntry>,
+    start_key: Bytes,
+    end_key: Option<Bytes>,
+
+    // Iteration state
+    top_idx: usize,
+    current_index_block: Option<Block>,
+    index_block_entries: Vec<(u64, u32)>, // (offset, size) pairs for data blocks
+    index_entry_idx: usize,
+    // Store entries from current data block (avoids lifetime issues with iterator)
+    current_block_entries: Vec<(Bytes, Bytes)>,
+    current_entry_idx: usize,
+}
+
+impl SSTableRangeIterator {
+    fn new(
+        file: Arc<Mutex<File>>,
+        block_cache: Arc<Mutex<HashMap<u64, Block>>>,
+        vlog: Option<Arc<Mutex<VLog>>>,
+        top_level_index: Vec<TopLevelIndexEntry>,
+        start_key: &[u8],
+        end_key: Option<&[u8]>,
+    ) -> Self {
+        Self {
+            file,
+            block_cache,
+            vlog,
+            top_level_index,
+            start_key: Bytes::copy_from_slice(start_key),
+            end_key: end_key.map(|k| Bytes::copy_from_slice(k)),
+            top_idx: 0,
+            current_index_block: None,
+            index_block_entries: Vec::new(),
+            index_entry_idx: 0,
+            current_block_entries: Vec::new(),
+            current_entry_idx: 0,
+        }
+    }
+
+    fn load_block(&self, offset: u64, size: u32) -> Result<Block> {
+        // Check cache first
+        {
+            let cache = self.block_cache.lock().unwrap();
+            if let Some(block) = cache.get(&offset) {
+                return Ok(block.clone());
+            }
+        }
+
+        // Load from disk
+        let mut file = self.file.lock().unwrap();
+        file.seek(SeekFrom::Start(offset))?;
+
+        let mut buf = vec![0u8; size as usize];
+        file.read_exact(&mut buf)?;
+        let block_data = Bytes::from(buf);
+        drop(file);
+
+        // Parse and verify block
+        let block = Block::new(block_data)?;
+
+        // Cache the block
+        {
+            let mut cache = self.block_cache.lock().unwrap();
+            cache.insert(offset, block.clone());
+        }
+
+        Ok(block)
+    }
+
+    fn advance_to_next_index_block(&mut self) -> Result<bool> {
+        // Find next relevant top-level index block
+        while self.top_idx < self.top_level_index.len() {
+            let top_entry = &self.top_level_index[self.top_idx];
+
+            // Skip blocks that end before our start key
+            if top_entry.last_key.as_ref() < self.start_key.as_ref() {
+                self.top_idx += 1;
+                continue;
+            }
+
+            // Stop if we've gone past end_key
+            if let Some(ref end) = self.end_key {
+                if top_entry.last_key.as_ref() >= end.as_ref() && self.current_index_block.is_some() {
+                    return Ok(false);
+                }
+            }
+
+            // Load this index block
+            let index_block = self.load_block(top_entry.offset, top_entry.size)?;
+
+            // Extract data block offsets/sizes from index block
+            self.index_block_entries.clear();
+            for entry_result in index_block.iter() {
+                let (_key, value) = entry_result?;
+
+                if value.len() < 12 {
+                    continue;
+                }
+
+                let value_len = value.len();
+                let mut offset_bytes = [0u8; 8];
+                let mut size_bytes = [0u8; 4];
+                offset_bytes.copy_from_slice(&value[value_len - 12..value_len - 4]);
+                size_bytes.copy_from_slice(&value[value_len - 4..]);
+
+                let offset = u64::from_le_bytes(offset_bytes);
+                let size = u32::from_le_bytes(size_bytes);
+
+                self.index_block_entries.push((offset, size));
+            }
+
+            self.current_index_block = Some(index_block);
+            self.index_entry_idx = 0;
+            self.top_idx += 1;
+
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
+    fn advance_to_next_data_block(&mut self) -> Result<bool> {
+        if self.index_entry_idx >= self.index_block_entries.len() {
+            // Need next index block
+            if !self.advance_to_next_index_block()? {
+                return Ok(false);
+            }
+        }
+
+        if self.index_entry_idx < self.index_block_entries.len() {
+            let (offset, size) = self.index_block_entries[self.index_entry_idx];
+            let data_block = self.load_block(offset, size)?;
+
+            // Extract entries from the block (avoids iterator lifetime issues)
+            self.current_block_entries.clear();
+            for entry_result in data_block.iter() {
+                let (key, value) = entry_result?;
+                self.current_block_entries.push((key, value));
+            }
+
+            self.current_entry_idx = 0;
+            self.index_entry_idx += 1;
+
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+}
+
+impl Iterator for SSTableRangeIterator {
+    type Item = Result<(Bytes, Option<Bytes>)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            // Try to get next entry from current data block
+            while self.current_entry_idx < self.current_block_entries.len() {
+                let (key, entry_value) = &self.current_block_entries[self.current_entry_idx];
+                self.current_entry_idx += 1;
+
+                // Check if key is in range
+                if key.as_ref() < self.start_key.as_ref() {
+                    continue;
+                }
+                if let Some(ref end) = self.end_key {
+                    if key.as_ref() >= end.as_ref() {
+                        return None; // Past end of range
+                    }
+                }
+
+                // Decode value
+                if entry_value.is_empty() {
+                    continue;
+                }
+
+                let flag = entry_value[0];
+                let data = entry_value.slice(1..);
+
+                let value_opt = match flag {
+                    FLAG_INLINE => Some(data),
+                    FLAG_POINTER => {
+                        if data.len() < 12 {
+                            continue;
+                        }
+
+                        let offset = u64::from_le_bytes([
+                            data[0], data[1], data[2], data[3],
+                            data[4], data[5], data[6], data[7],
+                        ]);
+                        let length = u32::from_le_bytes([
+                            data[8], data[9], data[10], data[11],
+                        ]);
+
+                        if let Some(ref vlog) = self.vlog {
+                            let mut vlog_guard = vlog.lock().unwrap();
+                            let pointer = ValuePointer { offset, length };
+                            match vlog_guard.read(pointer) {
+                                Ok(value) => Some(value),
+                                Err(e) => return Some(Err(SSTableError::VLog(e.to_string()))),
+                            }
+                        } else {
+                            return Some(Err(SSTableError::VLog("VLog not attached".to_string())));
+                        }
+                    }
+                    FLAG_TOMBSTONE => None,
+                    _ => continue,
+                };
+
+                return Some(Ok((key.clone(), value_opt)));
+            }
+
+            // Need to advance to next data block
+            match self.advance_to_next_data_block() {
+                Ok(true) => continue,
+                Ok(false) => return None,
+                Err(e) => return Some(Err(e)),
+            }
+        }
+    }
+}
+
 impl SSTable {
     pub fn iter(&mut self) -> Result<SSTableIterator> {
         let mut entries = Vec::new();
@@ -848,105 +1078,23 @@ impl SSTable {
         })
     }
 
-    /// Scan a range of keys from this SSTable
+    /// Scan a range of keys from this SSTable using lazy iteration
     ///
-    /// Returns (key, Option<value>) where None indicates a tombstone
+    /// Returns an iterator that yields (key, Option<value>) where None indicates a tombstone.
+    /// Blocks are loaded on-demand as the iterator is consumed, avoiding upfront materialization.
     pub fn scan_range(
-        &mut self,
+        &self,
         start_key: &[u8],
         end_key: Option<&[u8]>,
-    ) -> Result<Vec<(Bytes, Option<Bytes>)>> {
-        let mut entries = Vec::new();
-
-        for top_entry in &self.top_level_index {
-            // Check if this index block might contain keys in our range
-            // If last_key < start_key, skip this block entirely
-            if top_entry.last_key.as_ref() < start_key {
-                continue;
-            }
-
-            let index_block = self.load_block(top_entry.offset, top_entry.size)?;
-
-            for idx_entry in index_block.iter() {
-                let (_index_key, index_value) = idx_entry?;
-
-                let value_len = index_value.len();
-                if value_len < 12 {
-                    continue;
-                }
-
-                let mut offset_bytes = [0u8; 8];
-                let mut size_bytes = [0u8; 4];
-                offset_bytes.copy_from_slice(&index_value[value_len - 12..value_len - 4]);
-                size_bytes.copy_from_slice(&index_value[value_len - 4..]);
-
-                let data_offset = u64::from_le_bytes(offset_bytes);
-                let data_size = u32::from_le_bytes(size_bytes);
-
-                let data_block = self.load_block(data_offset, data_size)?;
-
-                for data_entry in data_block.iter() {
-                    let (key, entry_value) = data_entry?;
-
-                    if key.as_ref() < start_key {
-                        continue;
-                    }
-                    if let Some(end) = end_key {
-                        if key.as_ref() >= end {
-                            // Keys are sorted, can break early
-                            break;
-                        }
-                    }
-
-                    if entry_value.is_empty() {
-                        continue;
-                    }
-
-                    let flag = entry_value[0];
-                    let data = entry_value.slice(1..);
-
-                    let value_opt = match flag {
-                        FLAG_INLINE => Some(data),
-                        FLAG_POINTER => {
-                            if data.len() < 12 {
-                                continue;
-                            }
-
-                            let offset = u64::from_le_bytes([
-                                data[0], data[1], data[2], data[3], data[4], data[5], data[6],
-                                data[7],
-                            ]);
-                            let length = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
-
-                            if let Some(ref vlog) = self.vlog {
-                                let mut vlog_guard = vlog.lock().unwrap();
-                                let pointer = ValuePointer { offset, length };
-                                let value = vlog_guard
-                                    .read(pointer)
-                                    .map_err(|e| SSTableError::VLog(e.to_string()))?;
-                                Some(value)
-                            } else {
-                                return Err(SSTableError::VLog("VLog not attached".to_string()));
-                            }
-                        }
-                        FLAG_TOMBSTONE => None,
-                        _ => continue,
-                    };
-
-                    entries.push((key, value_opt));
-                }
-            }
-
-            // Early exit if we've passed the end_key range
-            // (since top_level_index is sorted by last_key)
-            if let Some(end) = end_key {
-                if top_entry.last_key.as_ref() >= end {
-                    break;
-                }
-            }
-        }
-
-        Ok(entries)
+    ) -> SSTableRangeIterator {
+        SSTableRangeIterator::new(
+            Arc::clone(&self.file),
+            Arc::clone(&self.block_cache),
+            self.vlog.as_ref().map(Arc::clone),
+            self.top_level_index.clone(),
+            start_key,
+            end_key,
+        )
     }
 }
 

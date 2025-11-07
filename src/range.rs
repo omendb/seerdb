@@ -41,9 +41,10 @@ impl RangeIterator {
         // Collect SSTable entries (oldest to newest: LN → L1 → L0)
         // Process in reverse so newer entries override older
         sstables.reverse();
-        for sstable in &mut sstables {
-            let sstable_entries = sstable.scan_range(start_key, end_key)?;
-            for (key, value_opt) in sstable_entries {
+        for sstable in &sstables {
+            let sstable_iter = sstable.scan_range(start_key, end_key);
+            for result in sstable_iter {
+                let (key, value_opt) = result?;
                 // Only insert if key not already present (LSM semantics: newer wins)
                 merged.entry(key).or_insert(value_opt);
             }
