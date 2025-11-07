@@ -208,6 +208,24 @@ pub struct DBOptions {
     /// - Sustained high-throughput: `true` (eliminates 54% blocking time)
     /// - Small datasets/benchmarks: `false` (less overhead)
     pub background_flush: bool,
+
+    /// Enable adaptive compaction (Dostoevsky)
+    ///
+    /// When `true`, uses adaptive size ratios based on workload (read/write ratio).
+    /// When `false`, uses fixed size ratio (traditional LSM).
+    ///
+    /// Default: `false` (for predictable behavior)
+    ///
+    /// **How it works**: Dynamically adjusts LSM level size ratios based on observed workload:
+    /// - Write-heavy workloads → higher ratios (less compaction overhead)
+    /// - Read-heavy workloads → lower ratios (better read performance)
+    /// - Formula from Dostoevsky paper (Dayan & Idreos, Harvard 2018)
+    ///
+    /// Recommended:
+    /// - Mixed workloads: `true` (auto-optimizes for actual usage)
+    /// - Workload varies over time: `true` (adapts dynamically)
+    /// - Consistent workload: `false` (simpler, predictable)
+    pub adaptive_compaction: bool,
 }
 
 impl Default for DBOptions {
@@ -222,6 +240,7 @@ impl Default for DBOptions {
             vlog_threshold: Some(4096),   // WiscKey: 4KB threshold for KV separation (FIXED!)
             background_compaction: false, // Disabled by default for compatibility
             background_flush: false,      // Disabled by default - enable for large workloads
+            adaptive_compaction: false,   // Disabled by default - enable for mixed workloads
         }
     }
 }
@@ -342,6 +361,11 @@ pub struct DB {
     sstable_cache: Arc<Mutex<std::collections::HashMap<PathBuf, Arc<Mutex<SSTable>>>>>,
     /// Cached vLog availability (avoids lock on every get())
     has_vlog: std::sync::atomic::AtomicBool,
+    /// Workload counters for Dostoevsky adaptive compaction
+    /// Total write operations (put + delete) since database opened
+    write_count: std::sync::atomic::AtomicU64,
+    /// Total read operations (get + range scans) since database opened
+    read_count: std::sync::atomic::AtomicU64,
 }
 
 impl DB {
@@ -432,13 +456,24 @@ impl DB {
             None
         };
 
-        // Create LSM tree
-        let mut lsm = LSMTree::new(
-            &options.data_dir,
-            options.base_level_size,
-            options.size_ratio,
-            options.num_levels,
-        );
+        // Create LSM tree (adaptive or fixed strategy)
+        let mut lsm = if options.adaptive_compaction {
+            info!("Using adaptive compaction (Dostoevsky)");
+            LSMTree::new_adaptive(
+                &options.data_dir,
+                options.base_level_size,
+                options.num_levels,
+                4,  // min_ratio: write-heavy workloads
+                20, // max_ratio: read-heavy workloads
+            )
+        } else {
+            LSMTree::new(
+                &options.data_dir,
+                options.base_level_size,
+                options.size_ratio,
+                options.num_levels,
+            )
+        };
 
         // Load existing SSTables from disk
         // This also verifies checksums - will fail if any SSTable is corrupted
@@ -609,6 +644,8 @@ impl DB {
             flush_mutex,
             sstable_cache: Arc::new(Mutex::new(std::collections::HashMap::new())),
             has_vlog: std::sync::atomic::AtomicBool::new(has_vlog),
+            write_count: std::sync::atomic::AtomicU64::new(0),
+            read_count: std::sync::atomic::AtomicU64::new(0),
         };
 
         // Flush memtables if any partition filled up during recovery
@@ -746,6 +783,10 @@ impl DB {
         mt.put(key, value);
         drop(mt); // Release lock early
 
+        // Track write operation for Dostoevsky adaptive compaction
+        self.write_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
         // Check if ANY partition should be flushed (since we have multiple partitions)
         let should_flush = self.memtables.iter().any(|mt| {
             mt.lock().expect("Memtable lock poisoned").should_flush()
@@ -830,6 +871,10 @@ impl DB {
     pub fn get(&self, key: impl AsRef<[u8]>) -> Result<Option<Bytes>> {
         let start = Instant::now();
         let key = key.as_ref();
+
+        // Track read operation for Dostoevsky adaptive compaction
+        self.read_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         // Check correct partition first (most recent data)
         let partition = partition_for_key(key);
@@ -1036,6 +1081,10 @@ impl DB {
         let mt = self.memtables[partition].lock().expect("Memtable lock poisoned");
         mt.delete(key);
         drop(mt); // Release lock early
+
+        // Track write operation for Dostoevsky adaptive compaction
+        self.write_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         // Check if ANY partition should be flushed
         let should_flush = self.memtables.iter().any(|mt| {
@@ -1289,6 +1338,22 @@ impl DB {
 
         // Record flush
         self.metrics.record_flush();
+
+        // Adjust LSM size ratios based on workload (Dostoevsky adaptive compaction)
+        if self.options.adaptive_compaction {
+            let writes = self.write_count.load(std::sync::atomic::Ordering::Relaxed);
+            let reads = self.read_count.load(std::sync::atomic::Ordering::Relaxed);
+            let mut lsm = self.lsm.lock().expect("LSM mutex poisoned");
+            if lsm.adjust_for_workload(writes, reads) {
+                let strategy = lsm.strategy();
+                debug!(
+                    writes = writes,
+                    reads = reads,
+                    ratio = strategy.current_ratio(),
+                    "Dostoevsky: Adjusted LSM size ratio based on workload"
+                );
+            }
+        }
 
         Ok(())
     }
@@ -2079,6 +2144,10 @@ impl DB {
         start_key: &[u8],
         end_key: Option<&[u8]>,
     ) -> Result<RangeIterator> {
+        // Track read operation for Dostoevsky adaptive compaction
+        self.read_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
         // Get all SSTables from LSM tree (in reverse level order: L0, L1, ..., LN)
         let lsm = self.lsm.lock().expect("LSM mutex poisoned");
         let mut sstables = Vec::new();
