@@ -13,8 +13,11 @@ pub type RangeItem = (Bytes, Bytes);
 /// LSM semantics:
 /// - Newer entries (memtable, then L0, L1, ... LN) override older entries
 /// - Tombstones hide older values
+///
+/// Lazy iteration: Only materializes entries on-demand via Iterator::next()
 pub struct RangeIterator {
-    entries: std::vec::IntoIter<RangeItem>,
+    // Lazy iterator over merged BTreeMap (filters tombstones on-demand)
+    merged_iter: std::collections::btree_map::IntoIter<Bytes, Option<Bytes>>,
 }
 
 impl RangeIterator {
@@ -69,13 +72,9 @@ impl RangeIterator {
             merged.insert(key, value_opt);
         }
 
-        let entries: Vec<RangeItem> = merged
-            .into_iter()
-            .filter_map(|(key, value_opt)| value_opt.map(|value| (key, value)))
-            .collect();
-
+        // Return lazy iterator (doesn't materialize entries until next() is called)
         Ok(RangeIterator {
-            entries: entries.into_iter(),
+            merged_iter: merged.into_iter(),
         })
     }
 }
@@ -84,7 +83,14 @@ impl Iterator for RangeIterator {
     type Item = Result<RangeItem, Box<dyn std::error::Error>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.entries.next().map(Ok)
+        // Lazy iteration: skip tombstones, return only live values
+        loop {
+            match self.merged_iter.next() {
+                Some((key, Some(value))) => return Some(Ok((key, value))),
+                Some((_, None)) => continue, // Skip tombstone
+                None => return None,
+            }
+        }
     }
 }
 
