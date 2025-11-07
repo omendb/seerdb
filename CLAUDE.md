@@ -87,26 +87,28 @@
 - ✅ Write amplification: 1.01x with vLog (4.82x better than traditional LSM)
 - ✅ Real-world workloads: 682K ops/sec point queries, 269K ops/sec mixed
 
-**Performance vs RocksDB** (Actual Numbers from baseline_benchmark.rs):
-- ✅ **Reads: 1.04x** (1,080K vs 1,042K ops/sec) - **Competitive**
-- ⚠️ **Writes: 0.61x** (219K vs 360K ops/sec) - 39% slower
-- ⚠️ **Mixed: 0.65x** (265K vs 408K ops/sec) - 35% slower
-- 🔴 **Scans: 0.04x** (813 vs 20,097/sec) - **96% slower, NOT production ready**
+**Performance vs RocksDB** (After All Optimizations - baseline_benchmark.rs):
+- ✅ **Reads: 1.04x** (1,082K vs 1,042K ops/sec) - **Competitive** ✅
+- ⚠️ **Writes: 0.73x** (262K vs 360K ops/sec) - 27% slower (improved from 39%)
+- ⚠️ **Mixed: 0.67x** (~275K vs 408K ops/sec) - 33% slower
+- 🔴 **Scans: 0.04x** (802 vs 19,262/sec) - **96% slower, NOT production ready**
 - ✅ **Write amp: 4.82x better** (1.01x vs 4.88x traditional LSM)
 
-**Honest Performance Assessment** (Nov 6, 2025):
-- ⚠️ **Previous claims were incorrect** (used wrong RocksDB baseline numbers)
-- ✅ **Reads are competitive**: 1.04x RocksDB (essentially equal)
+**Optimization Results** (Nov 6, 2025):
+- ✅ **Write performance**: +19.6% improvement (219K → 262K ops/sec)
+  - Record encoding optimization: +14.6%
+  - WAL batch tuning (8MB/100ms): +4.5%
+- ✅ **Reads remain competitive**: 1.04x RocksDB
 - ✅ **Write amp is excellent**: 4.82x better than traditional LSM
-- ⚠️ **Writes need work**: 39% slower than RocksDB, 48% slower than fjall
-- 🔴 **Range scans broken**: 96% slower (architectural issue in SSTable::scan_range)
+- ⚠️ **Writes still 27% slower** than RocksDB (architectural limit)
+- 🔴 **Range scans broken**: 96% slower (needs SSTable iterator refactor)
 
 **Use cases**:
-- ✅ **Good for**: Read-heavy workloads, vector DBs, document stores (low write amp matters)
-- ⚠️ **Caution**: Write-heavy workloads (fjall is faster)
+- ✅ **Good for**: Read-heavy workloads, vector DBs, document stores, append logs
+- ⚠️ **Caution**: Write-heavy workloads (fjall is 38% faster)
 - ❌ **Avoid**: Range-heavy workloads (24x slower than RocksDB)
 
-**For complete analysis**: See `/tmp/performance_reality.md`
+**Complete analysis**: See `/tmp/final_optimization_summary.md`
 
 ### Key Papers to Read (Priority Order)
 
