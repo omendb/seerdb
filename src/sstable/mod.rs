@@ -565,22 +565,9 @@ impl SSTable {
     }
 
     fn find_index_block(&self, key: &[u8]) -> Option<(u64, u32)> {
-        // ALEX learned index disabled - needs efficient lower_bound API
-        //
-        // Current issue: ALEX's lower_bound() materializes all key-value pairs in the leaf
-        // via pairs() (which clones values and sorts), making it 45% slower than partition_point.
-        //
-        // What we need: A GappedNode method that efficiently finds first key >= search_key
-        // without materializing/cloning data, using the linear model prediction directly.
-        //
-        // TODO: Implement efficient lower_bound in GappedNode:
-        //   1. Use linear model to predict position
-        //   2. Scan forward from predicted position (small error bound)
-        //   3. Return first key >= search_key WITHOUT cloning value
-        //   4. Then use that key to lookup the stored index value
-        //
-        // Expected improvement: 30-50% faster than partition_point (O(1) vs O(log n))
-        let idx = if false && let Some(ref alex) = self.alex_index {
+        // ALEX learned index with optimized lower_bound
+        // Uses keys_only() + binary search instead of pairs() linear scan
+        let idx = if let Some(ref alex) = self.alex_index {
             let key_i64 = bytes_to_i64(key);
 
             // This code works correctly but is slower than partition_point

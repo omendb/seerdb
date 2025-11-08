@@ -476,6 +476,18 @@ impl GappedNode {
         Ok(())
     }
 
+    /// Get all keys (without values) for efficient searching
+    ///
+    /// Returns Vec of (key, position) pairs without cloning values.
+    /// Much faster than pairs() for lower_bound operations.
+    pub fn keys_only(&self) -> Vec<(i64, usize)> {
+        self.keys
+            .iter()
+            .enumerate()
+            .filter_map(|(pos, key_opt)| key_opt.map(|key| (key, pos)))
+            .collect()
+    }
+
     /// Get current density (fraction of capacity that is filled)
     ///
     /// Density = num_keys / capacity

@@ -157,11 +157,22 @@ impl AlexTree {
         let start_leaf_idx = self.find_leaf_index(search_key);
 
         // Search this leaf and subsequent leaves for first key >= search_key
+        // OPTIMIZATION: Use keys_only() + binary search instead of pairs() linear scan
         for leaf in &self.leaves[start_leaf_idx..] {
-            // Get all pairs from this leaf (already sorted by key)
-            for (key, value) in leaf.pairs() {
-                if key >= search_key {
-                    // Found first key >= search_key
+            // Get keys without cloning values
+            let keys = leaf.keys_only();
+
+            if keys.is_empty() {
+                continue;
+            }
+
+            // Binary search for first key >= search_key
+            let idx = keys.partition_point(|(k, _pos)| *k < search_key);
+
+            if idx < keys.len() {
+                let (key, _pos) = keys[idx];
+                // Found the key, now get its value
+                if let Ok(Some(value)) = leaf.get(key) {
                     return Ok(Some((key, value)));
                 }
             }
