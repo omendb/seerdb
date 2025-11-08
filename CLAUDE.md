@@ -252,32 +252,39 @@ seerdb/
 
 ---
 
-## Next Steps: Close fjall Gap
+## Next Phase: Close fjall Gap (Nov 8-15, 2025)
 
 **Current Gap**: 14% behind fjall on mixed workload (718K vs 832K)
 
-### Investigation Priorities
+**The Mystery**: We're faster on BOTH pure workloads but slower on mixed!
+- ✅ Writes: 2.06x faster than fjall
+- ✅ Reads: 1.90x faster than fjall
+- ❌ Mixed: 0.86x slower than fjall
 
-1. **🔍 Deep-dive fjall mixed workload** (PRIORITY 1)
-   - Profile their code path for mixed operations
-   - Identify specific optimizations we're missing
-   - Benchmark their read/write balance strategies
+**Critical Finding**: fjall achieves >100% theoretical mixed performance (832K vs 794K theoretical max)!
 
-2. **📊 Large-scale benchmark evaluation** (PRIORITY 2)
-   - Test rkyv at 1M+ ops (does zero-copy help at scale?)
-   - Test multi-tier caching with larger datasets
-   - Identify if current 100K benchmark misses benefits
+### Three Focus Areas
 
-3. **💾 mmap Investigation** (PRIORITY 3)
-   - Evaluate mmap for read-only SSTables
-   - Compare vs current cached reads
-   - Assess complexity vs benefit
+1. **🔍 Investigate fjall's Code** (Days 1-2) - **PRIORITY 1**
+   - Clone and analyze their mixed workload implementation
+   - Identify read/write pipelining, batch synergies, cache optimizations
+   - Profile our mixed workload for comparison
+   - **Goal**: Find specific techniques we're missing
+   - **Potential**: +10-20% improvement
 
-4. **🧪 Comprehensive Stability Testing**
-   - Stress tests (multi-day runs)
-   - Crash recovery validation
-   - Data integrity verification
-   - Memory leak detection
+2. **📊 Create Large-Scale Benchmarks** (Day 3) - **PRIORITY 2**
+   - Current 100K benchmark too small (95%+ cache hit rate)
+   - Create 1M ops (1GB dataset) and 10M ops (10GB dataset) benchmarks
+   - Implement Zipfian distribution (realistic 80/20 access pattern)
+   - **Goal**: Validate rkyv/caching benefits at scale
+   - **Rationale**: Small benchmarks don't show cache pressure
+
+3. **🧪 Test rkyv + Multi-Tier Cache** (Day 4) - **PRIORITY 3**
+   - Test rkyv zero-copy deserialization at 1M+ scale
+   - Test multi-tier cache (L1 decompressed + L3 compressed)
+   - Data-driven decision (implement if >5% improvement each)
+   - **Goal**: Validate optimizations with real data, not theory
+   - **Potential**: +13-22% combined if validated
 
 ---
 

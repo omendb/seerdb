@@ -1,10 +1,11 @@
 # STATUS - seerdb
 
-**Last Updated**: November 8, 2025 - jemalloc Allocator (+17-21%)  🚀
-**Current Phase**: **Production-Ready** ✅ 🏆
+**Last Updated**: November 8, 2025 - Next Phase: Close fjall Gap 🎯
+**Current Phase**: **Investigating Performance Gap** 🔍
 **Tests**: All tests passing ✅
 **Data Integrity**: **100%** ✅
 **Latest Commits**:
+- `d23ce89` - docs: add comprehensive investigation of remaining optimizations
 - `4f27296` - perf: use jemalloc allocator (+17-21% all workloads)
 - `a75aa8b` - perf: add SIMD to k-way merge for range scans
 - `0e25f1f` - feat: convert immutable_memtables and LSM tree to lock-free ArcSwap
@@ -71,6 +72,111 @@
 - Per-thread arenas eliminate lock contention
 
 **Complete analysis**: `/tmp/allocator_comparison.md`
+
+---
+
+## Next Phase: Close fjall Gap (Nov 8-15, 2025) 🎯
+
+### The Mystery: fjall Mixed Workload Advantage
+
+**Current Gap**: 14% behind fjall on mixed (718K vs 832K ops/sec)
+
+**The Paradox**:
+- ✅ We're 2.06x faster on writes (878K vs 427K)
+- ✅ We're 1.90x faster on reads (2,207K vs 1,161K)
+- ❌ We're 0.86x slower on mixed (718K vs 832K)
+
+**Critical Discovery**: fjall achieves >100% theoretical mixed performance!
+```
+fjall theoretical max: (427K writes + 1,161K reads) / 2 = 794K
+fjall actual mixed: 832K (104.8% efficiency!)
+```
+
+This suggests fjall has:
+- Read/write pipelining (operations overlap)
+- Batch synergies (mixed triggers optimizations)
+- Cache warming (writes benefit reads)
+
+### Three Focus Areas
+
+#### 1. 🔍 **Investigate fjall's Code** (Priority 1 - Days 1-2)
+
+**Action**:
+- Clone fjall repository
+- Analyze their mixed workload code path
+- Identify read/write pipelining optimizations
+- Profile our mixed workload for bottlenecks
+- Compare architectures
+
+**Expected Outcome**: Find specific optimizations we're missing
+**Potential**: +10-20% if we implement their techniques
+**Timeline**: 1-2 days
+
+---
+
+#### 2. 📊 **Large-Scale Benchmarks** (Priority 2 - Day 3)
+
+**Problem**: Our 100K benchmark is too small
+
+**Current benchmarks**:
+- 100K ops, ~100MB dataset
+- Cache hit rate: ~95%+
+- Working set fits entirely in cache
+- **Result**: Doesn't stress rkyv or multi-tier caching
+
+**New benchmarks to create**:
+```rust
+Small:  100K ops, 100MB   (current)
+Medium: 1M ops, 1GB       (NEW - shows cache pressure)
+Large:  10M ops, 10GB     (NEW - stress test)
+```
+
+**Access patterns**:
+- Uniform random (worst case cache)
+- Zipfian (realistic - 80/20 rule)
+- Sequential (best case cache)
+
+**Expected Outcome**: Validate rkyv/caching benefits at scale
+**Timeline**: 1 day
+
+---
+
+#### 3. 🧪 **Test rkyv + Multi-Tier Cache at Scale** (Priority 3 - Day 4)
+
+**Test Plan**:
+1. Run 1M ops baseline
+2. Run 1M ops with rkyv (zero-copy deserialization)
+3. Run 1M ops with multi-tier cache (L1 decompressed + L3 compressed)
+4. Run 1M ops with both
+5. Measure actual benefits vs theoretical
+
+**Expected Benefits** (at 1M+ scale):
+- rkyv: +5-10% (7x faster deserialization on cache misses)
+- Multi-tier cache: +8-12% (2x effective cache capacity)
+- **Combined**: +13-22% potential
+
+**Decision criteria**:
+- If rkyv shows >5% improvement → implement
+- If multi-tier cache shows >8% improvement → implement
+- If combined >15% → implement both
+
+**Timeline**: 1 day
+
+---
+
+### Success Metrics
+
+**Week 1 Goals** (Nov 8-15):
+- ✅ Understand fjall's mixed workload advantage
+- ✅ Validate rkyv/caching benefits at scale (data-driven)
+- ✅ Implement winning optimizations
+- 🎯 **Target**: Close fjall gap from -14% to +5% (beat them!)
+
+**Target Performance** (after optimizations):
+- Writes: 878K (maintain) 🏆
+- Reads: 2,207K (maintain) 🏆
+- **Mixed: 850K+ (+18% from 718K)** 🎯 **BEAT FJALL**
+- Scans: 19.6K (maintain)
 
 ---
 
