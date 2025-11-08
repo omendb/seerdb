@@ -1315,6 +1315,7 @@ dependencies = [
  "bytes",
  "crc32c",
  "criterion",
+ "crossbeam-channel",
  "crossbeam-skiplist",
  "fjall",
  "hdrhistogram",
