@@ -24,7 +24,6 @@
 // - Space savings: 30-50% for keys with common prefixes
 
 use bytes::{Bytes, BytesMut};
-use std::cmp::Ordering;
 use std::io;
 use std::sync::{Arc, OnceLock};
 use thiserror::Error;
@@ -247,8 +246,8 @@ impl Block {
             self.decompress_all_entries()
         });
 
-        // Binary search for exact match using SIMD-accelerated comparison
-        match entries.binary_search_by(|(k, _)| simd::compare_keys(k.as_ref(), key)) {
+        // Binary search for exact match
+        match entries.binary_search_by(|(k, _)| k.as_ref().cmp(key)) {
             Ok(idx) => Some(entries[idx].clone()),
             Err(_) => None,
         }
@@ -261,10 +260,8 @@ impl Block {
             self.decompress_all_entries()
         });
 
-        // Binary search for first entry where entry_key >= key (using SIMD comparison)
-        let idx = entries.partition_point(|(k, _)| {
-            matches!(simd::compare_keys(k.as_ref(), key), Ordering::Less)
-        });
+        // Binary search for first entry where entry_key >= key
+        let idx = entries.partition_point(|(k, _)| k.as_ref() < key);
 
         if idx < entries.len() {
             Some(entries[idx].clone())
