@@ -41,7 +41,7 @@ pub type Result<T> = std::result::Result<T, SSTableError>;
 
 /// Magic number for SSTable format: "SSTB"
 const MAGIC: u32 = 0x53535442;
-const VERSION: u32 = 0x00000002; // v2: Block-based with varint encoding (format-breaking change)
+const VERSION: u32 = 0x00000001; // v1: Format versions don't matter until we release
 
 /// Entry value type flags
 pub const FLAG_INLINE: u8 = 0x00;
