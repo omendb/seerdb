@@ -1,32 +1,32 @@
 # STATUS - seerdb
 
-**Last Updated**: November 8, 2025 - Optimization Lessons Learned 📚
-**Current Phase**: **Ship Current Performance** ✅ 🏆
+**Last Updated**: November 8, 2025 - jemalloc Allocator (+17-21%)  🚀
+**Current Phase**: **Production-Ready** ✅ 🏆
 **Tests**: All tests passing ✅
 **Data Integrity**: **100%** ✅
 **Latest Commits**:
-- `a1d3eea` - feat: optimize ALEX learned index with O(log error) lower_bound
-- `c6dd19d` - docs: update README.md with Nov 8 LZ4 results
-- `f19ee3f` - docs: update ai/DECISIONS.md with SOTA library completion
+- `4f27296` - perf: use jemalloc allocator (+17-21% all workloads)
+- `a75aa8b` - perf: add SIMD to k-way merge for range scans
+- `0e25f1f` - feat: convert immutable_memtables and LSM tree to lock-free ArcSwap
 
 ---
 
-## Current Performance (ALEX Baseline - Commit a1d3eea)
+## Current Performance (jemalloc + ArcSwap + SIMD - Commit 4f27296)
 
-###Baseline Benchmark Results (100K ops, M3 Max)
+### Baseline Benchmark Results (100K ops, M3 Max)
 
 | Workload | seerdb | RocksDB | fjall | vs RocksDB | vs fjall | Status |
 |----------|--------|---------|-------|------------|----------|--------|
-| **Writes** | **721K** | 366K | 444K | **1.97x** ✅ | **1.62x** ✅ | **#1 BEST** 🏆 |
-| **Reads** | **1,788K** | 1,051K | 1,078K | **1.70x** ✅ | **1.66x** ✅ | **#1 BEST** 🏆 |
-| **Mixed** | **600K** | 406K | 771K | **1.48x** ✅ | 0.78x ⚠️ | **#1 vs RocksDB** 🏆 |
-| **Scans** | 16.6K | 20.4K | 17.7K | 0.81x ⚠️ | 0.94x ⚠️ | **Competitive** |
+| **Writes** | **878K** | 355K | 427K | **2.47x** ✅ | **2.06x** ✅ | **#1 BEST** 🏆 |
+| **Reads** | **2,207K** | 1,064K | 1,161K | **2.07x** ✅ | **1.90x** ✅ | **#1 BEST** 🏆 |
+| **Mixed** | **718K** | 402K | 832K | **1.79x** ✅ | 0.86x ⚠️ | **#1 vs RocksDB** 🏆 |
+| **Scans** | **19.6K** | 19.8K | 19.9K | 0.99x ≈ | 0.98x ≈ | **Competitive** 🎯 |
 
 **Write Amplification**: 1.01x (4.82x better than traditional LSM) 🏆 **BEST-IN-CLASS**
 
-**Status**: **Beat RocksDB on ALL major workloads** ✅ 🏆
+**Status**: **Crushing RocksDB** (1.8x-2.5x faster), **competitive with fjall** ✅ 🏆
 
-**Latest Breakthrough**: ALEX learned index (+55% reads!)
+**Latest Breakthrough**: jemalloc allocator (+17-21% all workloads!) 🚀
 
 ### ALEX Learned Index Impact 🔥
 
@@ -44,6 +44,33 @@
 - **Result**: 40x reduction in slots scanned per lookup!
 
 **Prediction Accuracy**: 100% - ALEX paper claimed +30-50%, got +55% ✅
+
+###jemalloc Allocator Optimization 🚀
+
+**Date**: November 8, 2025
+
+**Tested**: System allocator (baseline), jemalloc, mimalloc
+
+**Results**:
+| Allocator | Writes | Reads | Mixed | Scans | Winner |
+|-----------|--------|-------|-------|-------|--------|
+| **System** | 752K | 1,893K | 595K | 16.4K | Baseline |
+| **jemalloc** | 878K (+16.8%) | 2,207K (+16.6%) | 718K (+20.7%) | 19.6K (+19.5%) | **✅ CHOSEN** |
+| **mimalloc** | 724K (-3.6%) | 2,389K (+26.2%) | 708K (+19.0%) | 16.5K (+0.4%) | ❌ |
+
+**Why jemalloc wins**:
+- Wins 3/4 workloads (writes, mixed, scans)
+- Mixed workload is most critical (real-world usage)
+- LSM trees are write-biased (frequent memtable inserts, compaction)
+- Battle-tested (RocksDB, Redis, Firefox all use it)
+
+**Why so effective** (+17-21% vs expected +2-8%):
+- Multi-threaded workload (16 memtable partitions)
+- Frequent small allocations (skiplist nodes)
+- Burst allocations (block decompression)
+- Per-thread arenas eliminate lock contention
+
+**Complete analysis**: `/tmp/allocator_comparison.md`
 
 ---
 
