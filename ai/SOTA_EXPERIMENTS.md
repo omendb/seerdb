@@ -23,7 +23,7 @@
 
 ### Implementation
 
-Copied complete ALEX module from omen-org archive:
+Copied complete ALEX module from organization archive:
 - `src/alex/alex_tree.rs` - Main tree structure (11KB)
 - `src/alex/gapped_node.rs` - Leaf nodes with gaps for inserts (26KB)
 - `src/alex/linear_model.rs` - Linear regression models (15KB)
@@ -66,7 +66,7 @@ Binary search is O(log n), ALEX model prediction is ~O(1), so larger indexes see
 - End-to-end speedup will be much smaller (disk I/O dominates)
 
 **But**:
-- Proven, production-ready implementation (from omen-org)
+- Proven, production-ready implementation (from organization)
 - Scales with data size
 - 70-94% memory reduction is valuable
 - Low risk to integrate

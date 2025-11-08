@@ -225,7 +225,7 @@ Each "optimization" added:
 - ✅ Beat RocksDB on ALL 3 major workloads (+48-97%)
 - ✅ ALEX learned index delivering massive wins (+55% reads!)
 - ✅ Excellent performance: 1.48x-1.97x faster than industry standard
-- ✅ Production ready for omen integration
+- ✅ Production ready for database integration
 - ✅ Learned NOT to over-optimize (critical lesson)
 - ✅ Clean, maintainable codebase
 
@@ -237,8 +237,8 @@ Each "optimization" added:
 - "Research-grade storage engine with proven learned data structures"
 
 **Next steps**:
-1. Integrate into omen (replace RocksDB)
-2. Measure real-world omen performance
+1. Integrate into database (replace RocksDB)
+2. Measure real-world database performance
 3. Optimize based on actual bottlenecks (not synthetic benchmarks)
 
 **Timeline**: Ready to ship NOW
@@ -275,7 +275,7 @@ Each "optimization" added:
 - ALEX delivering massive wins (+55% reads)
 - Excellent absolute performance (600K+ mixed, 721K+ writes, 1.8M+ reads)
 - Learned critical lessons about optimization (measure, don't guess!)
-- Real-world omen workload > synthetic benchmarks
+- Real-world database workload > synthetic benchmarks
 - Clean codebase, no technical debt
 
 ---
@@ -366,7 +366,7 @@ Each "optimization" added:
 - Critical lessons learned (measure, don't guess!)
 - Real-world validation > synthetic optimization
 
-**Next Sprint**: Integrate into omen, validate real-world performance
+**Next Sprint**: Integrate into production, validate real-world performance
 
 ---
 

@@ -157,7 +157,7 @@ seerdb/
 - May use seerdb for write-heavy workloads
 - **Status**: seerdb functional, but slower than RocksDB
 
-**omen-queue** (Job queue):
+**queue applications** (Job queue):
 - Paused, may use seerdb
 - **Status**: Evaluating fit for high-throughput write workloads
 

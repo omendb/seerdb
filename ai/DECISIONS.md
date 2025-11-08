@@ -12,7 +12,7 @@
 
 **Rationale**:
 - LSM trees optimize for write-heavy workloads
-- All target workloads (omen vectors, queue, time series) are write-heavy
+- All target workloads (database vectors, queue, time series) are write-heavy
 - Research papers focus on LSM optimizations (learned components fit naturally)
 
 **Trade-offs**:
@@ -51,7 +51,7 @@
 **Decision**: Store large values (>4KB threshold) separately in value log (vLog)
 
 **Rationale**:
-- omen vectors are 512-4096 bytes (embeddings)
+- database vectors are 512-4096 bytes (embeddings)
 - WiscKey shows 10-100x write amplification reduction
 - LSM size reduction: 50x smaller (100GB → 2GB for 1KB values)
 - Industrial validation: BlobDB, Titan, TerarkDB, BadgerDB
@@ -66,7 +66,7 @@
 **Threshold Tuning**:
 - BadgerDB: 4KB default
 - TerarkDB: 512B default
-- seerdb initial: 4KB (tune based on omen workload benchmarks)
+- seerdb initial: 4KB (tune based on database workload benchmarks)
 - Rule: Separate if value_size > key_size * 10 (rough heuristic)
 
 **Trade-offs**:
@@ -80,7 +80,7 @@
 - ❌ Small values: Overhead not worth it
 
 **When to Use**:
-- ✅ Values >1KB that dominate storage (omen vectors: YES)
+- ✅ Values >1KB that dominate storage (database vectors: YES)
 - ✅ Write-heavy workloads (omen: append-heavy documents)
 - ✅ SSDs (can exploit parallel reads)
 - ❌ Small uniform values <256B (queue metadata: NO)
@@ -98,13 +98,13 @@
 
 **Rationale**:
 - Memory safety without GC overhead
-- Easier integration with omen (also Rust)
+- Easier integration with database (also Rust)
 - Modern async/await for I/O
 - SIMD intrinsics well-supported
 
 **Trade-offs**:
 - ✅ Memory safety
-- ✅ Easy omen integration
+- ✅ Easy database integration
 - ✅ Modern tooling
 - ❌ Less mature ecosystem than C++ (fewer libraries)
 - ❌ Learning curve for unsafe code (if needed)
@@ -119,7 +119,7 @@
 - Prevents cloud providers from offering managed seerdb
 - Allows self-hosting and embedding
 - Source-available (not closed source)
-- Same license as omen ecosystem
+- Same license as database ecosystem
 
 **Trade-offs**:
 - ✅ Protects commercial interests
@@ -155,7 +155,7 @@
 **Decision**: Detect workload patterns and adapt compaction strategy
 
 **Rationale**:
-- omen has distinct workloads (append-heavy vectors, FIFO queue, time series)
+- database has distinct workloads (append-heavy vectors, FIFO queue, time series)
 - Generic LSM tuning (RocksDB) suboptimal for all
 - Tucana shows 3x throughput improvement vs RocksDB
 
@@ -183,7 +183,7 @@
 - Neural networks (original Kraska paper - too complex)
 
 **Rationale**:
-- ALEX code available in omen-org/ (can adapt)
+- ALEX code available in organization/ (can adapt)
 - Handles updates/deletes (critical for dynamic data)
 - 2.2x faster than original learned index, 4.1x faster than B+trees
 - Production-quality implementation exists (Microsoft Research)
@@ -202,7 +202,7 @@
    - Write amp: High (11x at T=10)
    - Read amp: Low (disjoint key ranges)
    - Use case: Read-heavy workloads
-   - ❌ Too much write amp for omen workload
+   - ❌ Too much write amp for database workload
 
 2. **Tiered (Cassandra-style)**:
    - Write amp: Low (good for writes)
@@ -217,16 +217,16 @@
    - Write amp: Better than leveled
    - Read amp: Better than tiered
    - Space amp: Similar to leveled (~11%)
-   - Use case: Mixed workloads (omen vectors)
+   - Use case: Mixed workloads (database vectors)
 
 4. **Fragmented (PebblesDB)**:
    - Write amp: Best (2.4-3x better than RocksDB)
    - Read amp: Worst (multiple sstables per guard)
    - Use case: Pure write-heavy, no range scans
-   - ❌ omen needs range queries (vector search top-K)
+   - ❌ database needs range queries (vector search top-K)
 
 **Rationale**:
-- **omen vectors**: Append-heavy + range scans (vector search top-K)
+- **database vectors**: Append-heavy + range scans (vector search top-K)
 - Lazy Leveling balances both needs perfectly
 - Largest level disjoint → efficient range queries
 - Upper levels tiered → reduced write amplification
@@ -239,13 +239,13 @@
 - Adaptive tuning: Future enhancement (Phase 3)
 
 **Workload Mapping**:
-- **omen vectors**: Lazy Leveling ✅ (balanced read/write, range scans)
-- **omen-queue**: Tiered (pure write-heavy, FIFO, no range scans)
-- **omen time series**: Lazy Leveling (append-heavy + time-range queries)
+- **database vectors**: Lazy Leveling ✅ (balanced read/write, range scans)
+- **queue applications**: Tiered (pure write-heavy, FIFO, no range scans)
+- **database time series**: Lazy Leveling (append-heavy + time-range queries)
 
 **Trade-offs**:
 - ✅ Best balance for mixed workloads
-- ✅ omen workload fits perfectly
+- ✅ database workload fits perfectly
 - ✅ Can add adaptive tuning later (Dostoevsky model)
 - ❌ More complex than pure leveled or tiered
 - ❌ Need to implement both strategies
@@ -1092,7 +1092,7 @@ loop {
 - ⚠️ 22% gap vs fjall on mixed (architectural trade-off)
 - ⚠️ 19% gap vs RocksDB on scans (acceptable)
 
-**Next**: Integrate into omen, validate real-world performance
+**Next**: Integrate into production, validate real-world performance
 
 ---
 

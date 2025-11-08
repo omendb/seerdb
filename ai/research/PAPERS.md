@@ -80,7 +80,7 @@ If data has patterns → ML models can exploit them better than generic structur
 - **SSTable index**: Use ALEX-style learned index instead of binary search
 - **Memtable**: Potential alternative to skiplist (need to benchmark)
 - **Adaptive**: Models adapt to changing workload patterns (aligns with seerdb goals)
-- **Code availability**: Archived implementation in omen-org/ can be adapted for seerdb
+- **Code availability**: Archived implementation in organization/ can be adapted for seerdb
 
 **Implementation Complexity**: Medium-High
 - Gapped array management
@@ -99,10 +99,10 @@ If data has patterns → ML models can exploit them better than generic structur
 - ❌ Gap management adds complexity
 
 **Notes**:
-- Code archived in omen-org/ (can use when needed for seerdb)
+- Code archived in organization/ (can use when needed for seerdb)
 - Microsoft Research backing (production-quality implementation exists)
 - Good fit for SSTable index blocks (sorted, mostly immutable after compaction)
-- Not currently in omen production (available for seerdb implementation)
+- Not currently in database production (available for seerdb implementation)
 
 ---
 
@@ -255,7 +255,7 @@ Compaction: Only compact keys in LSM-tree (values untouched)
 - **Result**: Maintains range query performance despite value separation
 
 **Application to seerdb**:
-- **omen vectors**: Large embeddings (512-4096 bytes) → perfect for KV separation
+- **database vectors**: Large embeddings (512-4096 bytes) → perfect for KV separation
 - **Threshold**: Values >4KB separated (need to tune for workload)
 - **LSM tree**: Stays small (more fits in cache, faster compaction)
 - **vLog**: Sequential writes (SSD-friendly), parallel reads
@@ -266,7 +266,7 @@ Compaction: Only compact keys in LSM-tree (values untouched)
 - Parallel prefetching for range queries
 - Crash recovery (vLog head pointer persistence)
 
-**Priority**: Must-have (critical for omen large value workload)
+**Priority**: Must-have (critical for database large value workload)
 
 **Trade-offs**:
 - ✅ Write amplification: 10-100x reduction
@@ -299,13 +299,13 @@ Compaction: Only compact keys in LSM-tree (values untouched)
 **Value Size Thresholds in Practice**:
 - BadgerDB: 4KB default
 - TerarkDB: 512B default
-- seerdb target: 4KB (tune based on omen workload analysis)
+- seerdb target: 4KB (tune based on database workload analysis)
 
 **Notes**:
 - Fundamental trade-off: Write amplification vs space amplification
-- Perfect fit for omen vectors (large embeddings, append-heavy)
+- Perfect fit for database vectors (large embeddings, append-heavy)
 - Need careful tuning: threshold, GC frequency, prefetch strategy
-- Should benchmark with real omen workload before committing
+- Should benchmark with real database workload before committing
 
 ---
 
@@ -386,11 +386,11 @@ Generalization of entire LSM-tree design space:
 **Application to seerdb**:
 
 **Workload Analysis**:
-- **omen vectors**: Append-heavy writes + range scans (vector search top-K)
+- **database vectors**: Append-heavy writes + range scans (vector search top-K)
   - → **Lazy Leveling** (balance writes and range queries)
-- **omen-queue**: High write throughput, FIFO access
+- **queue applications**: High write throughput, FIFO access
   - → **Tiered** (optimize for writes)
-- **omen time series**: Append-only + time-range queries
+- **database time series**: Append-only + time-range queries
   - → **Lazy Leveling** (range queries important)
 
 **Configuration Strategy**:
@@ -432,7 +432,7 @@ Generalization of entire LSM-tree design space:
 **Notes**:
 - Dostoevsky provides mathematical framework for LSM tuning
 - Lazy Leveling is sweet spot for most workloads
-- omen workload (append-heavy + range scans) fits Lazy Leveling perfectly
+- database workload (append-heavy + range scans) fits Lazy Leveling perfectly
 - Should implement adaptive tuning in Phase 3 (workload-aware)
 - Start simple (fixed T=10, Lazy Leveling), optimize later
 
@@ -523,9 +523,9 @@ FLSM: Only append, no same-level rewrites
 **Application to seerdb**:
 
 **When PebblesDB Fits**:
-- ✅ Write-heavy workloads (omen-queue: high enqueue rate)
+- ✅ Write-heavy workloads (queue applications: high enqueue rate)
 - ✅ Point lookups with bloom filters
-- ❌ NOT for range-scan heavy workloads (omen vectors)
+- ❌ NOT for range-scan heavy workloads (database vectors)
 - ❌ Read latency critical applications
 
 **Comparison**:
@@ -534,8 +534,8 @@ FLSM: Only append, no same-level rewrites
 - **PebblesDB**: Better for pure write-heavy workloads
 
 **For seerdb**:
-- **omen vectors**: Dostoevsky Lazy Leveling (range scans important)
-- **omen-queue**: PebblesDB OR Tiered (write throughput critical, small values)
+- **database vectors**: Dostoevsky Lazy Leveling (range scans important)
+- **queue applications**: PebblesDB OR Tiered (write throughput critical, small values)
 - Likely choose Lazy Leveling (more general, similar write amp benefits)
 
 **Implementation Complexity**: Medium
@@ -561,8 +561,8 @@ FLSM: Only append, no same-level rewrites
 - Complementary to WiscKey (can combine both techniques)
 - Alternative to Dostoevsky Lazy Leveling
 - Better for pure write workloads, worse for reads
-- omen workload has range queries (vector search) → Lazy Leveling better fit
-- Consider for omen-queue (write-heavy, no range scans)
+- database workload has range queries (vector search) → Lazy Leveling better fit
+- Consider for queue applications (write-heavy, no range scans)
 - Implementation on HyperLevelDB shows it's production-ready
 
 ---
@@ -721,7 +721,7 @@ FLSM: Only append, no same-level rewrites
 **Key Idea**: Adapt learned bloom filters to dynamic data streams
 - Handles changing data distributions over time
 - Relevant for queue workloads (high throughput, dynamic)
-- Consider for omen-queue integration
+- Consider for queue applications integration
 
 ---
 

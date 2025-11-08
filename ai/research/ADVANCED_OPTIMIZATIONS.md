@@ -342,7 +342,7 @@ fn load_block(&self, offset: u64) -> Result<Block> {
 3. **Complexity** vs **uncertain gain**
 
 **When to reconsider**:
-- After integrating into omen
+- After integrating into production
 - If profiling shows >15% cache miss rate
 - If production workload has temporal locality
 
@@ -546,7 +546,7 @@ let (res, buf) = file.read_at(buf, offset).await;
    - Then try mimalloc (potentially faster)
    - Keep whichever performs best (or neither if <3% gain)
 
-2. **📅 Profile Real Workloads** (after omen integration)
+2. **📅 Profile Real Workloads** (after database integration)
    - Identify actual bottlenecks
    - Measure cache hit rates
    - Measure I/O vs compute time split
@@ -571,7 +571,7 @@ let (res, buf) = file.read_at(buf, offset).await;
 
 **Shipping Matters**:
 - Current performance already beats RocksDB by 47-103%
-- Integration into omen validates assumptions
+- Integration into database validates assumptions
 - Can optimize based on production metrics
 
 ---

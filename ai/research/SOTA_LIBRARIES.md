@@ -32,7 +32,7 @@
 
 ### Vector DB Workload Characteristics
 ```
-Typical omen vector query:
+Typical database vector query:
 1. Point lookup: Get embedding by ID (1KB-4KB value)
 2. Range scan: Get top-K neighbors (100-1000 results)
 3. Write: Insert new document + embedding

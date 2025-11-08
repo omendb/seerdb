@@ -63,7 +63,7 @@ If data has patterns → ML models can replace traditional structures
 - **Stable Learned Bloom Filters for Data Streams** (VLDB 2020)
   - Adapts to changing data distributions
   - 97% space savings claim (on streaming data)
-  - Relevant for omen-queue (high throughput, dynamic workload)
+  - Relevant for queue applications (high throughput, dynamic workload)
 
 ---
 
@@ -141,7 +141,7 @@ Query(key) → initial_bloom(key) → false?
 - Tiered compaction (optimize for appends) - need to read Dostoevsky paper
 
 ### ALEX Code Available
-- ALEX implementation archived in omen-org/ repository
+- ALEX implementation archived in organization/ repository
 - Can adapt for seerdb SSTable indexes when needed
 - Focus prototype effort on learned bloom filters first (simpler, validate concept)
 

@@ -4,7 +4,7 @@
 
 ---
 
-## 1. omen Vector Database
+## 1. database Vector Database
 
 ### Characteristics
 - **Value sizes**: Large (512-4096 bytes per embedding)
@@ -41,7 +41,7 @@
 
 ---
 
-## 2. omen-queue (Future)
+## 2. queue applications (Future)
 
 ### Characteristics
 - **Value sizes**: Small (job metadata <1KB)
@@ -69,7 +69,7 @@
 
 ---
 
-## 3. omen Time Series (Future)
+## 3. database Time Series (Future)
 
 ### Characteristics
 - **Value sizes**: Medium (time series data points)

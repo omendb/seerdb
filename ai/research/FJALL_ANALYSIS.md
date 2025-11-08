@@ -98,7 +98,7 @@ pub struct Strategy {
 
 **Our Advantage**:
 - Implement Tucana-style learned compaction: predict key distribution, adjust levels
-- Analyze omen vector workload: append-heavy, large values → optimize for that pattern
+- Analyze database vector workload: append-heavy, large values → optimize for that pattern
 - Adaptive level ratios based on actual write vs read patterns
 - **Priority**: HIGH (3-5x write amplification reduction for our workload)
 
@@ -380,8 +380,8 @@ src/
 ### Research Phase (Week 1-4):
 1. ✅ Understand Fjall's design choices
 2. Implement learned bloom filter prototype
-3. Benchmark Fjall baseline on omen vector workload
-4. Identify specific bottlenecks for omen use case
+3. Benchmark Fjall baseline on database vector workload
+4. Identify specific bottlenecks for database use case
 
 ### Innovation Phase (Weeks 9-12):
 1. Integrate learned bloom filters

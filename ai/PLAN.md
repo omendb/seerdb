@@ -52,7 +52,7 @@
   - ✅ Soak test memory baseline fixed
   - ⏳ 2-hour soak test running (7M ops)
   - Initial results: Memory stable, no leaks, 100-1,800 ops/sec
-- ❌ Production workload validation (omen integration)
+- ❌ Production workload validation (database integration)
 - ❌ Operational runbooks (deployment, monitoring, troubleshooting)
 - ✅ CI/CD pipeline ready (Phase 4.1 complete)
 - ✅ Comprehensive documentation (Phase 4.2 complete)
@@ -476,19 +476,19 @@ impl DB {
 - Performance stable, no degradation
 - Can iterate quickly on fixes
 
-### 5.2 Real Workload Testing (omen Integration)
+### 5.2 Real Workload Testing (database Integration)
 **Priority**: CRITICAL
 
 **Approach**: Incremental integration, not big-bang
 
 **Tasks**:
-- [ ] Small omen workload test (1-10k vectors)
-  - Test with actual omen API
+- [ ] Small database workload test (1-10k vectors)
+  - Test with actual database API
   - Large values (embeddings: 512-4096 bytes)
   - Verify KV separation working
   - Fast iteration (minutes, not hours)
 
-- [ ] Medium omen workload (100k vectors)
+- [ ] Medium database workload (100k vectors)
   - Only after small test passes
   - Append-heavy pattern
   - Range scans for vector search
@@ -508,7 +508,7 @@ impl DB {
   - Goal: Competitive, not necessarily better
 
 **Acceptance Criteria**:
-- omen integration works with small dataset
+- database integration works with small dataset
 - Core operations correct
 - Performance competitive
 - Ready for limited production trial
@@ -536,7 +536,7 @@ impl DB {
 - Security review complete
 - Operational docs complete
 - Migration tools ready
-- Ready for omen cutover
+- Ready for database cutover
 
 ---
 
@@ -560,7 +560,7 @@ impl DB {
 - ✅ 100% correctness vs RocksDB
 - ✅ Competitive or better performance
 - ✅ Production deployment guide
-- ✅ Ready for omen migration
+- ✅ Ready for database migration
 
 ---
 
@@ -570,7 +570,7 @@ impl DB {
 **Phase 2**: ✅ Complete
 **Phase 3**: Next (observability)
 **Phase 4**: Already complete ✅ (CI/CD + docs done)
-**Phase 5**: Iterative soak + omen integration
+**Phase 5**: Iterative soak + database integration
 
 ---
 

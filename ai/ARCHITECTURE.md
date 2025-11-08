@@ -181,7 +181,7 @@ pub struct LearnedBloomFilter {
 
 **Reference**:
 - Bloom: ai/research/PAPERS.md (Learned Bloom Filters)
-- Index: ALEX paper, code in omen-org/
+- Index: ALEX paper, code in organization/
 **Complexity**: High (5-7 days for learned components)
 
 ---
@@ -561,7 +561,7 @@ src/
 - [ ] Tests: false positive rate, correctness
 
 **Week 10: Learned Index (ALEX)**
-- [ ] Port ALEX code from omen-org/
+- [ ] Port ALEX code from organization/
 - [ ] Piecewise linear model training
 - [ ] Integrate into SSTable format
 - [ ] Fallback to binary search

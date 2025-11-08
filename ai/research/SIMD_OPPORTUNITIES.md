@@ -26,7 +26,7 @@
 ---
 
 ### 2. ALEX SIMD Search (`src/alex/simd_search.rs`, 488 lines)
-**Status**: ✅ Integrated from omen-org, feature-flagged
+**Status**: ✅ Integrated from organization, feature-flagged
 
 **Performance**: Unknown (not benchmarked separately)
 

@@ -65,7 +65,7 @@ let value = block_data[idx].binary_search(key);
 - **ALEX-style learned index** (Ding et al. 2020)
 - **Piecewise linear models** trained on key distribution
 - O(1) expected lookup (with fallback to binary search)
-- Code available in omen-org/ (archived from ALEX paper)
+- Code available in organization/ (archived from ALEX paper)
 
 **Impact**:
 - 1-3x faster point lookups

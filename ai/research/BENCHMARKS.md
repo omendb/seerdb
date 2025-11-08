@@ -179,7 +179,7 @@ cargo run --example bloom_comparison --release
 ### Next Steps
 
 - [ ] Measure training time overhead
-- [ ] Test with real omen vector workload (if data available)
+- [ ] Test with real database vector workload (if data available)
 - [ ] Implement Cost-Benefit Analyzer (Bourbon-style)
 - [ ] Profile inference latency (model vs hash functions)
 - [ ] Try ensemble methods (random forest) for better compression
@@ -250,7 +250,7 @@ cargo run --example bloom_comparison --release
 - Expected: 1.1-1.5x even with updates/deletes
 
 **Production Workloads** (expected):
-- Append-heavy (omen vector DB): 1.1-1.5x
+- Append-heavy (database vector DB): 1.1-1.5x
 - Update-heavy: 2-4x (still 5-10x better than RocksDB)
 - Delete-heavy: 2-3x with tombstone compaction
 
@@ -395,7 +395,7 @@ cargo run --example bloom_comparison --release
 - ✅ Competitive performance: Best mixed workload, excellent reads
 - ✅ Outstanding write amplification: 1.04x vs RocksDB's 10-30x
 
-**Recommendation**: **Ship current version for omen integration**
+**Recommendation**: **Ship current version for database integration**
 - Performance is production-ready
 - Learned components can be added in Phase 3 (non-breaking)
 - Already better than RocksDB for most workloads
