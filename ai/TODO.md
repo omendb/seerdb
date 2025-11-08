@@ -201,15 +201,52 @@
 
 ---
 
+## Current Sprint: Micro-Optimizations (5 days)
+
+**Goal**: Close 24% gap vs fjall on mixed workload
+
+### Active Tasks
+
+1. **Implement varint-rs** (Day 1) - IN PROGRESS
+   - Replace custom varint in `src/sstable/block.rs`
+   - Expected: +1-3%
+   - Status: Dependencies added, ready to implement
+
+2. **Implement quick_cache** (Day 2) - PENDING
+   - Replace HashMap cache in `src/db.rs`
+   - Expected: +3-5%
+   - Status: Dependencies added, ready to implement
+
+3. **Tune compaction aggressiveness** (Day 3) - PENDING
+   - Lower size ratios, earlier triggers
+   - Expected: +5-10%
+   - Status: Need to profile current behavior
+
+4. **Add inline attributes** (Day 4) - PENDING
+   - Hot path functions: get(), put(), partition_for_key()
+   - Expected: +1-2%
+
+5. **Reduce allocations** (Day 5) - PENDING
+   - Profile with flamegraph
+   - Eliminate unnecessary clones/allocations
+   - Expected: +2-4%
+
+**Cumulative expected**: +12-24% (473K → 530-587K ops/sec)
+
+**Detailed plan**: See `ai/OPTIMIZATION_PLAN.md`
+
+---
+
 ## Summary
 
-**Status**: ✅ **PRODUCTION READY** - Beat RocksDB on all workloads! 🏆
+**Status**: 🚀 **OPTIMIZING** - 5-day sprint to beat fjall
 
-**Next recommended action**: Ship and integrate with omen
+**Current baseline**: 473K mixed ops/sec (beats RocksDB +11%)
 
-**Future optimizations**: Only pursue if real-world omen workload shows need
+**Target**: 600K+ mixed ops/sec (beat fjall)
 
 **References**:
+- `ai/OPTIMIZATION_PLAN.md` - Detailed implementation plan
 - `ai/STATUS.md` - Current performance baseline
 - `ai/DECISIONS.md` - All design decisions
-- `/tmp/optimization_analysis_nov7.md` - Detailed gap analysis
+- `/tmp/fjall_analysis.md` - Source code comparison
