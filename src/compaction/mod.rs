@@ -71,7 +71,7 @@ pub fn compact_sstables(
 }
 
 /// Represents a level in the LSM tree
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Level {
     /// Level number (0 = memtable flush target, 1+ = compacted levels)
     level_num: usize,
@@ -180,6 +180,7 @@ impl CompactionStrategy {
 }
 
 /// LSM Tree structure with multiple levels
+#[derive(Clone)]
 pub struct LSMTree {
     /// Levels (L0, L1, L2, ...)
     levels: Vec<Level>,

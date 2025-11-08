@@ -353,9 +353,11 @@ pub struct DB {
     /// Immutable memtables being flushed (RocksDB-style, but per-partition)
     /// Readers check this before SSTables to avoid data loss during flush
     /// Stored as Arc<Memtable> to avoid unwrapping Arc after atomic swap
-    immutable_memtables: Arc<Mutex<Option<Vec<Arc<Memtable>>>>>,
+    /// LOCK-FREE: Uses ArcSwap for zero-contention reads during flush!
+    immutable_memtables: Arc<ArcSwap<Option<Arc<Vec<Arc<Memtable>>>>>>,
     /// LSM tree for level management
-    lsm: Arc<Mutex<LSMTree>>,
+    /// LOCK-FREE: Uses ArcSwap for zero-contention reads!
+    lsm: Arc<ArcSwap<LSMTree>>,
     /// Value log for KV separation (optional)
     vlog: Arc<Mutex<Option<VLog>>>,
     /// Counter for generating SSTable filenames
@@ -522,19 +524,19 @@ impl DB {
             ArcSwap::from_pointee(memtables_iter.next().expect("Not enough partitions"))
         });
         let memtables = Arc::new(memtables_array);
-        let immutable_memtables = Arc::new(Mutex::new(None));
+        let immutable_memtables = Arc::new(ArcSwap::from_pointee(None));
         let wal = Arc::new(Mutex::new(wal));
         let vlog = Arc::new(Mutex::new(vlog));
-        let lsm = Arc::new(Mutex::new(lsm));
+        let lsm = Arc::new(ArcSwap::from_pointee(lsm));
         let flush_mutex = Arc::new(Mutex::new(()));
 
         // Initialize SSTable counter from existing files to avoid overwriting
         // Collect all SSTable paths first to avoid borrow issues
         let mut all_sstables = Vec::new();
         {
-            let lsm_guard = lsm.lock().expect("LSM lock poisoned");
-            for level_num in 0..lsm_guard.num_levels() {
-                if let Some(level) = lsm_guard.level(level_num) {
+            let lsm_arc = lsm.load();
+            for level_num in 0..lsm_arc.num_levels() {
+                if let Some(level) = lsm_arc.level(level_num) {
                     all_sstables.extend(level.sstables().iter().cloned());
                 }
             }
@@ -958,10 +960,10 @@ impl DB {
             }
         }
 
-        // Check immutable partitions (if flush is in progress)
+        // Check immutable partitions (if flush is in progress) - LOCK-FREE with ArcSwap!
         // We need to check ALL partitions since the key could be in any one
-        let immut = self.immutable_memtables.lock().expect("Immutable memtables lock poisoned");
-        if let Some(ref immutable_partitions) = *immut {
+        let immut_arc = self.immutable_memtables.load();
+        if let Some(ref immutable_partitions) = **immut_arc {
             // Check all partitions for the key
             for partition_mt in immutable_partitions.iter() {
                 let immut_result = partition_mt.get(key);
@@ -970,13 +972,13 @@ impl DB {
                 match immut_result {
                     Some(value) => {
                         // Found value in immutable partition
-                        drop(immut);
+                        // Arc automatically dropped (lock-free, no explicit drop needed!)
                         self.metrics.record_get(start.elapsed());
                         return Ok(Some(value));
                     }
                     None if immut_contains => {
                         // Key exists as tombstone in immutable partition
-                        drop(immut);
+                        // Arc automatically dropped (lock-free, no explicit drop needed!)
                         self.metrics.record_get(start.elapsed());
                         return Ok(None);
                     }
@@ -986,19 +988,19 @@ impl DB {
                     }
                 }
             }
-            drop(immut);
+            // Arc automatically dropped (lock-free, no explicit drop needed!)
         } else {
-            drop(immut);
+            // Arc automatically dropped (lock-free, no explicit drop needed!)
         }
 
         // Get vLog if available (need to clone for SSTable attachment)
         let vlog_path = self.options.data_dir.join("values.vlog");
         let has_vlog = self.has_vlog.load(std::sync::atomic::Ordering::Relaxed);
 
-        // Check SSTables in LSM tree (L0 -> L6)
-        let lsm = self.lsm.lock().expect("LSM mutex poisoned");
-        for level_num in 0..lsm.num_levels() {
-            if let Some(level) = lsm.level(level_num) {
+        // Check SSTables in LSM tree (L0 -> L6) (LOCK-FREE!)
+        let lsm_arc = self.lsm.load();
+        for level_num in 0..lsm_arc.num_levels() {
+            if let Some(level) = lsm_arc.level(level_num) {
                 // L0 has overlapping SSTables - check newest first (reverse order)
                 // L1+ have non-overlapping SSTables - check in forward order
                 let sstables: Vec<_> = if level_num == 0 {
@@ -1231,15 +1233,14 @@ impl DB {
         );
 
         // **CRITICAL**: Check if there's a previous failed flush
-        // If immutable_memtables is occupied, flush it first to avoid data loss
-        let pending_immutable = {
-            let mut immut_guard = self.immutable_memtables.lock().expect("Immutable memtables lock poisoned");
-            immut_guard.take()
-        };
+        // If immutable_memtables is occupied, flush it first to avoid data loss (LOCK-FREE!)
+        let pending_immutable_arc = self.immutable_memtables.swap(Arc::new(None));
+        let pending_immutable = Arc::try_unwrap(pending_immutable_arc)
+            .unwrap_or_else(|arc| (*arc).clone());
 
-        if let Some(pending_partitions) = pending_immutable {
+        if let Some(pending_partitions_arc) = pending_immutable {
             // Previous flush failed - retry flushing the existing immutable partitions
-            warn!(partitions = pending_partitions.len(), "Retrying flush of previously failed immutable partitions");
+            warn!(partitions = pending_partitions_arc.len(), "Retrying flush of previously failed immutable partitions");
 
             // Generate filename for pending flush
             let mut counter = self.sstable_counter.lock().expect("SSTable counter mutex poisoned");
@@ -1248,8 +1249,8 @@ impl DB {
             drop(counter);
 
             // Collect and sort entries from all pending partitions
-            let mut all_entries = Vec::new();
-            for partition_mt in &pending_partitions {
+            let mut all_entries: Vec<(Bytes, Entry)> = Vec::new();
+            for partition_mt in pending_partitions_arc.iter() {
                 for (key, entry) in partition_mt.iter() {
                     all_entries.push((key, entry));
                 }
@@ -1265,10 +1266,10 @@ impl DB {
             // Track physical bytes written to SSTable (retry case)
             self.metrics.record_physical_bytes(pending_size);
 
-            // Add to LSM tree
-            let mut lsm = self.lsm.lock().expect("LSM mutex poisoned");
-            lsm.add_l0_sstable(pending_sstable_path.clone(), pending_size);
-            drop(lsm);
+            // Add to LSM tree (LOCK-FREE: clone, modify, store!)
+            let mut lsm_clone = (**self.lsm.load()).clone();
+            lsm_clone.add_l0_sstable(pending_sstable_path.clone(), pending_size);
+            self.lsm.store(Arc::new(lsm_clone));
 
             // Clear WAL (pending data now in SSTable)
             let mut wal = self.wal.lock().expect("WAL mutex poisoned");
@@ -1317,11 +1318,8 @@ impl DB {
             }
         }
 
-        // Store in immutable_memtables so readers can access during flush
-        {
-            let mut immut_guard = self.immutable_memtables.lock().expect("Immutable memtables lock poisoned");
-            *immut_guard = Some(flushing_partitions);
-        }
+        // Store in immutable_memtables so readers can access during flush (LOCK-FREE!)
+        self.immutable_memtables.store(Arc::new(Some(Arc::new(flushing_partitions))));
 
         // Sort by key to build sorted SSTable
         // If there are duplicates (same key in multiple partitions due to race), keep last one
@@ -1335,15 +1333,14 @@ impl DB {
         // Track physical bytes written to SSTable
         self.metrics.record_physical_bytes(size);
 
-        // Add to LSM tree L0
-        let mut lsm = self.lsm.lock().expect("LSM mutex poisoned");
+        // Add to LSM tree L0 (LOCK-FREE: clone, modify, store!)
+        let mut lsm_clone = (**self.lsm.load()).clone();
         let sstable_path_for_log = sstable_path.clone();
-        lsm.add_l0_sstable(sstable_path, size);
+        lsm_clone.add_l0_sstable(sstable_path, size);
+        self.lsm.store(Arc::new(lsm_clone));
 
-        // Clear immutable partitions + WAL after successful flush
-        let mut immut_guard = self.immutable_memtables.lock().expect("Immutable memtables lock poisoned");
-        *immut_guard = None;
-        drop(immut_guard);
+        // Clear immutable partitions + WAL after successful flush (LOCK-FREE!)
+        self.immutable_memtables.store(Arc::new(None));
 
         let mut wal = self.wal.lock().expect("WAL mutex poisoned");
         wal.clear()?;
@@ -1358,10 +1355,10 @@ impl DB {
             "Partitioned memtable flush complete"
         );
 
-        // Check if compaction is needed
-        if let Some(level_num) = lsm.needs_compaction() {
+        // Check if compaction is needed (LOCK-FREE!)
+        if let Some(level_num) = self.lsm.load().needs_compaction() {
             debug!(level = level_num, "Compaction triggered");
-            drop(lsm); // Release lock before compaction
+            // Arc automatically dropped (lock-free!)
 
             if let Some(ref tx) = self.compaction_tx {
                 // Background compaction: send signal (non-blocking)
@@ -1377,19 +1374,20 @@ impl DB {
         // Record flush
         self.metrics.record_flush();
 
-        // Adjust LSM size ratios based on workload (Dostoevsky adaptive compaction)
+        // Adjust LSM size ratios based on workload (Dostoevsky adaptive compaction - LOCK-FREE!)
         if self.options.adaptive_compaction {
             let writes = self.write_count.load(std::sync::atomic::Ordering::Relaxed);
             let reads = self.read_count.load(std::sync::atomic::Ordering::Relaxed);
-            let mut lsm = self.lsm.lock().expect("LSM mutex poisoned");
-            if lsm.adjust_for_workload(writes, reads) {
-                let strategy = lsm.strategy();
+            let mut lsm_clone = (**self.lsm.load()).clone();
+            if lsm_clone.adjust_for_workload(writes, reads) {
+                let strategy = lsm_clone.strategy();
                 debug!(
                     writes = writes,
                     reads = reads,
                     ratio = strategy.current_ratio(),
                     "Dostoevsky: Adjusted LSM size ratio based on workload"
                 );
+                self.lsm.store(Arc::new(lsm_clone));
             }
         }
 
@@ -1461,10 +1459,10 @@ impl DB {
             Err(_) => return Ok(false), // Another thread is flushing
         };
 
-        // Check if immutable_memtables is occupied
+        // Check if immutable_memtables is occupied (LOCK-FREE!)
         let immut_occupied = {
-            let immut = self.immutable_memtables.lock().expect("Immutable memtables lock poisoned");
-            immut.is_some()
+            let immut_arc = self.immutable_memtables.load();
+            immut_arc.is_some()
         };
 
         if immut_occupied {
@@ -1485,10 +1483,8 @@ impl DB {
             flushing_partitions.push(old_arc);
         }
 
-        // Store in immutable_memtables
-        let mut immut_guard = self.immutable_memtables.lock().expect("Immutable memtables lock poisoned");
-        *immut_guard = Some(flushing_partitions);
-        drop(immut_guard);
+        // Store in immutable_memtables (LOCK-FREE!)
+        self.immutable_memtables.store(Arc::new(Some(Arc::new(flushing_partitions))));
 
         Ok(true) // Successfully swapped
     }
@@ -1506,17 +1502,19 @@ impl DB {
 
     /// Internal compaction implementation (shared by both sync and async paths)
     fn do_compact_level(
-        lsm: &Arc<Mutex<LSMTree>>,
+        lsm: &Arc<ArcSwap<LSMTree>>,
         sstable_counter: &Arc<Mutex<u64>>,
         data_dir: &Path,
         level_num: usize,
         metrics: &Arc<MetricsCollector>,
     ) -> Result<()> {
         let compaction_start = Instant::now();
-        let lsm_lock = lsm.lock().expect("LSM mutex poisoned");
+
+        // Load LSM tree (LOCK-FREE!)
+        let lsm_arc = lsm.load();
 
         // Get SSTables to compact
-        let level = lsm_lock.level(level_num).ok_or(DBError::NotOpened)?;
+        let level = lsm_arc.level(level_num).ok_or(DBError::NotOpened)?;
         let input_paths: Vec<PathBuf> = level.sstables().to_vec();
 
         if input_paths.is_empty() {
@@ -1538,7 +1536,7 @@ impl DB {
         *counter += 1;
         drop(counter);
 
-        drop(lsm_lock); // Release lock during compaction
+        // Arc automatically dropped (lock-free!)
 
         // Compact SSTables
         let (result_path, size) = compact_sstables(&input_paths, &output_path)?;
@@ -1546,11 +1544,11 @@ impl DB {
         // Track physical bytes written during compaction
         metrics.record_physical_bytes(size);
 
-        // Update LSM tree - add to next level and remove from current level
-        let mut lsm = lsm.lock().expect("LSM mutex poisoned");
-        lsm.add_to_level(level_num + 1, result_path, size);
-        lsm.remove_sstables_from_level(level_num, &input_paths);
-        drop(lsm);
+        // Update LSM tree - clone, modify, store (LOCK-FREE!)
+        let mut lsm_clone = (**lsm.load()).clone();
+        lsm_clone.add_to_level(level_num + 1, result_path, size);
+        lsm_clone.remove_sstables_from_level(level_num, &input_paths);
+        lsm.store(Arc::new(lsm_clone));
 
         // Delete input SSTables from disk
         for path in input_paths {
@@ -1574,7 +1572,7 @@ impl DB {
     /// Static compaction method for background worker thread
     /// This is called from the worker thread without &self
     fn run_compaction(
-        lsm: &Arc<Mutex<LSMTree>>,
+        lsm: &Arc<ArcSwap<LSMTree>>,
         sstable_counter: &Arc<Mutex<u64>>,
         data_dir: &Path,
         level_num: usize,
@@ -1590,9 +1588,9 @@ impl DB {
     /// This method just builds the SSTable from immutable_memtable (slow part).
     fn run_background_flush_partitioned(
         _memtables: &Arc<[ArcSwap<Memtable>; NUM_PARTITIONS]>,
-        immutable_memtables: &Arc<Mutex<Option<Vec<Arc<Memtable>>>>>,
+        immutable_memtables: &Arc<ArcSwap<Option<Arc<Vec<Arc<Memtable>>>>>>,
         wal: &Arc<Mutex<WAL>>,
-        lsm: &Arc<Mutex<LSMTree>>,
+        lsm: &Arc<ArcSwap<LSMTree>>,
         vlog: &Arc<Mutex<Option<VLog>>>,
         sstable_counter: &Arc<Mutex<u64>>,
         data_dir: &Path,
@@ -1609,11 +1607,9 @@ impl DB {
 
         let flush_start = Instant::now();
 
-        // Check if there are immutable_memtables to flush
-        let has_immutable = {
-            let immut = immutable_memtables.lock().expect("Immutable memtables lock poisoned");
-            immut.is_some()
-        };
+        // Check if there are immutable_memtables to flush (LOCK-FREE!)
+        let immut_arc = immutable_memtables.load();
+        let has_immutable = immut_arc.is_some();
 
         if !has_immutable {
             // No immutable memtables - another thread might have already flushed them
@@ -1626,13 +1622,16 @@ impl DB {
         *counter += 1;
         drop(counter);
 
-        // Build SSTable from immutable memtable partitions (slow part - this is why it's in background)
-        let immut_guard = immutable_memtables.lock().expect("Immutable memtables lock poisoned");
-        let immutable_partitions = immut_guard.as_ref().expect("Immutable partitions should be present");
+        // Build SSTable from immutable memtable partitions (slow part - this is why it's in background) (LOCK-FREE!)
+        // Keep Arc alive and get reference to the Vec
+        let immutable_partitions_arc = immut_arc
+            .as_ref()
+            .as_ref()
+            .expect("Immutable partitions should be present");
 
         // Collect entries from ALL partitions and sort
         let mut all_entries: Vec<(Bytes, Entry)> = Vec::new();
-        for partition_mt in immutable_partitions {
+        for partition_mt in immutable_partitions_arc.iter() {
             for (key, entry) in partition_mt.iter() {
                 all_entries.push((key, entry));
             }
@@ -1678,23 +1677,20 @@ impl DB {
             }
             builder.finish()?;
         }
-        drop(immut_guard);
+        // Arc automatically dropped (lock-free, no explicit drop needed!)
 
         let size = std::fs::metadata(&sstable_path)?.len();
 
         // Track physical bytes written
         metrics.record_physical_bytes(size);
 
-        // Add to LSM tree L0
-        let mut lsm_guard = lsm.lock().expect("LSM mutex poisoned");
-        lsm_guard.add_l0_sstable(sstable_path.clone(), size);
-        drop(lsm_guard);
+        // Add to LSM tree L0 (LOCK-FREE: clone, modify, store!)
+        let mut lsm_clone = (**lsm.load()).clone();
+        lsm_clone.add_l0_sstable(sstable_path.clone(), size);
+        lsm.store(Arc::new(lsm_clone));
 
-        // Clear immutable memtables + WAL after successful flush
-        {
-            let mut immut_guard = immutable_memtables.lock().expect("Immutable memtables lock poisoned");
-            *immut_guard = None;
-        }
+        // Clear immutable memtables + WAL after successful flush (LOCK-FREE!)
+        immutable_memtables.store(Arc::new(None));
 
         {
             let mut wal_guard = wal.lock().expect("WAL mutex poisoned");
@@ -1815,8 +1811,8 @@ impl DB {
             .map(|m| m.len())
             .unwrap_or(0);
 
-        // Get LSM tree structure and cache stats
-        let lsm = self.lsm.lock().expect("LSM mutex poisoned");
+        // Get LSM tree structure and cache stats (LOCK-FREE!)
+        let lsm_arc = self.lsm.load();
         let mut sstables_per_level = Vec::new();
         let mut level_sizes_bytes = Vec::new();
         let mut total_disk_bytes = 0u64;
@@ -1824,8 +1820,8 @@ impl DB {
         let mut cache_hits_total = 0u64;
         let mut cache_misses_total = 0u64;
 
-        for level_num in 0..lsm.num_levels() {
-            if let Some(level) = lsm.level(level_num) {
+        for level_num in 0..lsm_arc.num_levels() {
+            if let Some(level) = lsm_arc.level(level_num) {
                 let sstables = level.sstables();
                 sstables_per_level.push(sstables.len());
                 total_sstables += sstables.len();
@@ -1843,8 +1839,8 @@ impl DB {
         }
 
         // Collect cache stats from all SSTables
-        for level_num in 0..lsm.num_levels() {
-            if let Some(level) = lsm.level(level_num) {
+        for level_num in 0..lsm_arc.num_levels() {
+            if let Some(level) = lsm_arc.level(level_num) {
                 for sstable_path in level.sstables() {
                     if let Some(cached_sstable) = self.sstable_cache.get(sstable_path) {
                         let sstable = cached_sstable.lock().expect("SSTable lock poisoned");
@@ -1855,7 +1851,7 @@ impl DB {
                 }
             }
         }
-        drop(lsm);
+        // Arc automatically dropped (lock-free, no explicit drop needed!)
 
         // Add vLog size if present
         let vlog_size = self
@@ -2027,14 +2023,14 @@ impl DB {
     pub fn health(&self) -> HealthStatus {
         let mut checks = Vec::new();
 
-        // Check 1: Compaction lag (L0 SSTable count)
-        let lsm = self.lsm.lock().expect("LSM mutex poisoned");
-        let l0_count = if let Some(level) = lsm.level(0) {
+        // Check 1: Compaction lag (L0 SSTable count) (LOCK-FREE!)
+        let lsm_arc = self.lsm.load();
+        let l0_count = if let Some(level) = lsm_arc.level(0) {
             level.sstables().len()
         } else {
             0
         };
-        drop(lsm);
+        // Arc automatically dropped (lock-free, no explicit drop needed!)
 
         if l0_count > 20 {
             checks.push(HealthCheck::unhealthy(
@@ -2216,13 +2212,13 @@ impl DB {
         self.read_count
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-        // Get all SSTables from LSM tree (in reverse level order: L0, L1, ..., LN)
-        let lsm = self.lsm.lock().expect("LSM mutex poisoned");
+        // Get all SSTables from LSM tree (in reverse level order: L0, L1, ..., LN) (LOCK-FREE!)
+        let lsm_arc = self.lsm.load();
         let mut sstables = Vec::new();
 
         // Collect SSTables from all levels using cache
-        for level_idx in 0..lsm.num_levels() {
-            if let Some(level) = lsm.level(level_idx) {
+        for level_idx in 0..lsm_arc.num_levels() {
+            if let Some(level) = lsm_arc.level(level_idx) {
                 for sstable_path in level.sstables() {
                     // Use quick_cache for lock-free SSTable access
                     let sstable_arc = self.sstable_cache.get_or_insert_with(sstable_path, || -> Result<Arc<Mutex<SSTable>>> {
@@ -2246,7 +2242,7 @@ impl DB {
                 }
             }
         }
-        drop(lsm);
+        // Arc automatically dropped (lock-free, no explicit drop needed!)
 
         // Collect Arc references to ALL active memtable partitions (lock-free)
         // load() returns Guard<Arc<Memtable>>, we need to clone the Arc out
@@ -2257,13 +2253,14 @@ impl DB {
             .map(|arc| arc.as_ref())
             .collect();
 
-        // Also include immutable partitions if they exist
-        let immutable_guard = self.immutable_memtables.lock().expect("Immutable memtables lock poisoned");
-        let immutable_refs: Vec<&Memtable> = if let Some(ref immutable_partitions) = *immutable_guard {
+        // Also include immutable partitions if they exist (LOCK-FREE!)
+        let immutable_arc = self.immutable_memtables.load();
+        let immutable_refs: Vec<&Memtable> = if let Some(ref immutable_partitions) = **immutable_arc {
             immutable_partitions.iter().map(|arc| arc.as_ref()).collect()
         } else {
             Vec::new()
         };
+        // Arc automatically dropped (lock-free, no explicit drop needed!)
         partition_refs.extend(immutable_refs);
 
         // Create range iterator with all memtable partitions
