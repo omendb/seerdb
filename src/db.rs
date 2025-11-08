@@ -1774,12 +1774,14 @@ impl DB {
             .map(|m| m.len())
             .unwrap_or(0);
 
-        // Get LSM tree structure
+        // Get LSM tree structure and cache stats
         let lsm = self.lsm.lock().expect("LSM mutex poisoned");
         let mut sstables_per_level = Vec::new();
         let mut level_sizes_bytes = Vec::new();
         let mut total_disk_bytes = 0u64;
         let mut total_sstables = 0usize;
+        let mut cache_hits_total = 0u64;
+        let mut cache_misses_total = 0u64;
 
         for level_num in 0..lsm.num_levels() {
             if let Some(level) = lsm.level(level_num) {
@@ -1796,6 +1798,21 @@ impl DB {
             } else {
                 sstables_per_level.push(0);
                 level_sizes_bytes.push(0);
+            }
+        }
+
+        // Collect cache stats from all SSTables
+        let sstable_cache = self.sstable_cache.lock().expect("SSTable cache lock poisoned");
+        for level_num in 0..lsm.num_levels() {
+            if let Some(level) = lsm.level(level_num) {
+                for sstable_path in level.sstables() {
+                    if let Some(cached_sstable) = sstable_cache.get(sstable_path) {
+                        let sstable = cached_sstable.lock().expect("SSTable lock poisoned");
+                        let (hits, misses, _) = sstable.cache_stats();
+                        cache_hits_total += hits;
+                        cache_misses_total += misses;
+                    }
+                }
             }
         }
         drop(lsm);
@@ -1815,6 +1832,14 @@ impl DB {
         let physical_bytes = self.metrics.physical_bytes_written.load(Ordering::Relaxed);
         let write_amplification = if logical_bytes > 0 {
             physical_bytes as f64 / logical_bytes as f64
+        } else {
+            0.0
+        };
+
+        // Calculate cache hit rate
+        let cache_total = cache_hits_total + cache_misses_total;
+        let cache_hit_rate = if cache_total > 0 {
+            cache_hits_total as f64 / cache_total as f64
         } else {
             0.0
         };
@@ -1853,6 +1878,11 @@ impl DB {
             memtable_utilization_pct,
             wal_size_bytes,
             total_disk_bytes,
+
+            // Block cache performance
+            cache_hits: cache_hits_total,
+            cache_misses: cache_misses_total,
+            cache_hit_rate,
 
             // LSM structure
             sstables_per_level,

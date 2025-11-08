@@ -45,6 +45,11 @@ pub struct DBStats {
     pub wal_size_bytes: u64,
     pub total_disk_bytes: u64,
 
+    // Block cache performance
+    pub cache_hits: u64,
+    pub cache_misses: u64,
+    pub cache_hit_rate: f64,
+
     // LSM tree structure
     pub sstables_per_level: Vec<usize>,
     pub level_sizes_bytes: Vec<u64>,

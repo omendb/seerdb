@@ -13,6 +13,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -435,6 +436,9 @@ pub struct SSTable {
     block_cache: Arc<Mutex<HashMap<u64, Block>>>,
     min_key: Option<Bytes>,
     max_key: Option<Bytes>,
+    // Cache performance metrics (Arc for sharing with iterators)
+    cache_hits: Arc<AtomicU64>,
+    cache_misses: Arc<AtomicU64>,
 }
 
 impl SSTable {
@@ -476,6 +480,8 @@ impl SSTable {
             block_cache: Arc::new(Mutex::new(HashMap::new())),
             min_key,
             max_key,
+            cache_hits: Arc::new(AtomicU64::new(0)),
+            cache_misses: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -521,6 +527,19 @@ impl SSTable {
     /// Check if key might be in this SSTable (bloom filter check)
     pub fn may_contain(&self, key: &[u8]) -> bool {
         self.bloom.contains(key)
+    }
+
+    /// Get block cache statistics
+    pub fn cache_stats(&self) -> (u64, u64, f64) {
+        let hits = self.cache_hits.load(Ordering::Relaxed);
+        let misses = self.cache_misses.load(Ordering::Relaxed);
+        let total = hits + misses;
+        let hit_rate = if total > 0 {
+            hits as f64 / total as f64
+        } else {
+            0.0
+        };
+        (hits, misses, hit_rate)
     }
 
     pub fn get(&mut self, key: &[u8]) -> Result<Option<Bytes>> {
@@ -671,9 +690,14 @@ impl SSTable {
         {
             let cache = self.block_cache.lock().unwrap();
             if let Some(block) = cache.get(&offset) {
+                // Cache hit!
+                self.cache_hits.fetch_add(1, Ordering::Relaxed);
                 return Ok(block.clone());
             }
         }
+
+        // Cache miss - record and load from disk
+        self.cache_misses.fetch_add(1, Ordering::Relaxed);
 
         // Slow path: load from disk and verify CRC
         let mut file = self.file.lock().unwrap();
@@ -910,6 +934,9 @@ pub struct SSTableRangeIterator {
     top_level_index: Vec<TopLevelIndexEntry>,
     start_key: Bytes,
     end_key: Option<Bytes>,
+    // Cache performance metrics (shared with parent SSTable)
+    cache_hits: Arc<AtomicU64>,
+    cache_misses: Arc<AtomicU64>,
 
     // Iteration state
     top_idx: usize,
@@ -929,6 +956,8 @@ impl SSTableRangeIterator {
         top_level_index: Vec<TopLevelIndexEntry>,
         start_key: &[u8],
         end_key: Option<&[u8]>,
+        cache_hits: Arc<AtomicU64>,
+        cache_misses: Arc<AtomicU64>,
     ) -> Self {
         Self {
             file,
@@ -937,6 +966,8 @@ impl SSTableRangeIterator {
             top_level_index,
             start_key: Bytes::copy_from_slice(start_key),
             end_key: end_key.map(|k| Bytes::copy_from_slice(k)),
+            cache_hits,
+            cache_misses,
             top_idx: 0,
             current_index_block: None,
             index_block_entries: Vec::new(),
@@ -951,9 +982,14 @@ impl SSTableRangeIterator {
         {
             let cache = self.block_cache.lock().unwrap();
             if let Some(block) = cache.get(&offset) {
+                // Cache hit!
+                self.cache_hits.fetch_add(1, Ordering::Relaxed);
                 return Ok(block.clone());
             }
         }
+
+        // Cache miss - record and load from disk
+        self.cache_misses.fetch_add(1, Ordering::Relaxed);
 
         // Load from disk
         let mut file = self.file.lock().unwrap();
@@ -1228,6 +1264,8 @@ impl SSTable {
             self.top_level_index.clone(),
             start_key,
             end_key,
+            Arc::clone(&self.cache_hits),
+            Arc::clone(&self.cache_misses),
         )
     }
 }
