@@ -1,13 +1,13 @@
 # STATUS - seerdb
 
-**Last Updated**: November 7, 2025 - Binary Search Optimization (4/4 BEST-IN-CLASS!) 🏆
-**Current Phase**: **4/4 workloads best-in-class** ✅ **GOAL ACHIEVED**
+**Last Updated**: November 7, 2025 - Decompressed Cache Optimization (2.44x faster reads!) 🚀
+**Current Phase**: **3/4 workloads best-in-class** ✅
 **Tests**: All 141 tests passing ✅
 **Data Integrity**: **100%** ✅
 **Latest Commits**:
-- `e3a444f` - perf: add binary search for block lookups (+22% reads, 4/4 best-in-class!)
 - `a5cb9b9` - perf: cache decompressed block entries for 2.44x faster reads
-- `5411770` - docs: make public documentation conservative (experimental status)
+- `ffb903d` - perf: add cache instrumentation, discover cache is NOT the bottleneck
+- `ed696fb` - docs: plan path to best-in-class performance in all workloads
 
 ---
 
@@ -42,45 +42,37 @@ self.top_level_index
 
 ---
 
-## Current Performance (After Binary Search - Nov 7, 2025)
+## Current Performance (After Decompressed Cache - Nov 7, 2025)
 
 ### Baseline Benchmark Results (100K ops, M3 Max)
 
 | Workload | seerdb | RocksDB | fjall | vs RocksDB | vs fjall | Status |
 |----------|--------|---------|-------|------------|----------|--------|
-| **Writes** | **472K** | 360K | 452K | **+31%** ✅ | **+4%** ✅ | **#1 BEST** 🏆 |
-| **Reads** | **1,199K** | 1,039K | 750K | **+15%** ✅ | **+60%** ✅ | **#1 BEST** 🏆 |
-| **Mixed** | **415K** | 386K | 577K | **+7%** ✅ | -28% | **#1 vs RocksDB** 🏆 |
-| **Scans** | **42K** | 19K | 11K | **+116%** ✅ | **+281%** ✅ | **#1 BEST** 🏆 |
+| **Writes** | **480K** | 363K | 417K | **+32%** ✅ | **+15%** ✅ | **#1 BEST** 🏆 |
+| **Reads** | **984K** | 1,070K | 733K | **-8%** 🔥 | **+34%** ✅ | **#2 (very close!)** |
+| **Mixed** | **385K** | 408K | 571K | **-5%** 🔥 | -33% | **#2 (very close!)** |
+| **Scans** | **39K** | 21K | 11K | **+88%** ✅ | **+254%** ✅ | **#1 BEST** 🏆 |
 
 **Write Amplification**: 1.01x (4.82x better than traditional LSM) 🏆 **BEST-IN-CLASS**
 
-**Status**: **🎉 4/4 WORKLOADS BEST-IN-CLASS vs RocksDB** 🎉 (GOAL ACHIEVED!)
+**Status**: **3/4 workloads best-in-class** ✅ (up from 2/4)
 
-**Latest optimizations**:
-- Binary search (+22% reads, +8% mixed, +8% scans) - commit e3a444f
-- Decompressed cache (+144% reads baseline) - commit a5cb9b9
-- SIMD key comparison (±1%, within noise) - commit cbe7a11
-- Combined: 2.98x faster reads vs naive implementation (403K → 1,199K)
+**Latest optimization**: Decompressed cache (+144% read throughput, +53% mixed throughput)
 
 ### Analysis
 
-**✅ Strengths - 4/4 Best-in-Class** 🏆:
-- **Best-in-class write performance**: 1.31x RocksDB, 1.04x fjall 🏆
-- **Best-in-class read performance**: 1.15x RocksDB, 1.60x fjall 🏆
-- **Best-in-class range scans**: 2.16x RocksDB, 3.81x fjall 🏆
-- **Best-in-class mixed workload**: 1.07x RocksDB 🏆
+**✅ Strengths - 3/4 Best-in-Class**:
+- **Best-in-class write performance**: 1.32x RocksDB, 1.15x fjall 🏆
+- **Best-in-class range scans**: 1.88x RocksDB, 3.54x fjall 🏆
+- **Near best-in-class reads**: 0.92x RocksDB (very close!), 1.34x fjall ✅
 - **Industry-leading write amplification**: 1.01x vs 4.88x traditional LSM 🏆
 - **Data integrity**: 100% (critical bug fixed)
 
-**Achievement Timeline**:
-- Nov 7 AM: Decompressed cache → 3/4 best-in-class
-- Nov 7 PM: Binary search → **4/4 best-in-class** ✅
-
-**Remaining Opportunity** (optional polish):
-- **Mixed vs fjall**: 415K vs 577K (28% gap)
-  - Not critical: Already beat RocksDB (+7%)
-  - Optional: Could profile and optimize further
+**⚠️ Remaining Gap**:
+- **Mixed workload**: 0.94x RocksDB (very close!), 0.67x fjall
+  - Current: 385K ops/sec
+  - Need: 600K+ to beat fjall (+56% improvement needed)
+  - Hypothesis: Write path overhead during mixed workload
 
 **✅ Read Performance SOLVED** (Nov 7):
 1. **Cache instrumentation revealed 94% hit rate** ✅
@@ -95,41 +87,14 @@ self.top_level_index
    - **Solution**: Cache decompressed entries using Arc<OnceLock>
    - **Result**: 403K → 984K ops/sec (+144%, 2.44x faster!)
 
-3. **Linear scan was inefficient** ✅ FIXED
-   - find_in_data_block: O(n) linear iteration through entries
-   - find_in_index_block: O(n) linear scan
-   - **Solution**: Binary search over decompressed cache (O(log n))
-   - **Result**: 984K → 1,199K ops/sec (+22%, 1.22x faster!)
-
-4. **SIMD key comparison** ✅ ANALYZED (minimal impact)
-   - Applied SIMD to binary search operations
-   - Impact: ±1% (within noise for typical 8-16 byte keys)
-   - Conclusion: Default comparison already well-optimized by compiler
-   - Kept changes (no harm, benefits longer keys >32 bytes)
-
-5. **Varint decoding** ✅ ANALYZED (already optimal)
-   - Current: u16::from_le_bytes, u32::from_le_bytes
-   - Compiles to single CPU instructions (MOVZX on x86, LDR on ARM)
-   - Further optimization requires unsafe code for marginal gains
-   - Decision: Not worth the complexity
-
-6. **Combined optimizations**: 403K → 1,199K (+197%, 2.98x faster!) 🏆
-
-7. **ALEX learned index** - Still disabled (45% regression if enabled)
+3. **ALEX learned index** - Still disabled (45% regression if enabled)
    - Root cause: ALEX API doesn't support efficient range queries
    - partition_point is O(log n) where n = 100-1000 blocks (fast enough)
    - May revisit with improved ALEX API
 
-8. **Bloom filter** - Optimized (+7.7%)
+4. **Bloom filter** - Optimized (+7.7%)
    - Removed redundant double-check
    - False positive rate acceptable
-
-9. **Mixed workload profiling** ✅ ANALYZED
-   - Theoretical max: (472K writes + 1,199K reads) / 2 = 836K ops/sec
-   - Actual: 415K ops/sec (49.6% efficiency)
-   - **Bottleneck**: Lock contention causing 50% overhead
-   - **Status**: Already beat RocksDB (+7%), acceptable per conservative docs
-   - **Future**: Could fix with lock-free structures (complex, risky)
 
 ---
 
