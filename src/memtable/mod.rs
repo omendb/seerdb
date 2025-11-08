@@ -44,6 +44,7 @@ impl Memtable {
     }
 
     /// Insert a key-value pair
+    #[inline]
     pub fn put(&self, key: Bytes, value: Bytes) {
         let size_delta = key.len() + value.len();
         self.data.insert(key, Entry::Value(value));
@@ -51,6 +52,7 @@ impl Memtable {
     }
 
     /// Delete a key (insert tombstone)
+    #[inline]
     pub fn delete(&self, key: Bytes) {
         let size_delta = key.len();
         self.data.insert(key, Entry::Tombstone);
@@ -58,6 +60,7 @@ impl Memtable {
     }
 
     /// Get a value by key
+    #[inline]
     pub fn get(&self, key: &[u8]) -> Option<Bytes> {
         self.data.get(key).and_then(|entry| match entry.value() {
             Entry::Value(v) => Some(v.clone()),
@@ -66,16 +69,19 @@ impl Memtable {
     }
 
     /// Check if key exists (including tombstones)
+    #[inline]
     pub fn contains(&self, key: &[u8]) -> bool {
         self.data.contains_key(key)
     }
 
     /// Get current size in bytes (approximate)
+    #[inline]
     pub fn size(&self) -> usize {
         self.size.load(Ordering::Relaxed)
     }
 
     /// Check if memtable should be flushed
+    #[inline]
     pub fn should_flush(&self) -> bool {
         self.size() >= self.capacity
     }
