@@ -236,41 +236,87 @@ let result = sstable.get(key)?;  // Single check
 
 ---
 
-## Next Steps (Priority Order)
+## Next Steps: Path to Best-in-Class ALL Workloads 🎯
 
-### 1. Profile Read Path (HIGH PRIORITY) 🔴
+**Goal**: Beat fjall/RocksDB on ALL 4 workloads (writes, reads, mixed, scans)
+**Current**: 2/4 best-in-class (writes ✅, scans ✅, reads ❌, mixed ❌)
+**Timeline**: 3-4 weeks to best-in-class
+**See**: `ai/TODO.md` for detailed implementation plan
 
-**Goal**: Identify why reads are 2.5x slower than RocksDB
+### Phase 10: Read Performance Optimization (Weeks 1-2) 🔴 CRITICAL
+
+**Goal**: 403K → 800K+ reads (+99%) to beat fjall (740K)
+
+**Bottlenecks identified** (Nov 7 profiling):
+1. **Block loading/decoding** (PRIMARY) - 2.5x slower than cache potential
+2. **Low cache hit rate** (LIKELY) - 749K potential vs 295K actual
+3. ✅ Bloom filter (SOLVED) - +7.7% from `b3a74df`
+4. **Mutex overhead** (POTENTIAL) - Two locks per read
+
+**Priority 1: Block Cache Instrumentation & Optimization** (Days 1-3)
+- Add cache hit/miss counters
+- Measure actual hit rate
+- Implement LRU eviction if needed
+- **Expected**: 403K → 500K reads (+24%)
+
+**Priority 2: Flamegraph Profiling** (Day 4)
+- Profile read workload with flamegraph
+- Identify top 3 hottest functions
+- Validate block decoding hypothesis
+- **Expected**: Clear path to next optimization
+
+**Priority 3: Block Decoding Optimization** (Days 5-7)
+- Optimize based on flamegraph findings
+- Likely: prefix decompression, varint decoding, checksum
+- Consider zero-copy, mmap, SIMD
+- **Expected**: 500K → 650K reads (+30%)
+
+**Priority 4: Reduce Mutex Overhead** (Days 8-10)
+- Replace HashMap with DashMap (lockless)
+- Use RwLock for concurrent reads
+- **Expected**: 650K → 750K reads (+15%)
+
+**Priority 5: ALEX Efficient Lower Bound** (Days 11-14)
+- Implement lower_bound_key() in GappedNode
+- Re-enable ALEX with efficient API
+- **Expected**: 750K → 850K reads (+13%)
+
+**Phase 10 Target**: 800K+ reads (beat fjall 740K)
+
+### Phase 11: Mixed Workload Optimization (Week 3) 🟡 HIGH
+
+**Goal**: 252K → 600K+ mixed (+138%) to beat fjall (581K)
+
+**Analysis**:
+- Theoretical max: (445K writes + 403K reads) / 2 = 424K
+- Actual: 252K (59% of theoretical)
+- **Gap**: 172K missing (40% overhead)
+
+**Likely causes**:
+- Write stalls (reads slow down flushes → block writes)
+- Lock contention (read/write competition)
+- Cache pollution (writes evict read entries)
 
 **Actions**:
-- Use flamegraph/perf to profile read operations
-- Check bloom filter false positive rate
-- Measure block cache hit rate
-- Identify time distribution (bloom? cache? I/O? decoding?)
+- Investigate write stalls in mixed workload
+- Measure lock contention with flamegraph
+- Optimize cache eviction for mixed access
+- **Expected**: After read optimizations, mixed reaches 80% of theoretical
 
-**Expected**: Find specific bottleneck to optimize
+**Phase 11 Target**: 600K+ mixed (beat fjall 581K)
 
-### 2. Fix ALEX Learned Index (MEDIUM) 🟡
+### Success Criteria: Best-in-Class Achievement 🏆
 
-**Issue**: ALEX trained with binary_search semantics, now we use partition_point
-**Goal**: Retrain ALEX to predict "first block where last_key >= key"
-**Expected**: Restore O(1) lookups, reduce read latency
-**Impact**: Unknown, but ALEX was providing benefit before (when it worked)
+| Workload | Current | Target | vs Best | Status |
+|----------|---------|--------|---------|--------|
+| Writes | 445K | 450K+ | #1 ✅ | Maintain |
+| Reads | 403K | 800K+ | Beat fjall | **+99%** |
+| Mixed | 252K | 600K+ | Beat fjall | **+138%** |
+| Scans | 24K | 25K+ | #1 ✅ | Maintain |
 
-### 3. Optimize Based on Profiling (VARIES)
+**Marketing claim unlocked**: "Best-in-class performance across ALL workloads"
 
-Depending on findings:
-- **If bloom filter**: Reduce false positive rate
-- **If block cache**: Tune cache size or eviction policy
-- **If I/O**: Optimize block reads or add prefetching
-- **If decoding**: Optimize block iterator or decompression
-
-### 4. Re-benchmark and Validate (ALWAYS)
-
-After each fix:
-- Run baseline_benchmark to measure impact
-- Ensure no regressions
-- Document improvements
+**References**: See `ai/TODO.md` for complete 3-4 week implementation plan
 
 ---
 
@@ -314,16 +360,21 @@ After each fix:
 
 ---
 
-## Technical Debt / TODOs
+## Immediate Next Action
 
-1. 🔴 **HIGH**: Profile and optimize read path
-2. 🟡 **MEDIUM**: Retrain ALEX learned index with partition_point semantics
-3. 🟢 **LOW**: Investigate mixed workload performance
-4. 🟢 **LOW**: Consider dynamic partition count based on memtable size
+**Start**: Block cache instrumentation (Priority 1, Day 1)
+- Add cache hit/miss counters to SSTable
+- Measure actual cache hit rate
+- Determine if cache is the bottleneck
+
+**Why this first**: Profiling shows 749K ops/sec potential (cache hits) vs 295K actual, suggesting low cache hit rate is the primary issue.
+
+**Expected timeline**: 1 day to instrument, 2-3 days to optimize
+**Expected improvement**: +24% (403K → 500K reads)
 
 ---
 
-**Status**: ✅ Data integrity restored, write performance excellent, reads need optimization
+**Status**: ✅ Data integrity 100%, write performance best-in-class, read optimization planned
 **Tests**: 141/141 passing ✅
-**Confidence**: HIGH for writes, MEDIUM for reads (under investigation)
-**Updated**: November 7, 2025 - Post bug fix baseline
+**Confidence**: HIGH for implementation plan, path to best-in-class is clear
+**Updated**: November 7, 2025 - Read optimization plan complete
