@@ -615,74 +615,72 @@ impl SSTable {
     }
 
     fn find_in_index_block(&self, index_block: &Block, key: &[u8]) -> Result<Option<(u64, u32)>> {
-        for entry in index_block.iter() {
-            let (entry_key, entry_value) = entry?;
-            let value_len = entry_value.len();
-            
-            if value_len < 12 {
-                return Err(SSTableError::InvalidFormat);
-            }
+        // Binary search for first entry where entry_key >= key
+        let entry = match index_block.find_lower_bound(key) {
+            Some(entry) => entry,
+            None => return Ok(None),
+        };
 
-            let mut offset_bytes = [0u8; 8];
-            let mut size_bytes = [0u8; 4];
-            offset_bytes.copy_from_slice(&entry_value[value_len - 12..value_len - 4]);
-            size_bytes.copy_from_slice(&entry_value[value_len - 4..]);
+        let (_entry_key, entry_value) = entry;
+        let value_len = entry_value.len();
 
-            let offset = u64::from_le_bytes(offset_bytes);
-            let size = u32::from_le_bytes(size_bytes);
-
-            if key <= entry_key.as_ref() {
-                return Ok(Some((offset, size)));
-            }
+        if value_len < 12 {
+            return Err(SSTableError::InvalidFormat);
         }
 
-        Ok(None)
+        let mut offset_bytes = [0u8; 8];
+        let mut size_bytes = [0u8; 4];
+        offset_bytes.copy_from_slice(&entry_value[value_len - 12..value_len - 4]);
+        size_bytes.copy_from_slice(&entry_value[value_len - 4..]);
+
+        let offset = u64::from_le_bytes(offset_bytes);
+        let size = u32::from_le_bytes(size_bytes);
+
+        Ok(Some((offset, size)))
     }
 
     fn find_in_data_block(&mut self, data_block: &Block, key: &[u8]) -> Result<Option<Bytes>> {
-        for entry in data_block.iter() {
-            let (entry_key, entry_value) = entry?;
+        // Binary search for exact key match
+        let (_entry_key, entry_value) = match data_block.find_exact(key) {
+            Some(entry) => entry,
+            None => return Ok(None),
+        };
 
-            if entry_key.as_ref() == key {
-                if entry_value.is_empty() {
+        if entry_value.is_empty() {
+            return Err(SSTableError::InvalidFormat);
+        }
+
+        let flag = entry_value[0];
+        let data = entry_value.slice(1..);
+
+        match flag {
+            FLAG_INLINE => Ok(Some(data)),
+            FLAG_POINTER => {
+                if data.len() < 12 {
                     return Err(SSTableError::InvalidFormat);
                 }
 
-                let flag = entry_value[0];
-                let data = entry_value.slice(1..);
+                let offset = u64::from_le_bytes([
+                    data[0], data[1], data[2], data[3],
+                    data[4], data[5], data[6], data[7],
+                ]);
+                let length = u32::from_le_bytes([
+                    data[8], data[9], data[10], data[11],
+                ]);
 
-                match flag {
-                    FLAG_INLINE => return Ok(Some(data)),
-                    FLAG_POINTER => {
-                        if data.len() < 12 {
-                            return Err(SSTableError::InvalidFormat);
-                        }
-
-                        let offset = u64::from_le_bytes([
-                            data[0], data[1], data[2], data[3],
-                            data[4], data[5], data[6], data[7],
-                        ]);
-                        let length = u32::from_le_bytes([
-                            data[8], data[9], data[10], data[11],
-                        ]);
-
-                        if let Some(ref vlog) = self.vlog {
-                            let mut vlog_guard = vlog.lock().unwrap();
-                            let pointer = ValuePointer { offset, length };
-                            let value = vlog_guard.read(pointer)
-                                .map_err(|e| SSTableError::VLog(e.to_string()))?;
-                            return Ok(Some(value));
-                        } else {
-                            return Err(SSTableError::VLog("VLog not attached".to_string()));
-                        }
-                    }
-                    FLAG_TOMBSTONE => return Ok(None),
-                    _ => return Err(SSTableError::InvalidFormat),
+                if let Some(ref vlog) = self.vlog {
+                    let mut vlog_guard = vlog.lock().unwrap();
+                    let pointer = ValuePointer { offset, length };
+                    let value = vlog_guard.read(pointer)
+                        .map_err(|e| SSTableError::VLog(e.to_string()))?;
+                    Ok(Some(value))
+                } else {
+                    Err(SSTableError::VLog("VLog not attached".to_string()))
                 }
             }
+            FLAG_TOMBSTONE => Ok(None),
+            _ => Err(SSTableError::InvalidFormat),
         }
-
-        Ok(None)
     }
 
     fn load_block(&self, offset: u64, size: u32) -> Result<Block> {

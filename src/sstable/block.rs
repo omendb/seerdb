@@ -239,6 +239,37 @@ impl Block {
         BlockIterator::new_cached(entries)
     }
 
+    /// Find exact key match using binary search (for data blocks)
+    /// Returns Some((key, value)) if found, None otherwise
+    pub fn find_exact(&self, key: &[u8]) -> Option<(Bytes, Bytes)> {
+        let entries = self.decompressed_cache.get_or_init(|| {
+            self.decompress_all_entries()
+        });
+
+        // Binary search for exact match
+        match entries.binary_search_by(|(k, _)| k.as_ref().cmp(key)) {
+            Ok(idx) => Some(entries[idx].clone()),
+            Err(_) => None,
+        }
+    }
+
+    /// Find first key >= target using binary search (for index blocks)
+    /// Returns Some((key, value)) if found, None otherwise
+    pub fn find_lower_bound(&self, key: &[u8]) -> Option<(Bytes, Bytes)> {
+        let entries = self.decompressed_cache.get_or_init(|| {
+            self.decompress_all_entries()
+        });
+
+        // Binary search for first entry where entry_key >= key
+        let idx = entries.partition_point(|(k, _)| k.as_ref() < key);
+
+        if idx < entries.len() {
+            Some(entries[idx].clone())
+        } else {
+            None
+        }
+    }
+
     /// Get number of entries (approximate - counts restart points)
     pub fn num_entries_approx(&self) -> usize {
         self.num_restarts * RESTART_INTERVAL
