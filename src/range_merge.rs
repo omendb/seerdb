@@ -1,6 +1,7 @@
 // K-way merge iterator for range scans
 // Merges sorted iterators from memtable + multiple SSTable levels using a min-heap
 
+use crate::simd;
 use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
 use bytes::Bytes;
@@ -22,9 +23,9 @@ where
 {
     fn cmp(&self, other: &Self) -> Ordering {
         // Min-heap: use Reverse wrapper, so normal comparison
-        // Primary: by key (ascending)
+        // Primary: by key (ascending) - using SIMD-accelerated comparison!
         // Secondary: by level (ascending, so lower level = newer wins)
-        match self.key.cmp(&other.key) {
+        match simd::compare_keys(&self.key, &other.key) {
             Ordering::Equal => self.level.cmp(&other.level),
             ord => ord,
         }
