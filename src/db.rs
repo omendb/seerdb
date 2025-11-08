@@ -9,11 +9,12 @@ use crate::range::RangeIterator;
 use crate::sstable::SSTable;
 use crate::vlog::VLog;
 use crate::wal::{Record, SyncPolicy, WALReader, WAL};
+use arc_swap::ArcSwap;
 use bytes::Bytes;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::{channel, Sender};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
 use thiserror::Error;
@@ -335,12 +336,15 @@ pub struct DB {
     options: DBOptions,
     /// Write-ahead log
     wal: Arc<Mutex<WAL>>,
-    /// Active memtables (16 partitions for reduced lock contention)
-    /// Uses RwLock for concurrent reads/writes (shared) and exclusive swaps (unique)
-    memtables: [Arc<RwLock<Memtable>>; NUM_PARTITIONS],
+    /// Active memtables (16 partitions, lock-free with ArcSwap)
+    /// Uses ArcSwap for truly lock-free atomic pointer swaps during flush
+    /// SkipMap is already lock-free internally, so no locks needed at all!
+    /// Wrapped in Arc for sharing with background threads
+    memtables: Arc<[ArcSwap<Memtable>; NUM_PARTITIONS]>,
     /// Immutable memtables being flushed (RocksDB-style, but per-partition)
     /// Readers check this before SSTables to avoid data loss during flush
-    immutable_memtables: Arc<Mutex<Option<Vec<Memtable>>>>,
+    /// Stored as Arc<Memtable> to avoid unwrapping Arc after atomic swap
+    immutable_memtables: Arc<Mutex<Option<Vec<Arc<Memtable>>>>>,
     /// LSM tree for level management
     lsm: Arc<Mutex<LSMTree>>,
     /// Value log for KV separation (optional)
@@ -494,13 +498,16 @@ impl DB {
         // Capture has_vlog before wrapping
         let has_vlog = vlog.is_some();
 
-        // Wrap in Arc<RwLock<>> for sharing with background workers
-        // RwLock allows concurrent reads/writes (shared lock) and exclusive swaps (write lock)
-        // Convert Vec<Memtable> into [Arc<RwLock<Memtable>>; NUM_PARTITIONS]
+        // Wrap in ArcSwap for lock-free atomic swaps
+        // ArcSwap provides lock-free reads (.load()) and atomic swaps (.swap())
+        // SkipMap is already lock-free internally, so this eliminates ALL lock overhead!
+        // Convert Vec<Memtable> into [ArcSwap<Memtable>; NUM_PARTITIONS]
+        // Then wrap in Arc so background threads can share it
         let mut memtables_iter = memtables_vec.into_iter();
-        let memtables: [Arc<RwLock<Memtable>>; NUM_PARTITIONS] = std::array::from_fn(|_| {
-            Arc::new(RwLock::new(memtables_iter.next().expect("Not enough partitions")))
+        let memtables_array: [ArcSwap<Memtable>; NUM_PARTITIONS] = std::array::from_fn(|_| {
+            ArcSwap::from_pointee(memtables_iter.next().expect("Not enough partitions"))
         });
+        let memtables = Arc::new(memtables_array);
         let immutable_memtables = Arc::new(Mutex::new(None));
         let wal = Arc::new(Mutex::new(wal));
         let vlog = Arc::new(Mutex::new(vlog));
@@ -583,9 +590,9 @@ impl DB {
         let (flush_tx, flush_worker) = if options.background_flush {
             let (tx, rx) = channel::<FlushTask>();
 
-            // Clone references for worker thread (clone each partition reference)
-            let memtables_refs: [Arc<RwLock<Memtable>>; NUM_PARTITIONS] =
-                std::array::from_fn(|i| Arc::clone(&memtables[i]));
+            // Clone Arc reference for worker thread
+            // Background thread gets Arc<[ArcSwap<Memtable>]> and can call .load() to get snapshots
+            let memtables_refs = Arc::clone(&memtables);
             let immutable_memtables_ref = Arc::clone(&immutable_memtables);
             let wal_ref = Arc::clone(&wal);
             let lsm_clone = Arc::clone(&lsm);
@@ -654,9 +661,7 @@ impl DB {
 
         // Flush memtables if any partition filled up during recovery
         let should_flush = db.memtables.iter().any(|mt| {
-            mt.read()
-                .expect("Memtable lock poisoned")
-                .should_flush()
+            mt.load().should_flush()
         });
         if should_flush {
             info!("One or more memtable partitions full after recovery, flushing");
@@ -781,19 +786,19 @@ impl DB {
         // Track physical bytes written to WAL
         self.metrics.record_physical_bytes(wal_bytes);
 
-        // Write to correct partition (concurrent with RwLock read lock)
+        // Write to correct partition (lock-free with ArcSwap)
         let partition = partition_for_key(&key);
-        let mt = self.memtables[partition].read().expect("Memtable lock poisoned");
-        mt.put(key, value);
-        drop(mt); // Release lock early
+        let mt = self.memtables[partition].load();  // Lock-free Arc load
+        mt.put(key, value);  // SkipMap is already lock-free
+        // Arc automatically dropped, no lock to release!
 
         // Track write operation for Dostoevsky adaptive compaction
         self.write_count
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-        // Check if ANY partition should be flushed (since we have multiple partitions)
+        // Check if ANY partition should be flushed (lock-free check)
         let should_flush = self.memtables.iter().any(|mt| {
-            mt.read().expect("Memtable lock poisoned").should_flush()
+            mt.load().should_flush()
         });
         if should_flush {
             if let Some(ref tx) = self.flush_tx {
@@ -880,12 +885,12 @@ impl DB {
         self.read_count
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-        // Check correct partition first (most recent data, concurrent with RwLock read lock)
+        // Check correct partition first (most recent data, lock-free with ArcSwap)
         let partition = partition_for_key(key);
-        let mt = self.memtables[partition].read().expect("Memtable lock poisoned");
+        let mt = self.memtables[partition].load();  // Lock-free Arc load
         let result = mt.get(key);
         let contains = mt.contains(key);
-        drop(mt); // Release lock
+        // Arc automatically dropped, no lock to release!
 
         match result {
             Some(value) => {
@@ -1075,19 +1080,19 @@ impl DB {
             .expect("WAL mutex poisoned")
             .write(&record)?;
 
-        // Write tombstone to correct partition (concurrent with RwLock read lock)
+        // Write tombstone to correct partition (lock-free with ArcSwap)
         let partition = partition_for_key(&key);
-        let mt = self.memtables[partition].read().expect("Memtable lock poisoned");
+        let mt = self.memtables[partition].load();  // Lock-free Arc load
         mt.delete(key);
-        drop(mt); // Release lock early
+        // Arc automatically dropped, no lock to release!
 
         // Track write operation for Dostoevsky adaptive compaction
         self.write_count
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-        // Check if ANY partition should be flushed
+        // Check if ANY partition should be flushed (lock-free check)
         let should_flush = self.memtables.iter().any(|mt| {
-            mt.read().expect("Memtable lock poisoned").should_flush()
+            mt.load().should_flush()
         });
         if should_flush {
             if let Some(ref tx) = self.flush_tx {
@@ -1175,9 +1180,9 @@ impl DB {
 
         let flush_start = Instant::now();
 
-        // Check total size across all partitions
+        // Check total size across all partitions (lock-free with ArcSwap)
         let total_size: usize = self.memtables.iter()
-            .map(|mt| mt.read().expect("Memtable lock poisoned").size())
+            .map(|mt| mt.load().size())
             .sum();
 
         // Early return if all partitions are empty
@@ -1239,9 +1244,9 @@ impl DB {
             info!("Successfully flushed previously failed immutable partitions");
         }
 
-        // Now check if active partitions need flushing
+        // Now check if active partitions need flushing (lock-free with ArcSwap)
         let total_size: usize = self.memtables.iter()
-            .map(|mt| mt.read().expect("Memtable lock poisoned").size())
+            .map(|mt| mt.load().size())
             .sum();
 
         if total_size == 0 {
@@ -1254,20 +1259,20 @@ impl DB {
         *counter += 1;
         drop(counter);
 
-        // Swap ALL 16 partitions atomically (RocksDB-style immutable memtables)
-        // 1. Lock each partition
-        // 2. Swap with new empty partition
-        // 3. Collect old partitions
-        // 4. Store as immutable partitions
-        // 5. Release locks
+        // Swap ALL 16 partitions atomically (lock-free with ArcSwap!)
+        // 1. Atomically swap each partition with new empty partition
+        // 2. Keep old partitions as Arc<Memtable> (no unwrap needed)
+        // 3. Store as immutable partitions
+        // No locks needed - ArcSwap.swap() is atomic and lock-free!
         let capacity_per_partition = self.options.memtable_capacity / NUM_PARTITIONS;
-        let mut flushing_partitions = Vec::with_capacity(NUM_PARTITIONS);
+        let mut flushing_partitions: Vec<Arc<Memtable>> = Vec::with_capacity(NUM_PARTITIONS);
 
-        for partition_mt in &self.memtables {
-            let mut mt_guard = partition_mt.write().expect("Memtable lock poisoned");
-            let old_partition = std::mem::replace(&mut *mt_guard, Memtable::new(capacity_per_partition));
-            flushing_partitions.push(old_partition);
-            drop(mt_guard); // Release lock immediately
+        // Deref Arc to access the array
+        for partition_mt in self.memtables.iter() {
+            // Atomic swap: returns Arc<Memtable> of old partition
+            // Keep it as Arc<Memtable> - no need to unwrap since immutable_memtables stores Arc
+            let old_arc: Arc<Memtable> = partition_mt.swap(Arc::new(Memtable::new(capacity_per_partition)));
+            flushing_partitions.push(old_arc);
         }
 
         // Collect entries from ALL partitions FIRST (before storing in immutable)
@@ -1434,15 +1439,16 @@ impl DB {
         }
 
         // Safe to swap - immutable_memtables is None
-        // Swap ALL 16 partitions atomically (exclusive write lock for swap)
+        // Swap ALL 16 partitions atomically (lock-free with ArcSwap!)
         let capacity_per_partition = self.options.memtable_capacity / NUM_PARTITIONS;
         let mut flushing_partitions = Vec::with_capacity(NUM_PARTITIONS);
 
-        for partition_mt in &self.memtables {
-            let mut mt_guard = partition_mt.write().expect("Memtable lock poisoned");
-            let old_partition = std::mem::replace(&mut *mt_guard, Memtable::new(capacity_per_partition));
-            flushing_partitions.push(old_partition);
-            drop(mt_guard); // Release lock immediately
+        // Deref Arc to access the array
+        for partition_mt in self.memtables.iter() {
+            // Atomic swap: returns Arc<Memtable> of old partition
+            // Keep it as Arc<Memtable> - no need to unwrap since immutable_memtables stores Arc
+            let old_arc: Arc<Memtable> = partition_mt.swap(Arc::new(Memtable::new(capacity_per_partition)));
+            flushing_partitions.push(old_arc);
         }
 
         // Store in immutable_memtables
@@ -1549,8 +1555,8 @@ impl DB {
     /// NOTE: Memtable swap already happened in try_swap_memtable() before signal was sent.
     /// This method just builds the SSTable from immutable_memtable (slow part).
     fn run_background_flush_partitioned(
-        _memtables: &[Arc<RwLock<Memtable>>; NUM_PARTITIONS],
-        immutable_memtables: &Arc<Mutex<Option<Vec<Memtable>>>>,
+        _memtables: &Arc<[ArcSwap<Memtable>; NUM_PARTITIONS]>,
+        immutable_memtables: &Arc<Mutex<Option<Vec<Arc<Memtable>>>>>,
         wal: &Arc<Mutex<WAL>>,
         lsm: &Arc<Mutex<LSMTree>>,
         vlog: &Arc<Mutex<Option<VLog>>>,
@@ -1676,17 +1682,17 @@ impl DB {
         Ok(())
     }
 
-    /// Get current memtable size across all partitions
+    /// Get current memtable size across all partitions (lock-free)
     pub fn memtable_size(&self) -> usize {
         self.memtables.iter()
-            .map(|mt| mt.read().expect("Memtable lock poisoned").size())
+            .map(|mt| mt.load().size())
             .sum()
     }
 
-    /// Get number of entries in memtable across all partitions
+    /// Get number of entries in memtable across all partitions (lock-free)
     pub fn memtable_len(&self) -> usize {
         self.memtables.iter()
-            .map(|mt| mt.read().expect("Memtable lock poisoned").len())
+            .map(|mt| mt.load().len())
             .sum()
     }
 
@@ -1758,9 +1764,9 @@ impl DB {
         let (put_latencies, get_latencies, delete_latencies) =
             self.metrics.get_latency_percentiles();
 
-        // Get memtable stats (sum across all partitions)
+        // Get memtable stats (sum across all partitions, lock-free)
         let memtable_size_bytes: usize = self.memtables.iter()
-            .map(|mt| mt.read().expect("Memtable lock poisoned").size())
+            .map(|mt| mt.load().size())
             .sum();
         let memtable_capacity_bytes = self.options.memtable_capacity;
         let memtable_utilization_pct =
@@ -2041,9 +2047,9 @@ impl DB {
             ));
         }
 
-        // Check 3: Memtable utilization (sum across all partitions)
+        // Check 3: Memtable utilization (sum across all partitions, lock-free)
         let memtable_size: usize = self.memtables.iter()
-            .map(|mt| mt.read().expect("Memtable lock poisoned").size())
+            .map(|mt| mt.load().size())
             .sum();
         let memtable_capacity = self.options.memtable_capacity;
         let utilization_pct = (memtable_size as f64 / memtable_capacity as f64) * 100.0;
@@ -2219,18 +2225,19 @@ impl DB {
         }
         drop(lsm);
 
-        // Collect references to ALL active memtable partitions (concurrent read lock)
-        let partition_guards: Vec<_> = self.memtables.iter()
-            .map(|mt| mt.read().expect("Memtable lock poisoned"))
+        // Collect Arc references to ALL active memtable partitions (lock-free)
+        // load() returns Guard<Arc<Memtable>>, we need to clone the Arc out
+        let partition_arcs: Vec<Arc<Memtable>> = self.memtables.iter()
+            .map(|mt| (*mt.load()).clone())
             .collect();
-        let mut partition_refs: Vec<&Memtable> = partition_guards.iter()
-            .map(|guard| &**guard)
+        let mut partition_refs: Vec<&Memtable> = partition_arcs.iter()
+            .map(|arc| arc.as_ref())
             .collect();
 
         // Also include immutable partitions if they exist
         let immutable_guard = self.immutable_memtables.lock().expect("Immutable memtables lock poisoned");
         let immutable_refs: Vec<&Memtable> = if let Some(ref immutable_partitions) = *immutable_guard {
-            immutable_partitions.iter().collect()
+            immutable_partitions.iter().map(|arc| arc.as_ref()).collect()
         } else {
             Vec::new()
         };

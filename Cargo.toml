@@ -18,8 +18,9 @@ tokio = { version = "1.41", features = ["full"] }
 # WAL and data integrity (hardware-accelerated CRC32C)
 crc32c = "0.6"
 
-# Memtable (concurrent skiplist)
+# Memtable (concurrent skiplist + lock-free atomic swap)
 crossbeam-skiplist = "0.1"
+arc-swap = "1.7"
 
 # ML for learned bloom filters (prototype phase)
 smartcore = "0.3"  # Decision trees, good performance
