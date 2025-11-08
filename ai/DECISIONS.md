@@ -1010,3 +1010,89 @@ loop {
 ---
 
 *Add decisions as they're made - include commit hash if implemented*
+
+---
+
+## Optimization Principles (Nov 8, 2025)
+
+### Decision: Profile Before Optimizing ("Measure, Don't Guess")
+
+**Context**: Attempted 5 "obvious" scan optimizations (ArcSwap, LRU cache, pre-computed ranges, SIMD k-way merge)
+
+**Result**: ALL optimizations regressed performance (-7.8% mixed, -23.5% scans)
+
+**Root cause**: "Obvious" bottlenecks were NOT actual bottlenecks
+- LSM tree locks: NO contention in profiling ❌
+- Block cache memory: Not an issue for benchmark ❌  
+- K-way merge: Not a hotspot ❌
+
+**Key Lessons**:
+
+1. **Mutex faster than ArcSwap when uncontended**
+   - Mutex: <1ns when uncontended (just flag check)
+   - ArcSwap: Atomic Arc clone (reference count increment)
+   - Our case: No contention → Mutex faster
+
+2. **LRU cache overhead**
+   - HashMap: Fast lookups (no metadata updates)
+   - LRU: Slower lookups (update LRU order on every access!)
+   - Benchmark: Cache never grew large → HashMap faster
+
+3. **Benchmark variance is real**
+   - Results vary ±5% between runs
+   - Small improvements (<10%) may be noise
+   - Need >10% improvement to be confident
+
+4. **Complexity vs benefit**
+   - 5 optimizations: +240 lines of code
+   - Result: -7.8% to -23.5% performance ❌
+   - Lesson: More code ≠ faster code
+
+**What Actually Worked**: ALEX learned index (+55% reads)
+- **Clear profiling data**: lower_bound() was O(n)
+- **Algorithm improvement**: O(n) → O(log error)
+- **Fundamental change**: Not a micro-optimization
+- **Measurable impact**: 55% >> noise threshold
+
+**Decision**: Always profile BEFORE optimizing, focus on algorithmic improvements over micro-optimizations
+
+**Trade-offs**:
+- ✅ Avoid wasted effort on non-bottlenecks
+- ✅ Algorithmic wins (30-50%+) vs micro-wins (<10%)
+- ❌ Takes time to profile properly
+- ❌ Requires realistic workloads (not microbenchmarks)
+
+**References**: 
+- `/tmp/scan_optimization_analysis_nov8.md` - Full analysis
+- `/tmp/profiling_final_analysis_nov8.md` - Profiling results
+
+---
+
+## Ship Decision (Nov 8, 2025)
+
+### Decision: Ship Current Performance (ALEX baseline - commit a1d3eea)
+
+**Rationale**:
+- Beat RocksDB on ALL 3 major workloads (+48-97%)
+- ALEX learned index delivering research-validated wins (+55% reads!)
+- Excellent absolute performance (600K+ mixed, 721K+ writes, 1.8M+ reads)
+- Learned NOT to over-optimize (measure, don't guess!)
+- Real-world validation > synthetic optimization
+
+**Performance**:
+- Writes: 1.97x RocksDB, 1.62x fjall 🏆
+- Reads: 1.70x RocksDB (ALEX!), 1.66x fjall 🏆
+- Mixed: 1.48x RocksDB, 0.78x fjall
+- Scans: 0.81x RocksDB (acceptable)
+
+**Trade-offs**:
+- ✅ Production ready NOW
+- ✅ Clean codebase, no technical debt
+- ✅ Proven learned data structures (ALEX works!)
+- ⚠️ 22% gap vs fjall on mixed (architectural trade-off)
+- ⚠️ 19% gap vs RocksDB on scans (acceptable)
+
+**Next**: Integrate into omen, validate real-world performance
+
+---
+
