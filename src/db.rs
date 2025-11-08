@@ -11,6 +11,7 @@ use crate::vlog::VLog;
 use crate::wal::{Record, SyncPolicy, WALReader, WAL};
 use arc_swap::ArcSwap;
 use bytes::Bytes;
+use crossbeam_channel::{Sender as CrossbeamSender, unbounded};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::{channel, Sender};
@@ -361,6 +362,10 @@ pub struct DB {
     flush_tx: Option<Sender<FlushTask>>,
     /// Background flush worker thread
     flush_worker: Option<JoinHandle<()>>,
+    /// Channel for lock-free WAL writes
+    wal_tx: CrossbeamSender<Record>,
+    /// Background WAL writer thread
+    wal_worker: Option<JoinHandle<()>>,
     /// Flush mutex to serialize flush operations and prevent concurrent flush races
     flush_mutex: Arc<Mutex<()>>,
     /// SSTable reader cache to avoid re-opening files on every read (CRITICAL for performance)
@@ -639,6 +644,40 @@ impl DB {
             (None, None)
         };
 
+        // Start background WAL writer (always enabled for lock-free writes)
+        let (wal_tx, wal_rx) = unbounded::<Record>();
+        let wal_ref = Arc::clone(&wal);
+        let wal_worker = thread::spawn(move || {
+            let mut batch = Vec::with_capacity(1000);
+
+            loop {
+                // Block on first record
+                match wal_rx.recv() {
+                    Ok(record) => batch.push(record),
+                    Err(_) => break,  // Channel closed, shutdown
+                }
+
+                // Drain channel up to batch limit (amortize lock overhead)
+                while batch.len() < 1000 {
+                    match wal_rx.try_recv() {
+                        Ok(record) => batch.push(record),
+                        Err(_) => break,  // Channel empty or closed
+                    }
+                }
+
+                // Write batch with single lock acquisition
+                if let Err(e) = wal_ref.lock()
+                    .expect("WAL mutex poisoned")
+                    .write_batch(&batch) {
+                    error!(error = %e, "WAL batch write failed");
+                }
+
+                batch.clear();
+            }
+
+            info!("WAL writer thread shutting down");
+        });
+
         let db = Self {
             options: options.clone(),
             wal,
@@ -652,6 +691,8 @@ impl DB {
             compaction_worker,
             flush_tx,
             flush_worker,
+            wal_tx,
+            wal_worker: Some(wal_worker),
             flush_mutex,
             sstable_cache: Arc::new(Mutex::new(std::collections::HashMap::new())),
             has_vlog: std::sync::atomic::AtomicBool::new(has_vlog),
@@ -772,16 +813,16 @@ impl DB {
         let logical_bytes = (key.len() + value.len()) as u64;
         self.metrics.record_logical_bytes(logical_bytes);
 
-        // Write to WAL first (durability)
+        // Write to WAL first (durability) - lock-free via channel
         let record = Record::Put {
             key: key.clone(),
             value: value.clone(),
         };
         let wal_bytes = record.encode().len() as u64;
-        self.wal
-            .lock()
-            .expect("WAL mutex poisoned")
-            .write(&record)?;
+        self.wal_tx.send(record)
+            .map_err(|_| DBError::Wal(crate::wal::WALError::Io(
+                std::io::Error::new(std::io::ErrorKind::BrokenPipe, "WAL writer thread died")
+            )))?;
 
         // Track physical bytes written to WAL
         self.metrics.record_physical_bytes(wal_bytes);
@@ -1073,12 +1114,12 @@ impl DB {
         let start = Instant::now();
         let key = Bytes::copy_from_slice(key.as_ref());
 
-        // Write to WAL (durability)
+        // Write to WAL (durability) - lock-free via channel
         let record = Record::Delete { key: key.clone() };
-        self.wal
-            .lock()
-            .expect("WAL mutex poisoned")
-            .write(&record)?;
+        self.wal_tx.send(record)
+            .map_err(|_| DBError::Wal(crate::wal::WALError::Io(
+                std::io::Error::new(std::io::ErrorKind::BrokenPipe, "WAL writer thread died")
+            )))?;
 
         // Write tombstone to correct partition (lock-free with ArcSwap)
         let partition = partition_for_key(&key);
@@ -2276,6 +2317,16 @@ impl Drop for DB {
         // Wait for compaction worker thread to finish
         if let Some(worker) = self.compaction_worker.take() {
             debug!("Waiting for background compaction thread to finish");
+            let _ = worker.join();
+        }
+
+        // Shutdown WAL writer (drop channel, closes it)
+        debug!("Closing WAL writer channel");
+        drop(self.wal_tx.clone());  // Drop our sender to close channel
+
+        // Wait for WAL worker thread to finish
+        if let Some(worker) = self.wal_worker.take() {
+            debug!("Waiting for background WAL writer thread to finish");
             let _ = worker.join();
         }
 
