@@ -4,13 +4,14 @@
 
 [![License](https://img.shields.io/badge/license-Elastic%202.0-blue.svg)](LICENSE)
 
-> ✅ **Production-Ready - 3/4 Workloads Best-in-Class**
+> ⚠️ **Experimental - Research Implementation**
 >
-> seerdb is a production-ready storage engine achieving best-in-class performance in 3 out of 4 workloads.
+> seerdb is an experimental storage engine implementing 2018-2024 research advances.
+> Use at your own risk - not recommended for production workloads.
 >
-> **Status**: 141 tests passing, all core features validated
-> **Performance**: Beats fjall in reads (+34%), RocksDB in writes (+32%) and scans (+88%)
-> **Best For**: Read-heavy workloads, write-intensive systems, range scan applications
+> **Status**: 141 tests passing, research features validated
+> **Performance**: Competitive with RocksDB (32% faster writes, 88% faster scans, 8% slower reads)
+> **Purpose**: Validate research claims, demonstrate learned data structures in practice
 >
 > See [ai/STATUS.md](ai/STATUS.md) for detailed benchmarks and validation results.
 >
@@ -31,9 +32,9 @@
 **Why This Matters**:
 - Validates research claims with real-world implementation
 - 4.82x better write amplification than traditional LSM (measured)
-- Achieves best-in-class performance in 3/4 workloads vs RocksDB and fjall
+- Competitive performance with industry-standard RocksDB
 - Demonstrates practical benefits of learned data structures
-- Production-quality implementation (141 tests, crash recovery, durability)
+- Research-quality implementation (141 tests, crash recovery, durability)
 
 ## Research Papers Implemented
 
@@ -51,23 +52,24 @@ See [ai/research/](ai/research/) for paper summaries and implementation details.
 
 **Baseline Benchmark** (100K ops, 1KB values, M3 Max):
 
-| Workload | seerdb | RocksDB | fjall | vs RocksDB | vs fjall | Status |
-|----------|--------|---------|-------|------------|----------|--------|
-| **Random Reads** | 984K ops/sec | 1,070K | 733K | 0.92x (−8%) | **1.34x (+34%)** | ✅ Beat fjall |
-| **Sequential Writes** | 480K ops/sec | 363K | 417K | **1.32x (+32%)** | **1.15x (+15%)** | 🏆 Best-in-class |
-| **Mixed 50/50** | 385K ops/sec | 408K | 571K | 0.94x (−5%) | 0.67x (−33%) | ⚠️ Competitive |
-| **Range Scans** | 39K scans/sec | 21K | 11K | **1.88x (+88%)** | **3.54x (+254%)** | 🏆 Best-in-class |
+| Workload | seerdb | RocksDB | vs RocksDB | Analysis |
+|----------|--------|---------|------------|----------|
+| **Sequential Writes** | 480K ops/sec | 363K | **1.32x (+32%)** | ✅ Faster |
+| **Random Reads** | 984K ops/sec | 1,070K | 0.92x (−8%) | ⚠️ Competitive |
+| **Mixed 50/50** | 385K ops/sec | 408K | 0.94x (−5%) | ⚠️ Competitive |
+| **Range Scans** | 39K scans/sec | 21K | **1.88x (+88%)** | ✅ Faster |
 
-**Write Amplification**: 1.01x with vLog (4.82x better than traditional LSM at 4.88x) 🏆
+**Write Amplification**: 1.01x with vLog (4.82x better than traditional LSM at 4.88x)
 
-**Key Achievements**:
-- 🏆 Best-in-class writes (32% faster than RocksDB)
-- 🏆 Best-in-class scans (88% faster than RocksDB, 254% faster than fjall)
-- ✅ Beat fjall in reads by 34% (984K vs 733K ops/sec)
-- ✅ Near-parity with RocksDB on reads (−8% gap) and mixed (−5% gap)
-- 🏆 Industry-leading write amplification (1.01x)
+**Summary vs RocksDB**:
+- ✅ **Writes**: 32% faster (better write path, efficient memtable)
+- ✅ **Scans**: 88% faster (decompressed cache, efficient iteration)
+- ⚠️ **Reads**: 8% slower (close, room for optimization)
+- ⚠️ **Mixed**: 5% slower (close, room for optimization)
+- ✅ **Write Amp**: 4.82x better (key-value separation via WiscKey)
 
-**Status**: 3/4 workloads best-in-class
+**Experimental Status**: While competitive with RocksDB, not recommended for production use.
+Recent critical bugs discovered (77% data loss fixed in November 2025).
 
 **Platform**: M3 Max (ARM64). Results may vary on x86_64.
 **Methodology**: Release mode, 100K operations, 1KB values, default configuration.
@@ -90,7 +92,8 @@ See [ai/STATUS.md](ai/STATUS.md) for detailed performance analysis and validatio
 **Design Principles**:
 - Research-driven (every decision backed by papers or benchmarks)
 - Measured performance (all claims validated with benchmarks)
-- Production-quality (141 tests, crash recovery, durability)
+- Experimental quality (141 tests, crash recovery, durability validation)
+- Not production-ready (use at your own risk)
 
 ## Building and Testing
 
@@ -111,10 +114,13 @@ cargo run --release --example cache_hit_rate_benchmark
 cargo run --release --example write_amplification
 ```
 
-**Recent Optimizations** (November 7, 2025):
+**Recent Work** (November 2025):
 - Decompressed cache: +144% read throughput (403K → 984K ops/sec)
-- Cache instrumentation: Discovered 94% cache hit rate
+- Cache instrumentation: Measured 94% cache hit rate
+- Critical bug fixes: Fixed 77% data loss issue in SSTable index lookup
 - Block access optimization: Eliminated repeated prefix decompression
+
+**Status**: Experimental - use at your own risk. Recently discovered and fixed critical bugs.
 
 See [ai/STATUS.md](ai/STATUS.md) for detailed progress and validation results.
 

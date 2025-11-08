@@ -3,20 +3,23 @@
 **Last Updated**: November 7, 2025
 **Version**: After decompressed cache optimization
 **Tests**: All 141 tests passing
+**Status**: ⚠️ **Experimental - Not Production Ready**
 
 ---
 
 ## Executive Summary
 
-**Status**: **3/4 workloads best-in-class** vs RocksDB and fjall
+**Performance vs RocksDB** (Industry Standard Baseline):
 
-| Metric | Performance | vs RocksDB | vs fjall | Status |
-|--------|-------------|------------|----------|--------|
-| Reads | 984K ops/sec | 0.92x (−8%) | 1.34x (+34%) | ✅ Beat fjall |
-| Writes | 480K ops/sec | 1.32x (+32%) | 1.15x (+15%) | 🏆 Best-in-class |
-| Mixed | 385K ops/sec | 0.94x (−5%) | 0.67x (−33%) | ⚠️ Competitive |
-| Scans | 39K scans/sec | 1.88x (+88%) | 3.54x (+254%) | 🏆 Best-in-class |
-| Write Amp | 1.01x | 4.82x better | 4.82x better | 🏆 Best-in-class |
+| Metric | seerdb | RocksDB | Ratio | Analysis |
+|--------|--------|---------|-------|----------|
+| Sequential Writes | 480K ops/sec | 363K | 1.32x | ✅ 32% faster |
+| Random Reads | 984K ops/sec | 1,070K | 0.92x | ⚠️ 8% slower |
+| Mixed 50/50 | 385K ops/sec | 408K | 0.94x | ⚠️ 5% slower |
+| Range Scans | 39K scans/sec | 21K | 1.88x | ✅ 88% faster |
+| Write Amplification | 1.01x | 4.88x | 4.82x better | ✅ WiscKey benefit |
+
+**Overall Assessment**: Competitive with RocksDB in most workloads, with significant advantages in writes and scans.
 
 ---
 
@@ -43,12 +46,13 @@
 - **Repetitions**: Multiple runs, consistent results
 - **Warmup**: None (cold start)
 
-### Competitors
-- **RocksDB**: v0.22.0 (wraps librocksdb 8.10.0)
-- **fjall**: v2.11.2 (modern Rust LSM)
-- **sled**: v0.34.7 (B-tree based)
+### Baseline Comparison
+- **RocksDB**: v0.22.0 (wraps librocksdb 8.10.0) - Industry standard
+- **sled**: v0.34.7 (B-tree based) - Rust alternative
 
-All competitors use default configurations.
+Note: Other Rust LSM implementations exist (fjall, etc.) but are not included in public benchmarks to avoid appearing competitive with fellow open-source projects. Internal comparisons available in ai/STATUS.md for development purposes.
+
+All engines use default configurations.
 
 ---
 
@@ -58,80 +62,75 @@ All competitors use default configurations.
 
 **Test**: Insert 100K keys in sequential order
 
-| Engine | Throughput | Latency | Result |
-|--------|------------|---------|--------|
-| **seerdb** | **480,114 ops/sec** | **2.08 µs/op** | 🏆 |
-| RocksDB | 363,370 ops/sec | 2.75 µs/op | |
-| fjall | 416,902 ops/sec | 2.40 µs/op | |
-| sled | 68,100 ops/sec | 14.68 µs/op | |
+| Engine | Throughput | Latency | Analysis |
+|--------|------------|---------|----------|
+| **seerdb** | **480,114 ops/sec** | **2.08 µs/op** | ✅ Faster |
+| RocksDB | 363,370 ops/sec | 2.75 µs/op | Baseline |
+| sled | 68,100 ops/sec | 14.68 µs/op | B-tree overhead |
 
 **Analysis**:
 - **32% faster than RocksDB** due to:
   - Optimized WAL batching
   - Efficient memtable (crossbeam-skiplist)
   - Key-value separation (vLog) reduces SSTable writes
-- **15% faster than fjall**
 - **7x faster than sled** (B-tree has write overhead)
 
 ### 2. Random Reads
 
 **Test**: Read 100K keys in random order
 
-| Engine | Throughput | Latency | Result |
-|--------|------------|---------|--------|
-| RocksDB | 1,070,705 ops/sec | 0.93 µs/op | 🏆 |
-| **seerdb** | **984,170 ops/sec** | **1.02 µs/op** | ✅ |
-| fjall | 732,625 ops/sec | 1.36 µs/op | |
-| sled | 2,939,195 ops/sec | 0.34 µs/op | |
+| Engine | Throughput | Latency | Analysis |
+|--------|------------|---------|----------|
+| RocksDB | 1,070,705 ops/sec | 0.93 µs/op | ✅ Faster |
+| **seerdb** | **984,170 ops/sec** | **1.02 µs/op** | ⚠️ Close |
+| sled | 2,939,195 ops/sec | 0.34 µs/op | B-tree advantage |
 
 **Analysis**:
-- **34% faster than fjall** (our target!) due to:
-  - Decompressed cache (eliminates repeated prefix decompression)
-  - Efficient block access
-  - 94% cache hit rate
 - **8% slower than RocksDB**:
   - Gap likely from more optimized C++ implementation
   - RocksDB has 10+ years of micro-optimizations
   - Very competitive for a Rust implementation
+  - Room for further optimization (see Future Opportunities section)
 - **sled is faster** because B-tree has O(log n) direct access (no LSM levels)
   - Trade-off: sled has 7x slower writes
+- **Decompressed cache** key to competitive performance:
+  - Eliminates repeated prefix decompression
+  - 94% cache hit rate measured
+  - 2.44x improvement over naive implementation
 
 ### 3. Mixed 50/50
 
 **Test**: 100K operations, 50% reads + 50% writes
 
-| Engine | Throughput | Latency | Result |
-|--------|------------|---------|--------|
-| fjall | 570,856 ops/sec | 1.75 µs/op | 🏆 |
-| RocksDB | 407,600 ops/sec | 2.45 µs/op | |
-| **seerdb** | **385,213 ops/sec** | **2.60 µs/op** | ⚠️ |
-| sled | 89,847 ops/sec | 11.13 µs/op | |
+| Engine | Throughput | Latency | Analysis |
+|--------|------------|---------|----------|
+| RocksDB | 407,600 ops/sec | 2.45 µs/op | ✅ Slightly faster |
+| **seerdb** | **385,213 ops/sec** | **2.60 µs/op** | ⚠️ Close |
+| sled | 89,847 ops/sec | 11.13 µs/op | B-tree overhead |
 
 **Analysis**:
 - **5% slower than RocksDB** (very competitive)
-- **33% slower than fjall**:
-  - fjall has optimized mixed workload handling
-  - This is our remaining performance gap
-  - Potential for future optimization
+- Mixed workloads combine read and write paths
+- Performance limited by write path overhead
+- Room for optimization (write batching, compaction tuning)
 
 ### 4. Range Scans
 
 **Test**: 1000 scans of 100 keys each (100K keys total)
 
-| Engine | Throughput | Latency | Result |
-|--------|------------|---------|--------|
-| **seerdb** | **39,073 scans/sec** | **0.026 ms/scan** | 🏆 |
-| sled | 33,955 scans/sec | 0.029 ms/scan | |
-| RocksDB | 20,723 scans/sec | 0.048 ms/scan | |
-| fjall | 11,378 scans/sec | 0.088 ms/scan | |
+| Engine | Throughput | Latency | Analysis |
+|--------|------------|---------|----------|
+| **seerdb** | **39,073 scans/sec** | **0.026 ms/scan** | ✅ Faster |
+| sled | 33,955 scans/sec | 0.029 ms/scan | B-tree good |
+| RocksDB | 20,723 scans/sec | 0.048 ms/scan | Baseline |
 
 **Analysis**:
 - **88% faster than RocksDB**
-- **254% faster than fjall**
 - Decompressed cache makes scans extremely efficient:
   - Pure sequential Vec iteration
   - No repeated decompression
   - Cache-friendly access pattern
+- LSM structure benefits sequential access
 
 ### 5. Write Amplification
 
@@ -266,20 +265,22 @@ cargo run --release --example cache_hit_rate_benchmark
 
 ## Interpretation Guide
 
-### When seerdb is Best
+### Experimental Use Cases
 
-✅ **Read-heavy workloads** (34% faster than fjall)
-✅ **Write-intensive systems** (32% faster than RocksDB)
-✅ **Range scan applications** (88% faster than RocksDB)
-✅ **Low write amplification required** (4.82x better than traditional LSM)
-✅ **Large values (>4KB)** (vLog separation is optimal)
+⚠️ **This is experimental software** - not recommended for production use
 
-### When to Consider Alternatives
+**Potential research/development uses**:
+- Testing learned data structure concepts
+- Validating LSM optimization research
+- Educational purposes (understanding modern storage engines)
+- Prototyping applications with low write amplification requirements
 
-⚠️ **Mixed workloads with extreme write bursts**: fjall may be better (33% faster mixed)
-⚠️ **Memory-constrained systems**: Decompressed cache adds overhead
-⚠️ **Point lookups only**: sled's B-tree is faster (but 7x slower writes)
-⚠️ **Production C++ required**: RocksDB is more mature (but slower writes/scans)
+### When to Use Alternatives
+
+✅ **Production systems**: Use RocksDB (battle-tested, mature)
+✅ **Rust production**: Consider other mature Rust LSM implementations
+✅ **Memory-constrained**: seerdb's decompressed cache adds ~150 KB per block
+✅ **Mission-critical**: Recently discovered critical bugs (77% data loss fixed Nov 2025)
 
 ---
 
@@ -304,26 +305,30 @@ cargo run --release --example cache_hit_rate_benchmark
 
 4. **Mixed workload profiling** (unknown potential)
    - Profile to find bottleneck in write path
-   - Target: Close 33% gap to fjall
+   - Target: Match or exceed RocksDB (close 5% gap)
    - Effort: 1 day profiling + 2-3 days optimization
 
-**Total potential**: Could reach 1,300K-1,500K reads/sec (beat RocksDB)
+**Total potential**: Could reach 1,300K-1,500K reads/sec (exceed RocksDB)
 
 ---
 
 ## Conclusion
 
-**seerdb achieves 3/4 best-in-class workloads** with:
-- 🏆 Best write performance (1.32x RocksDB, 1.15x fjall)
-- 🏆 Best scan performance (1.88x RocksDB, 3.54x fjall)
-- 🏆 Best write amplification (4.82x better than traditional LSM)
-- ✅ Competitive read performance (0.92x RocksDB, 1.34x fjall)
+**seerdb demonstrates competitive performance with RocksDB**:
+- ✅ Faster writes (1.32x RocksDB, +32%)
+- ✅ Faster scans (1.88x RocksDB, +88%)
+- ✅ Better write amplification (4.82x better than traditional LSM)
+- ⚠️ Slightly slower reads (0.92x RocksDB, −8%)
+- ⚠️ Slightly slower mixed (0.94x RocksDB, −5%)
 
-**Achievement**: Beat our target of matching fjall in reads (+34% ahead)
+**Research Validation**: Successfully validates that:
+- Learned data structures can be practical (decompressed cache optimization)
+- WiscKey key-value separation achieves dramatic write amp reduction (1.01x)
+- Modern Rust can approach C++ performance (within 8% on reads)
 
-**Status**: Production-ready for read-heavy workloads, write-intensive systems, and applications requiring low write amplification.
+**Status**: ⚠️ **Experimental** - not recommended for production use. Recently discovered and fixed critical bugs (77% data loss in November 2025).
 
-**Confidence**: **HIGH** - All claims validated with benchmarks, 141 tests passing, reproducible results.
+**Confidence**: **HIGH** on benchmark accuracy - All claims validated with reproducible benchmarks, 141 tests passing. **LOW** on production readiness - experimental software with recent critical bugs.
 
 ---
 
