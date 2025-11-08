@@ -152,26 +152,19 @@ impl AlexTree {
     /// This is useful for partition_point semantics in indexes.
     ///
     /// **Time complexity**: O(log n) to find leaf + O(log error) to search within leaf
+    ///
+    /// **ALEX Optimization**: Uses learned model + exponential search WITHOUT materializing all keys
+    /// This is O(log error) instead of O(n), which is the whole point of learned indexes!
     pub fn lower_bound(&self, search_key: i64) -> Result<Option<(i64, Vec<u8>)>> {
         // Find the leaf that might contain keys >= search_key
         let start_leaf_idx = self.find_leaf_index(search_key);
 
         // Search this leaf and subsequent leaves for first key >= search_key
-        // OPTIMIZATION: Use keys_only() + binary search instead of pairs() linear scan
+        // Use ALEX-optimized lower_bound_position that avoids materializing all keys
         for leaf in &self.leaves[start_leaf_idx..] {
-            // Get keys without cloning values
-            let keys = leaf.keys_only();
-
-            if keys.is_empty() {
-                continue;
-            }
-
-            // Binary search for first key >= search_key
-            let idx = keys.partition_point(|(k, _pos)| *k < search_key);
-
-            if idx < keys.len() {
-                let (key, _pos) = keys[idx];
-                // Found the key, now get its value
+            // Use learned model + exponential search (O(log error))
+            if let Some((key, _pos)) = leaf.lower_bound_position(search_key) {
+                // Found the key position, now get its value
                 if let Ok(Some(value)) = leaf.get(key) {
                     return Ok(Some((key, value)));
                 }

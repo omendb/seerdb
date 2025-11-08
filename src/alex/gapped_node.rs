@@ -488,6 +488,65 @@ impl GappedNode {
             .collect()
     }
 
+    /// Find position of first key >= search_key using learned model + exponential search
+    ///
+    /// This is the ALEX-optimized lower_bound that avoids materializing all keys.
+    /// **Time complexity**: O(log error) where error is model prediction error
+    ///
+    /// Returns (key, position) if found, None if no key >= search_key exists
+    pub fn lower_bound_position(&self, search_key: i64) -> Option<(i64, usize)> {
+        if self.num_keys == 0 {
+            return None;
+        }
+
+        // Predict starting position using learned model
+        let predicted_pos = self.model.predict(search_key).min(self.keys.len() - 1);
+
+        // Exponential search to find bounds
+        let mut radius = 1;
+        let max_radius = self.max_error_bound.max(16);
+
+        loop {
+            let start = predicted_pos.saturating_sub(radius);
+            let end = (predicted_pos + radius).min(self.keys.len());
+
+            // Scan this range for first key >= search_key
+            // This is O(radius) but radius grows exponentially, so total is O(log error)
+            let mut candidate: Option<(i64, usize)> = None;
+
+            for pos in start..end {
+                if let Some(key) = self.keys[pos] {
+                    if key >= search_key {
+                        // Found a candidate - but keep searching in this range for earlier matches
+                        if candidate.is_none() || key < candidate.unwrap().0 {
+                            candidate = Some((key, pos));
+                        }
+                        // If we found exact match or earlier key, we can stop
+                        if key == search_key || (pos > 0 && self.keys[pos - 1].is_some_and(|k| k < search_key)) {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if let Some(result) = candidate {
+                return Some(result);
+            }
+
+            // Expand search radius
+            if radius >= max_radius || (start == 0 && end == self.keys.len()) {
+                // Searched entire array - do full scan as fallback
+                return self.keys
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(pos, key_opt)| key_opt.map(|k| (k, pos)))
+                    .find(|(k, _)| *k >= search_key);
+            }
+
+            radius *= 2;
+        }
+    }
+
     /// Get current density (fraction of capacity that is filled)
     ///
     /// Density = num_keys / capacity
