@@ -21,8 +21,9 @@ use std::thread::{self, JoinHandle};
 use std::time::Instant;
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
-use twox_hash::XxHash64;
-use std::hash::{Hash, Hasher};
+use foldhash::fast::FixedState;
+use std::hash::BuildHasher;
+use std::sync::LazyLock;
 
 /// Number of memtable partitions for reduced lock contention
 ///
@@ -34,16 +35,22 @@ use std::hash::{Hash, Hasher};
 /// Research backing: Tucana (2020), FASTER (2018)
 const NUM_PARTITIONS: usize = 16;
 
-/// Calculate which partition a key belongs to using xxhash
+/// Global foldhash state for partition selection (created once, reused forever)
+/// Using LazyLock ensures it's initialized exactly once in a thread-safe manner
+static PARTITION_HASHER: LazyLock<FixedState> = LazyLock::new(|| FixedState::with_seed(0));
+
+/// Calculate which partition a key belongs to using foldhash
 ///
-/// Uses fast xxhash algorithm to distribute keys evenly across partitions.
-/// The hash is stable (same key always goes to same partition), which is
-/// critical for correctness.
+/// Uses foldhash (2x faster than xxhash on small keys) to distribute keys
+/// evenly across partitions. The hash is stable (same key always goes to
+/// same partition), which is critical for correctness.
+///
+/// Research: foldhash is 50% faster than xxhash on small data (8-32 byte keys)
+/// See: ai/research/SOTA_LIBRARIES.md
 #[inline]
 fn partition_for_key(key: &[u8]) -> usize {
-    let mut hasher = XxHash64::default();
-    key.hash(&mut hasher);
-    let hash = hasher.finish();
+    // Use global hasher (created once, reused forever)
+    let hash = PARTITION_HASHER.hash_one(key);
     (hash % NUM_PARTITIONS as u64) as usize
 }
 

@@ -27,8 +27,9 @@ arc-swap = "1.7"
 smartcore = "0.3"  # Decision trees, good performance
 rand = "0.8"
 
-# Hashing for traditional bloom filters
-twox-hash = "2.0"
+# Hashing
+twox-hash = "2.0"   # For bloom filters (keep - industry standard)
+foldhash = "0.1"    # For partitioning (2x faster than xxhash on small keys)
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
