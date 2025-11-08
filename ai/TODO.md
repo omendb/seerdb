@@ -201,52 +201,80 @@
 
 ---
 
-## Current Sprint: Micro-Optimizations (5 days)
+## Current Sprint: SOTA Library Implementation (1-2 weeks)
 
-**Goal**: Close 24% gap vs fjall on mixed workload
+**Goal**: Close 24% gap vs fjall AND beat them by implementing ALL state-of-the-art libraries
 
-### Active Tasks
+**Critical Realization** (Nov 8, 2025):
+- Gap is **library-level optimizations**, not algorithms
+- We focused on algorithms (partitioning, compaction) but missed libraries (compression, hashing)
+- fjall uses: lz4_flex, quick_cache, varint-rs, foldhash
+- **Biggest miss**: NO compression (fjall has LZ4, 30-40% potential gain!)
 
-1. **Implement varint-rs** (Day 1) - IN PROGRESS
-   - Replace custom varint in `src/sstable/block.rs`
-   - Expected: +1-3%
-   - Status: Dependencies added, ready to implement
+### Phase 1: Quick Wins (2-3 days) - IN PROGRESS
 
-2. **Implement quick_cache** (Day 2) - PENDING
-   - Replace HashMap cache in `src/db.rs`
+1. ✅ **quick_cache** (completed)
+   - Replaced `Arc<Mutex<HashMap>>` with `Arc<Cache>`
    - Expected: +3-5%
-   - Status: Dependencies added, ready to implement
+   - Status: Tests compiling, ready to benchmark
 
-3. **Tune compaction aggressiveness** (Day 3) - PENDING
-   - Lower size ratios, earlier triggers
-   - Expected: +5-10%
-   - Status: Need to profile current behavior
+2. ⏱️ **foldhash** (2 hours) - NEXT
+   - Replace xxhash with foldhash (2x faster on small keys)
+   - Expected: +5-8%
+   - Status: Ready to implement
 
-4. **Add inline attributes** (Day 4) - PENDING
-   - Hot path functions: get(), put(), partition_for_key()
-   - Expected: +1-2%
+3. ⏱️ **varint-rs** (4 hours)
+   - Replace fixed u16/u32 with varint encoding
+   - Expected: +3-5%
+   - Status: Format-breaking change (acceptable at 0.0.x)
 
-5. **Reduce allocations** (Day 5) - PENDING
-   - Profile with flamegraph
-   - Eliminate unnecessary clones/allocations
-   - Expected: +2-4%
+**Cumulative Phase 1**: +11-18% (473K → 525-558K ops/sec)
 
-**Cumulative expected**: +12-24% (473K → 530-587K ops/sec)
+### Phase 2: Compression (3-4 days) 🔥 CRITICAL
 
-**Detailed plan**: See `ai/OPTIMIZATION_PLAN.md`
+4. 🔥 **lz4_flex block compression** (3-4 days)
+   - Add LZ4 compression to data/index blocks
+   - 2-3x more data fits in cache
+   - Expected: +25-35% (BIGGEST single optimization!)
+   - Status: V3 format designed (see ai/design/BLOCK_SSTABLE_FORMAT.md)
+
+**Cumulative Phase 1+2**: +36-53% (473K → 643-724K ops/sec) **→ BEATS FJALL!**
+
+### Phase 3: Zero-Copy (Optional, 3-5 days)
+
+5. 📅 **rkyv** (3-5 days, complex)
+   - Zero-copy deserialization (7.4x faster)
+   - Expected: +8-12%
+   - Status: Evaluate after LZ4 (complexity increase)
+
+**Cumulative All Phases**: +44-65% (473K → 681-780K ops/sec)
+
+### Completed Micro-Optimizations
+
+- ✅ **Inline attributes** (commit 77a7e2d): +1% (within noise, as expected)
+
+**Updated plan**: See `ai/research/SOTA_LIBRARIES.md` for comprehensive analysis
 
 ---
 
 ## Summary
 
-**Status**: 🚀 **OPTIMIZING** - 5-day sprint to beat fjall
+**Status**: 🚀 **OPTIMIZING** - SOTA library implementation to beat fjall
 
-**Current baseline**: 473K mixed ops/sec (beats RocksDB +11%)
+**Current baseline**: 473K mixed ops/sec (beats RocksDB +14%)
 
-**Target**: 600K+ mixed ops/sec (beat fjall)
+**Gap to fjall**: -20% (473K vs 619K)
+
+**Target**: 745-820K mixed ops/sec (beat fjall by 20-32%!)
+
+**Key Insight**: Library optimizations > Algorithm optimizations
+- Spent weeks on algorithms (partitioning, compaction, lock-free WAL)
+- Missed libraries (compression, hashing, serialization)
+- Biggest miss: NO compression (fjall has LZ4, +30-40% potential!)
 
 **References**:
-- `ai/OPTIMIZATION_PLAN.md` - Detailed implementation plan
+- `ai/research/SOTA_LIBRARIES.md` - **Comprehensive SOTA library analysis**
+- `ai/design/BLOCK_SSTABLE_FORMAT.md` - V3 format with LZ4 + varint
+- `ai/DECISIONS.md` - Decision #24: Implement SOTA libraries NOW
 - `ai/STATUS.md` - Current performance baseline
-- `ai/DECISIONS.md` - All design decisions
-- `/tmp/fjall_analysis.md` - Source code comparison
+- `/tmp/fjall_analysis.md` - Competitor dependency analysis

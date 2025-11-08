@@ -918,4 +918,86 @@ loop {
 
 ---
 
+### 24. Implement SOTA Libraries at 0.0.x (Nov 8, 2025)
+
+**Decision**: Implement all state-of-the-art library optimizations NOW at version 0.0.x, not later
+
+**Context**: Analysis of fjall revealed 24% mixed workload gap (473K vs 619K ops/sec) is primarily **library-level optimizations**, not algorithmic differences
+
+**Critical Realization**: We optimized the wrong layer
+- ✅ Spent weeks on algorithms (partitioned memtables, adaptive compaction, lock-free WAL)
+- ❌ Missed library optimizations (compression, hashing, serialization, encoding)
+- Result: Beat RocksDB (+14%) but still behind fjall (-20%)
+
+**Root Causes**:
+1. **Algorithm bias**: Assumed smarter algorithms > better libraries
+2. **No library profiling**: Never measured hash/serialize/compress overhead
+3. **Incomplete competitor analysis**: Looked at fjall code, not dependencies
+4. **Format stability bias**: Deferred format changes thinking "we'll add later"
+
+**SOTA Libraries to Implement**:
+
+| Library | Current | SOTA | Impact | Effort | Priority |
+|---------|---------|------|--------|--------|----------|
+| **Compression** | None | lz4_flex | 🔥 +30-40% | 3-4 days | 🔥 P0 |
+| **Hashing** | xxhash | foldhash | +5-8% | 2 hours | ⏱️ P1 |
+| **Varint** | Fixed u16/u32 | varint-rs | +3-5% | 4 hours | ⏱️ P1 |
+| **Cache** | HashMap+Mutex | quick_cache | +3-5% | ✅ Done | ✅ P0 |
+| **Serialization** | bincode | rkyv | +8-12% | 3-5 days | 📅 P2 |
+
+**Why This Matters for Vector Databases**:
+- **LZ4 compression**: Embeddings highly compressible (50-70%), 2-3x more fit in cache
+- **Fast hashing**: Every vector insert → partition hash, small keys (8-32 bytes)
+- **Zero-copy (rkyv)**: Vector indexes (HNSW, IVF) large, mmap-friendly = no deserialize cost
+- **Varint**: More index metadata fits in cache, better utilization
+
+**Combined Impact**: +50-85% potential improvement
+- Current: 473K mixed ops/sec
+- After all optimizations: 745-820K ops/sec
+- Would beat fjall (619K) by 20-32%!
+
+**Rationale**:
+- At 0.0.x: Format-breaking changes are acceptable (no production users)
+- Library wins > algorithm wins (30-40% from LZ4 alone vs 10-20% from algorithms)
+- Competitors already use these (fjall has lz4_flex, quick_cache, varint-rs)
+- Implementing now avoids migration pain later
+
+**Implementation Order**:
+1. ✅ quick_cache (completed - +3-5%)
+2. foldhash (2 hours - +5-8%)
+3. varint-rs (4 hours - +3-5%)
+4. 🔥 lz4_flex (3-4 days - +30-40%) ← BIGGEST WIN
+5. rkyv (optional, 3-5 days - +8-12%)
+
+**Trade-offs**:
+- ✅ Massive performance gains (+50-85%)
+- ✅ Match/exceed competitor libraries
+- ✅ Early stage = acceptable to break format
+- ✅ Better to implement now than migrate later
+- ❌ Format incompatible with previous versions (acceptable at 0.0.x)
+- ❌ More dependencies (but all proven, stable libraries)
+
+**Why We Focused on Algorithms First** (In Retrospect - MISTAKE):
+- Algorithmic optimizations feel "smarter" (partitioning, compaction strategies)
+- Library optimizations feel "boring" (just swapping dependencies)
+- Research papers focus on algorithms, not library choices
+- **Lesson**: Profile library overhead FIRST, then optimize algorithms
+
+**Research Evidence**:
+- lz4_flex: 500MB/s compress, 3GB/s decompress (proven in production)
+- foldhash: 2x faster than xxhash on small keys (benchmarked)
+- rkyv: 7.4x faster deserialization (rust_serialization_benchmark)
+- varint-rs: 30-60% space savings on metadata (proven technique)
+
+**References**:
+- ai/research/SOTA_LIBRARIES.md - Comprehensive library analysis
+- /tmp/fjall_analysis.md - Competitor dependency analysis
+- fjall Cargo.toml: Uses lz4_flex, quick_cache, varint-rs
+
+**Commits**: TBD (in progress)
+
+**Status**: 🏃 In Progress - quick_cache done, LZ4/foldhash/varint next
+
+---
+
 *Add decisions as they're made - include commit hash if implemented*

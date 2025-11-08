@@ -12,6 +12,7 @@ use crate::wal::{Record, SyncPolicy, WALReader, WAL};
 use arc_swap::ArcSwap;
 use bytes::Bytes;
 use crossbeam_channel::{Sender as CrossbeamSender, unbounded};
+use quick_cache::sync::Cache;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::{channel, Sender};
@@ -370,7 +371,8 @@ pub struct DB {
     flush_mutex: Arc<Mutex<()>>,
     /// SSTable reader cache to avoid re-opening files on every read (CRITICAL for performance)
     /// Maps SSTable path -> opened SSTable with loaded indexes and bloom filters
-    sstable_cache: Arc<Mutex<std::collections::HashMap<PathBuf, Arc<Mutex<SSTable>>>>>,
+    /// Uses quick_cache for efficient LRU eviction and lock-free concurrent access
+    sstable_cache: Arc<Cache<PathBuf, Arc<Mutex<SSTable>>>>,
     /// Cached vLog availability (avoids lock on every get())
     has_vlog: std::sync::atomic::AtomicBool,
     /// Workload counters for Dostoevsky adaptive compaction
@@ -694,7 +696,7 @@ impl DB {
             wal_tx,
             wal_worker: Some(wal_worker),
             flush_mutex,
-            sstable_cache: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            sstable_cache: Arc::new(Cache::new(1000)),  // Cache up to 1000 SSTables
             has_vlog: std::sync::atomic::AtomicBool::new(has_vlog),
             write_count: std::sync::atomic::AtomicU64::new(0),
             read_count: std::sync::atomic::AtomicU64::new(0),
@@ -1001,33 +1003,17 @@ impl DB {
                 // Check each SSTable in this level
                 for sstable_path in sstables {
                     // Use cached SSTable reader (avoids expensive re-opening and index deserialization)
-                    // Double-checked locking to avoid holding lock during I/O
-                    let cached_sstable = {
-                        // First check: try to get from cache (fast path)
-                        {
-                            let cache = self.sstable_cache.lock().expect("SSTable cache lock poisoned");
-                            if let Some(sstable) = cache.get(sstable_path) {
-                                sstable.clone()
-                            } else {
-                                drop(cache);
-
-                                // Second check: open SSTable outside lock (slow path)
-                                let sstable = if has_vlog {
-                                    let vlog = VLog::open(&vlog_path)?;
-                                    SSTable::open(sstable_path)?.with_vlog(vlog)
-                                } else {
-                                    SSTable::open(sstable_path)?
-                                };
-                                let sstable_arc = Arc::new(Mutex::new(sstable));
-
-                                // Insert into cache (reacquire lock briefly)
-                                let mut cache = self.sstable_cache.lock().expect("SSTable cache lock poisoned");
-                                cache.entry(sstable_path.clone())
-                                    .or_insert_with(|| sstable_arc.clone())
-                                    .clone()
-                            }
-                        }
-                    };
+                    // quick_cache provides lock-free get_or_insert with automatic LRU eviction
+                    let cached_sstable = self.sstable_cache.get_or_insert_with(sstable_path, || -> Result<Arc<Mutex<SSTable>>> {
+                        // Cache miss: open SSTable (called only once per unique path)
+                        let sstable = if has_vlog {
+                            let vlog = VLog::open(&vlog_path)?;
+                            SSTable::open(sstable_path)?.with_vlog(vlog)
+                        } else {
+                            SSTable::open(sstable_path)?
+                        };
+                        Ok(Arc::new(Mutex::new(sstable)))
+                    })?;
 
                     let mut sstable = cached_sstable.lock().expect("SSTable lock poisoned");
 
@@ -1850,11 +1836,10 @@ impl DB {
         }
 
         // Collect cache stats from all SSTables
-        let sstable_cache = self.sstable_cache.lock().expect("SSTable cache lock poisoned");
         for level_num in 0..lsm.num_levels() {
             if let Some(level) = lsm.level(level_num) {
                 for sstable_path in level.sstables() {
-                    if let Some(cached_sstable) = sstable_cache.get(sstable_path) {
+                    if let Some(cached_sstable) = self.sstable_cache.get(sstable_path) {
                         let sstable = cached_sstable.lock().expect("SSTable lock poisoned");
                         let (hits, misses, _) = sstable.cache_stats();
                         cache_hits_total += hits;
@@ -2232,21 +2217,11 @@ impl DB {
         for level_idx in 0..lsm.num_levels() {
             if let Some(level) = lsm.level(level_idx) {
                 for sstable_path in level.sstables() {
-                    // Try cache first
-                    let cache = self.sstable_cache.lock().expect("SSTable cache lock poisoned");
-                    let sstable_arc = if let Some(cached) = cache.get(sstable_path) {
-                        cached.clone()
-                    } else {
-                        drop(cache); // Drop lock before expensive open
+                    // Use quick_cache for lock-free SSTable access
+                    let sstable_arc = self.sstable_cache.get_or_insert_with(sstable_path, || -> Result<Arc<Mutex<SSTable>>> {
                         let sstable = SSTable::open(sstable_path.clone())?;
-                        let sstable_arc = Arc::new(Mutex::new(sstable));
-
-                        // Insert into cache
-                        let mut cache = self.sstable_cache.lock().expect("SSTable cache lock poisoned");
-                        cache.entry(sstable_path.clone())
-                            .or_insert_with(|| sstable_arc.clone())
-                            .clone()
-                    };
+                        Ok(Arc::new(Mutex::new(sstable)))
+                    })?;
 
                     // Check if SSTable range overlaps with query range (CRITICAL OPTIMIZATION)
                     // Skip SSTables whose key range doesn't overlap with [start_key, end_key)
