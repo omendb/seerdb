@@ -25,6 +25,7 @@
 
 use bytes::{Bytes, BytesMut};
 use std::io;
+use std::sync::{Arc, OnceLock};
 use thiserror::Error;
 
 use crate::simd;
@@ -180,6 +181,9 @@ pub struct Block {
     data: Bytes,
     restart_offset: usize,
     num_restarts: usize,
+    /// Decompressed entries cache (lazy initialized on first iter())
+    /// Arc allows sharing across clones, OnceLock ensures thread-safe lazy init
+    decompressed_cache: Arc<OnceLock<Vec<(Bytes, Bytes)>>>,
 }
 
 impl Block {
@@ -221,34 +225,117 @@ impl Block {
             data,
             restart_offset,
             num_restarts,
+            decompressed_cache: Arc::new(OnceLock::new()),
         })
     }
 
     /// Iterate over all entries in the block
     pub fn iter(&self) -> BlockIterator<'_> {
-        BlockIterator::new(self)
+        // Populate decompressed cache on first access (lazy, thread-safe)
+        let entries = self.decompressed_cache.get_or_init(|| {
+            self.decompress_all_entries()
+        });
+
+        BlockIterator::new_cached(entries)
     }
 
     /// Get number of entries (approximate - counts restart points)
     pub fn num_entries_approx(&self) -> usize {
         self.num_restarts * RESTART_INTERVAL
     }
+
+    /// Decompress all entries in the block (called once per block)
+    fn decompress_all_entries(&self) -> Vec<(Bytes, Bytes)> {
+        let mut entries = Vec::with_capacity(self.num_entries_approx());
+        let mut offset = 0;
+        let mut last_key = Bytes::new();
+
+        while offset < self.restart_offset {
+            let data = &self.data;
+
+            // Read prefix length (u16)
+            if offset + 2 > self.restart_offset {
+                break;
+            }
+            let prefix_len = u16::from_le_bytes([
+                data[offset],
+                data[offset + 1],
+            ]) as usize;
+            offset += 2;
+
+            // Read suffix length (u16)
+            if offset + 2 > self.restart_offset {
+                break;
+            }
+            let suffix_len = u16::from_le_bytes([
+                data[offset],
+                data[offset + 1],
+            ]) as usize;
+            offset += 2;
+
+            // Read suffix
+            if offset + suffix_len > self.restart_offset {
+                break;
+            }
+            let suffix = data.slice(offset..offset + suffix_len);
+            offset += suffix_len;
+
+            // Reconstruct full key from prefix + suffix
+            let key = if prefix_len == 0 {
+                // Restart point: suffix is the full key
+                suffix.clone()
+            } else {
+                // Combine prefix from last_key with suffix
+                if prefix_len > last_key.len() {
+                    break; // Invalid format
+                }
+                let mut key_data = BytesMut::with_capacity(prefix_len + suffix_len);
+                key_data.extend_from_slice(&last_key[..prefix_len]);
+                key_data.extend_from_slice(&suffix);
+                key_data.freeze()
+            };
+
+            // Read value length
+            if offset + 4 > self.restart_offset {
+                break;
+            }
+            let value_len = u32::from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ]) as usize;
+            offset += 4;
+
+            // Read value
+            if offset + value_len > self.restart_offset {
+                break;
+            }
+            let value = data.slice(offset..offset + value_len);
+            offset += value_len;
+
+            // Update last_key for next entry
+            last_key = key.clone();
+
+            // Add to decompressed entries
+            entries.push((key, value));
+        }
+
+        entries
+    }
 }
 
-/// Iterator over block entries
+/// Iterator over block entries (now iterates over decompressed cache)
 pub struct BlockIterator<'a> {
-    block: &'a Block,
-    offset: usize,
-    /// Last key for prefix reconstruction
-    last_key: Bytes,
+    entries: &'a [(Bytes, Bytes)],
+    index: usize,
 }
 
 impl<'a> BlockIterator<'a> {
-    fn new(block: &'a Block) -> Self {
+    fn new_cached(entries: &'a [(Bytes, Bytes)]) -> Self {
         Self {
-            block,
-            offset: 0,
-            last_key: Bytes::new(),
+            entries,
+            index: 0,
         }
     }
 }
@@ -257,77 +344,15 @@ impl<'a> Iterator for BlockIterator<'a> {
     type Item = Result<(Bytes, Bytes)>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.offset >= self.block.restart_offset {
+        if self.index >= self.entries.len() {
             return None;
         }
 
-        let data = &self.block.data;
+        let entry = &self.entries[self.index];
+        self.index += 1;
 
-        // Read prefix length (u16)
-        if self.offset + 2 > self.block.restart_offset {
-            return None;
-        }
-        let prefix_len = u16::from_le_bytes([
-            data[self.offset],
-            data[self.offset + 1],
-        ]) as usize;
-        self.offset += 2;
-
-        // Read suffix length (u16)
-        if self.offset + 2 > self.block.restart_offset {
-            return Some(Err(BlockError::InvalidFormat));
-        }
-        let suffix_len = u16::from_le_bytes([
-            data[self.offset],
-            data[self.offset + 1],
-        ]) as usize;
-        self.offset += 2;
-
-        // Read suffix
-        if self.offset + suffix_len > self.block.restart_offset {
-            return Some(Err(BlockError::InvalidFormat));
-        }
-        let suffix = data.slice(self.offset..self.offset + suffix_len);
-        self.offset += suffix_len;
-
-        // Reconstruct full key from prefix + suffix
-        let key = if prefix_len == 0 {
-            // Restart point: suffix is the full key
-            suffix.clone()
-        } else {
-            // Combine prefix from last_key with suffix
-            if prefix_len > self.last_key.len() {
-                return Some(Err(BlockError::InvalidFormat));
-            }
-            let mut key_data = BytesMut::with_capacity(prefix_len + suffix_len);
-            key_data.extend_from_slice(&self.last_key[..prefix_len]);
-            key_data.extend_from_slice(&suffix);
-            key_data.freeze()
-        };
-
-        // Read value length
-        if self.offset + 4 > self.block.restart_offset {
-            return Some(Err(BlockError::InvalidFormat));
-        }
-        let value_len = u32::from_le_bytes([
-            data[self.offset],
-            data[self.offset + 1],
-            data[self.offset + 2],
-            data[self.offset + 3],
-        ]) as usize;
-        self.offset += 4;
-
-        // Read value
-        if self.offset + value_len > self.block.restart_offset {
-            return Some(Err(BlockError::InvalidFormat));
-        }
-        let value = data.slice(self.offset..self.offset + value_len);
-        self.offset += value_len;
-
-        // Update last_key for next entry
-        self.last_key = key.clone();
-
-        Some(Ok((key, value)))
+        // Clone Bytes (cheap - just refcount increment)
+        Some(Ok((entry.0.clone(), entry.1.clone())))
     }
 }
 
