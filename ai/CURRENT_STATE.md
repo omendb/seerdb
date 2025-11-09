@@ -23,6 +23,13 @@
 - ✅ Magic numbers (WAL/VLog validate format + version on open)
 - ⏸️ VLog GC race (deferred: GC not implemented, will be done correctly in 0.0.2+)
 
+**Production Hardening (Nov 9, 2025)**:
+- ✅ Memory budget enforcement (80% flush trigger, 95% write blocking, prevents OOM)
+- ✅ Disk space checks (pre-write validation, prevents disk-full errors)
+- ✅ SSTable fsync (already implemented, documented criticality)
+- ✅ File descriptor limits (documented, production guidance provided)
+- ✅ Background panic handling (health tracking, panic detection, prevents silent failures)
+
 **Next Action**: Comprehensive testing (achieve 80%+ test coverage)
 
 ---
@@ -271,32 +278,29 @@ seerdb/
 
 ## Immediate Next Actions
 
-### ✅ Priority 1: Fix Block Cache (COMPLETE - commit 2f8557b)
+### ✅ Priority 1-2: Critical Bugs (COMPLETE)
 
-**What was fixed**:
-```rust
-// Before: Unbounded HashMap with locks
-block_cache: Arc<Mutex<HashMap<u64, Block>>>,
+All 7 critical bugs fixed! Block cache, batch atomicity, checksums, compaction, WAL recovery, iterators, magic numbers.
 
-// After: LRU Cache with 10K block limit, lock-free
-block_cache: Arc<Cache<u64, Block>>,  // ~40MB at 4KB/block
-```
+### ✅ Priority 3-7: Production Hardening (COMPLETE - Nov 9, 2025)
 
-**Benefits achieved**:
-- ✅ Prevents OOM (bounded at 10,000 blocks)
-- ✅ Lock-free (better performance)
-- ✅ Automatic LRU eviction
+**Completed in this session**:
+1. **Memory budget enforcement** - Prevents OOM with configurable limits
+2. **Disk space checks** - Pre-write validation prevents disk-full errors
+3. **SSTable fsync** - Already implemented, documented criticality
+4. **File descriptor limits** - Documented usage patterns and mitigation
+5. **Background panic handling** - Health tracking for all background threads
 
-**Time taken**: 1 hour (faster than estimated 2 days)
+**Implementation highlights**:
+- Memory budget: 80% threshold (early flush), 95% threshold (block writes)
+- Disk space: Uses sysinfo crate for platform-independent checks
+- Panic handling: `catch_unwind` on all background threads + health tracking
+- WAL health checked on EVERY write (critical for data safety)
 
-### Priority 2: Fix Batch Atomicity (2-3 days) - IN PROGRESS
+### Priority 8: Comprehensive Testing (NEXT)
 
-**Current**: WAL write separate from memtable apply (not atomic)
-**Fix**: Single WAL batch record + atomic memtable apply
-
-### Priority 3: Add Checksums (2-3 days)
-
-**Add**: CRC32 checksums for all data blocks, indexes, bloom filters
+**Target**: 80%+ test coverage
+**Includes**: Crash recovery, concurrency, edge cases, failure injection
 
 ---
 
