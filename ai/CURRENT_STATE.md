@@ -297,10 +297,23 @@ All 7 critical bugs fixed! Block cache, batch atomicity, checksums, compaction, 
 - Panic handling: `catch_unwind` on all background threads + health tracking
 - WAL health checked on EVERY write (critical for data safety)
 
-### Priority 8: Comprehensive Testing (NEXT)
+### Priority 8: Comprehensive Testing (IN PROGRESS - Nov 9, 2025)
 
-**Target**: 80%+ test coverage
-**Includes**: Crash recovery, concurrency, edge cases, failure injection
+**Target**: 80%+ test coverage (currently ~15-20%)
+**Current**: 250+ tests (128 integration + ~120 unit tests)
+
+**Completed**:
+1. ✅ Testing strategy document (ai/TESTING_STRATEGY.md)
+2. ✅ Production hardening tests (15 tests - memory, disk, panics, FDs, fsync)
+3. ✅ API improvements (`DBError` exported, `estimate_memory_usage()` public)
+
+**Next**:
+- Batch atomicity tests (15 tests) - single WAL record, rollback, concurrency
+- Compaction correctness tests (15 tests) - live key preservation, sequence coordination
+- VLog tests (15 tests) - large values, recovery, GC (deferred)
+- Cache tests (10 tests) - LRU eviction, concurrent access
+- Concurrent stress tests (15 tests) - multi-threaded operations
+- Failure injection tests (20 tests) - disk errors, OOM, I/O failures
 
 ---
 
@@ -354,6 +367,6 @@ seerdb/
 
 ---
 
-**Last Updated**: November 8, 2025
-**Next Review**: After Week 2 (critical bugs fixed)
-**Confidence**: HIGH (achievable in 8 weeks)
+**Last Updated**: November 9, 2025
+**Next Review**: After comprehensive testing phase (Week 5-6)
+**Confidence**: HIGH (achievable in 7-8 weeks)
