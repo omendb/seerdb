@@ -12,6 +12,11 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
+// VLog file format magic number: "VLOG"
+const MAGIC: u32 = 0x564C4F47;
+const VERSION: u32 = 0x00000001;
+const HEADER_SIZE: u64 = 8; // magic (4) + version (4)
+
 #[derive(Debug, Error)]
 pub enum VLogError {
     #[error("IO error: {0}")]
@@ -21,6 +26,9 @@ pub enum VLogError {
     CrcMismatch { expected: u32, actual: u32 },
 
     #[error("Invalid record format")]
+    InvalidRecordFormat,
+
+    #[error("Invalid VLog format: bad magic or version")]
     InvalidFormat,
 }
 
@@ -78,7 +86,7 @@ impl VLogRecord {
     pub fn decode(data: Bytes) -> Result<Self> {
         if data.len() < 12 {
             // Minimum: key_len(4) + value_len(4) + crc(4)
-            return Err(VLogError::InvalidFormat);
+            return Err(VLogError::InvalidRecordFormat);
         }
 
         let mut offset = 0;
@@ -88,7 +96,7 @@ impl VLogRecord {
         offset += 4;
 
         if offset + key_len > data.len() {
-            return Err(VLogError::InvalidFormat);
+            return Err(VLogError::InvalidRecordFormat);
         }
 
         // Read key
@@ -96,7 +104,7 @@ impl VLogRecord {
         offset += key_len;
 
         if offset + 4 > data.len() {
-            return Err(VLogError::InvalidFormat);
+            return Err(VLogError::InvalidRecordFormat);
         }
 
         // Read value length
@@ -109,7 +117,7 @@ impl VLogRecord {
         offset += 4;
 
         if offset + value_len + 4 > data.len() {
-            return Err(VLogError::InvalidFormat);
+            return Err(VLogError::InvalidRecordFormat);
         }
 
         // Read value
@@ -154,25 +162,42 @@ impl VLog {
     /// Create a new vLog
     pub fn create(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
-        let file = OpenOptions::new()
+        let mut file = OpenOptions::new()
             .create(true)
             .truncate(true)
             .write(true)
             .read(true)
             .open(&path)?;
 
+        // Write header: [magic: u32][version: u32]
+        file.write_all(&MAGIC.to_le_bytes())?;
+        file.write_all(&VERSION.to_le_bytes())?;
+        file.sync_all()?;
+
         Ok(Self {
             file,
             path,
-            head: 0,
-            tail: 0,
+            head: HEADER_SIZE,
+            tail: HEADER_SIZE,
         })
     }
 
     /// Open an existing vLog
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
-        let file = OpenOptions::new().write(true).read(true).open(&path)?;
+        let mut file = OpenOptions::new().write(true).read(true).open(&path)?;
+
+        // Read and validate header
+        file.seek(SeekFrom::Start(0))?;
+        let mut header = [0u8; 8];
+        file.read_exact(&mut header)?;
+
+        let magic = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
+        let version = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
+
+        if magic != MAGIC || version != VERSION {
+            return Err(VLogError::InvalidFormat);
+        }
 
         let head = file.metadata()?.len();
 
@@ -180,7 +205,7 @@ impl VLog {
             file,
             path,
             head,
-            tail: 0,
+            tail: HEADER_SIZE,
         })
     }
 
@@ -372,8 +397,8 @@ mod tests {
         vlog.append(b"key1", b"value1").unwrap();
         vlog.append(b"key2", b"value2").unwrap();
 
-        // Read first record
-        let (record, next_offset) = vlog.read_record(0).unwrap();
+        // Read first record (starts after 8-byte header)
+        let (record, next_offset) = vlog.read_record(HEADER_SIZE).unwrap();
         assert_eq!(record.key, Bytes::from("key1"));
         assert_eq!(record.value, Bytes::from("value1"));
 

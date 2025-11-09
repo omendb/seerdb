@@ -9,9 +9,9 @@
 ## TL;DR
 
 **Performance**: 🏆 **#1 on ALL workloads** vs all competitors (2x+ faster)
-**Correctness**: 🚨 **3 critical bugs remaining** (5 fixed: cache ✅, batch ✅, checksums ✅, compaction ✅, WAL recovery ✅)
+**Correctness**: 🚨 **1 critical bug remaining** (6 fixed: cache ✅, batch ✅, checksums ✅, compaction ✅, WAL recovery ✅, iterators ✅, 1 deferred: VLog GC ⏸️)
 **Testing**: ❌ **Only 15% coverage**, need 80%+ for 0.0.1
-**Production Ready**: ❌ **NO** - needs 3-4 weeks of hardening
+**Production Ready**: ❌ **NO** - needs 1-2 weeks of hardening
 
 **Latest Fixes**:
 - ✅ Block cache bounded (quick_cache, 10K blocks, ~40MB)
@@ -19,8 +19,10 @@
 - ✅ Checksum validation (SSTable footer checksum now validated)
 - ✅ Compaction DATA LOSS (sequence coordination prevents deleting live keys)
 - ✅ WAL recovery race (already correct: recovery before background threads)
+- ✅ Iterator invalidation (memtables collected first, prevents missing keys)
+- ⏸️ VLog GC race (deferred: GC not implemented, will be done correctly in 0.0.2+)
 
-**Next Action**: Fix iterator invalidation (Priority #7)
+**Next Action**: Add magic numbers to WAL/VLog (Priority #7)
 
 ---
 
@@ -50,12 +52,12 @@
 3. ✅ **No checksums** - FIXED (commit 04110a3: SSTable footer checksum validated on read)
 4. ✅ **Compaction live key deletion** - FIXED (commit 1eea05b: sequence coordination, prevents DATA LOSS)
 5. ✅ **WAL recovery race** - FIXED (already correct: recovery happens before background threads start)
-6. **No magic numbers** - Can't detect version/corruption (partial: SSTable has magic, WAL/VLog don't)
-7. **Iterator invalidation** - Incorrect query results
-8. **VLog GC race** - Returns wrong values
+6. ✅ **Iterator invalidation** - FIXED (commit e78d6c0: collect memtables before SSTables, prevents missing keys)
+7. **No magic numbers** - Can't detect version/corruption (partial: SSTable has magic, WAL/VLog don't)
+8. ⏸️ **VLog GC race** - DEFERRED (GC not implemented yet, will be done correctly in 0.0.2+)
 
-**Progress**: 5/8 critical bugs fixed ✅✅✅✅✅ (62.5% complete!)
-**Impact**: OOM eliminated ✅, crash corruption eliminated ✅, silent corruption eliminated ✅, DATA LOSS eliminated ✅, startup corruption eliminated ✅
+**Progress**: 6/7 critical bugs fixed ✅✅✅✅✅✅ (85.7% complete, 1 deferred)
+**Impact**: OOM eliminated ✅, crash corruption eliminated ✅, silent corruption eliminated ✅, DATA LOSS eliminated ✅, startup corruption eliminated ✅, iterator consistency guaranteed ✅
 
 ---
 

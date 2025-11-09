@@ -5,7 +5,7 @@ pub mod reader;
 pub mod record;
 
 use std::fs::{File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -14,6 +14,11 @@ use thiserror::Error;
 pub use reader::WALReader;
 pub use record::{BatchOp, Record};
 
+// WAL file format magic number: "WLOG"
+const MAGIC: u32 = 0x574C4F47;
+const VERSION: u32 = 0x00000001;
+const HEADER_SIZE: u64 = 8; // magic (4) + version (4)
+
 #[derive(Debug, Error)]
 pub enum WALError {
     #[error("IO error: {0}")]
@@ -21,6 +26,9 @@ pub enum WALError {
 
     #[error("Record error: {0}")]
     Record(#[from] record::RecordError),
+
+    #[error("Invalid WAL format: bad magic or version")]
+    InvalidFormat,
 }
 
 pub type Result<T> = std::result::Result<T, WALError>;
@@ -81,12 +89,21 @@ impl WAL {
         batch_config: BatchConfig,
     ) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
-        let file = OpenOptions::new().create(true).append(true).open(&path)?;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&path)?;
+
+        // Write header: [magic: u32][version: u32]
+        file.write_all(&MAGIC.to_le_bytes())?;
+        file.write_all(&VERSION.to_le_bytes())?;
+        file.sync_all()?;
 
         Ok(Self {
             file: Arc::new(Mutex::new(file)),
             path,
-            offset: 0,
+            offset: HEADER_SIZE,
             sync_policy,
             batch: Vec::new(),
             batch_size_bytes: 0,
@@ -107,8 +124,23 @@ impl WAL {
         batch_config: BatchConfig,
     ) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
-        let file = OpenOptions::new().append(true).open(&path)?;
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)?;
 
+        // Read and validate header
+        let mut header = [0u8; 8];
+        file.read_exact(&mut header)?;
+
+        let magic = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
+        let version = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
+
+        if magic != MAGIC || version != VERSION {
+            return Err(WALError::InvalidFormat);
+        }
+
+        // Get file size for offset
         let offset = file.metadata()?.len();
 
         Ok(Self {
@@ -254,7 +286,7 @@ mod tests {
         };
 
         let offset = wal.write(&record).unwrap();
-        assert_eq!(offset, 0);
+        assert_eq!(offset, HEADER_SIZE); // First record starts after 8-byte header
 
         assert!(wal_path.exists());
     }
@@ -282,7 +314,7 @@ mod tests {
 
         let offsets = wal.write_batch(&records).unwrap();
         assert_eq!(offsets.len(), 3);
-        assert_eq!(offsets[0], 0);
+        assert_eq!(offsets[0], HEADER_SIZE); // First record starts after header
     }
 
     #[test]

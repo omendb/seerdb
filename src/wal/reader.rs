@@ -7,6 +7,11 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
 use thiserror::Error;
 
+// WAL file format magic number: "WLOG"
+const MAGIC: u32 = 0x574C4F47;
+const VERSION: u32 = 0x00000001;
+const HEADER_SIZE: u64 = 8; // magic (4) + version (4)
+
 #[derive(Debug, Error)]
 pub enum ReaderError {
     #[error("IO error: {0}")]
@@ -14,6 +19,9 @@ pub enum ReaderError {
 
     #[error("Record error: {0}")]
     Record(#[from] RecordError),
+
+    #[error("Invalid WAL format: bad magic or version")]
+    InvalidFormat,
 }
 
 pub type Result<T> = std::result::Result<T, ReaderError>;
@@ -27,8 +35,23 @@ pub struct WALReader {
 impl WALReader {
     /// Open a WAL file for reading
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let file = File::open(path)?;
-        Ok(Self { file, offset: 0 })
+        let mut file = File::open(path)?;
+
+        // Read and validate header
+        let mut header = [0u8; 8];
+        file.read_exact(&mut header)?;
+
+        let magic = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
+        let version = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
+
+        if magic != MAGIC || version != VERSION {
+            return Err(ReaderError::InvalidFormat);
+        }
+
+        Ok(Self {
+            file,
+            offset: HEADER_SIZE,
+        })
     }
 
     /// Read the next record from the WAL

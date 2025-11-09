@@ -244,13 +244,17 @@ impl BlockCache {
 
 ---
 
-### 1.6 VLog GC Can Cause Read Errors 🚨
+### 1.6 VLog GC Can Cause Read Errors ⏸️ DEFERRED
 
-**Issue**: VLog garbage collection can delete values that are still referenced by LSM tree
+**Status**: Not implemented yet (no GC code exists)
 
-**Location**: `src/vlog.rs::gc()`
+**Issue**: VLog garbage collection could delete values still referenced by LSM tree
 
-**Problem**:
+**Location**: `src/vlog/mod.rs` (GC not implemented)
+
+**Current State**: VLog has basic operations (append, read, sync) but NO gc() method
+
+**Problem** (when GC is implemented):
 ```rust
 // Thread 1: Reading value
 let ptr = lsm.get(key)?;  // Got ValuePointer { offset: 1000, len: 100 }
@@ -301,60 +305,63 @@ fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
 }
 ```
 
-**Estimated Time**: 3-4 days (complex, high risk)
+**Estimated Time**: 3-4 days (when GC is implemented)
+
+**Resolution**: Deferred to 0.0.2+ (VLog GC not needed for 0.0.1)
+- VLog works without GC (append-only is fine for initial release)
+- GC implementation will include proper coordination from the start
+- No immediate risk since GC doesn't exist
 
 ---
 
-### 1.7 Range Scan Iterator Invalidation 🚨
+### 1.7 Range Scan Iterator Invalidation ✅ FIXED
 
-**Issue**: Range scan iterator can return incorrect results if compaction happens during iteration
+**Status**: Fixed (commit e78d6c0)
 
-**Location**: `src/range_merge.rs`
+**Issue**: Range scan iterator could miss keys if flush happens during collection
 
-**Problem**:
+**Location**: `src/db.rs::range()` (lines 2417-2494)
+
+**Problem** (before fix):
 ```rust
-// User starts range scan
-let mut iter = db.range(b"key_000", Some(b"key_100"));
+// Thread 1: range() collects SSTables
+let lsm_arc = self.lsm.load();
+for level in lsm_arc { ... }  // Capture SSTables
+drop(lsm_arc);  // LSM dropped!
 
-// Compaction happens: L0 compacts to L1
-// - Some keys moved from L0 to L1
-// - Iterator already captured L0 SSTables
+// Thread 2: FLUSH HAPPENS HERE
+// - Memtable → SSTable (new_file.sst)
+// - Memtable cleared
+// - LSM updated to include new_file.sst
 
-// User continues iteration
-while let Some((key, value)) = iter.next() {
-    // May return duplicates (same key from L0 and L1)
-    // Or may miss keys (if L0 deleted but L1 not captured)
-}
+// Thread 1: range() collects memtables
+let memtables = ...;  // Now EMPTY!
+
+// Result: MISSING KEYS in new_file.sst
 ```
 
-**Impact**: Incorrect query results, violates consistency
-
-**Test**: None (missing!)
-
-**Fix**: Snapshot isolation for iterators
+**Solution** (commit e78d6c0):
 ```rust
-pub struct DB {
-    lsm_version: Arc<AtomicU64>,  // Incremented on compaction
-}
+// Collect memtables FIRST
+let memtables = self.memtables.iter()...;  // Capture keys
 
-pub fn range(&self, start: &[u8], end: Option<&[u8]>) -> RangeIterator {
-    // Capture LSM state at this moment
-    let snapshot = self.lsm.snapshot();  // Increments ref count
+// Flush can happen here:
+// - Keys seen in memtables (captured above)
+// - Keys also in new SSTable (will be captured below)
 
-    RangeIterator {
-        snapshot,  // Holds references to SSTables
-        // Compaction won't delete SSTables with ref count > 0
-    }
-}
+// THEN collect SSTables
+let lsm_arc = self.lsm.load();
+for level in lsm_arc { ... }  // Includes new SSTable if flush happened
 
-impl Drop for Snapshot {
-    fn drop(&mut self) {
-        // Decrement ref counts, allow compaction to clean up
-    }
-}
+// Result: Keys seen twice, but k-way merge deduplicates ✅
 ```
 
-**Estimated Time**: 2-3 days (snapshot isolation is complex)
+**Impact**: Prevents missing keys during concurrent flushes
+- K-way merge already handles deduplication
+- Memtable priority ensures correct values
+- No performance impact (same operations, different order)
+
+**Fixed By**: Reversing collection order (memtables → SSTables)
 
 ---
 
