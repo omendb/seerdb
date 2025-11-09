@@ -240,6 +240,37 @@ pub struct DBOptions {
     /// - Workload varies over time: `true` (adapts dynamically)
     /// - Consistent workload: `false` (simpler, predictable)
     pub adaptive_compaction: bool,
+
+    /// Maximum total memory budget (optional)
+    ///
+    /// If set, seerdb will enforce this memory limit by:
+    /// - Triggering early flushes when memory usage exceeds 80% of limit
+    /// - Blocking writes when memory usage exceeds 95% of limit
+    ///
+    /// Memory usage includes:
+    /// - Active memtables (`memtable_capacity`)
+    /// - Immutable memtables (up to `memtable_capacity` during flush)
+    /// - Block cache (~40MB for 10K blocks @ 4KB each)
+    /// - SSTable cache (~1KB per cached SSTable, max 1000 SSTables = 1MB)
+    ///
+    /// Default: `None` (no global memory limit)
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use seerdb::DBOptions;
+    ///
+    /// // Limit total memory to 512MB
+    /// let opts = DBOptions {
+    ///     memtable_capacity: 256 * 1024 * 1024,  // 256MB
+    ///     max_memory_bytes: Some(512 * 1024 * 1024),  // 512MB total
+    ///     ..Default::default()
+    /// };
+    /// ```
+    ///
+    /// **Warning**: Set `max_memory_bytes` to at least 2x `memtable_capacity` to allow
+    /// for immutable memtables during flush. Recommended: 3-4x for headroom.
+    pub max_memory_bytes: Option<usize>,
 }
 
 impl Default for DBOptions {
@@ -255,6 +286,7 @@ impl Default for DBOptions {
             background_compaction: false, // Disabled by default for compatibility
             background_flush: false,      // Disabled by default - enable for large workloads
             adaptive_compaction: false,   // Disabled by default - enable for mixed workloads
+            max_memory_bytes: None,       // No global memory limit by default
         }
     }
 }
