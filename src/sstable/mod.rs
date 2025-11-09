@@ -8,7 +8,7 @@ use crate::bloom::BloomFilter;
 use block::{BlockBuilder, BlockError, Block, DEFAULT_BLOCK_SIZE};
 use crate::vlog::{VLog, ValuePointer};
 use bytes::{Bytes, BytesMut};
-use std::collections::HashMap;
+use quick_cache::sync::Cache;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -433,7 +433,7 @@ pub struct SSTable {
     bloom: BloomFilter,
     num_entries: u64,
     vlog: Option<Arc<Mutex<VLog>>>,
-    block_cache: Arc<Mutex<HashMap<u64, Block>>>,
+    block_cache: Arc<Cache<u64, Block>>,  // LRU cache with size limits
     min_key: Option<Bytes>,
     max_key: Option<Bytes>,
     // Cache performance metrics (Arc for sharing with iterators)
@@ -469,6 +469,10 @@ impl SSTable {
             None
         };
 
+        // Create LRU block cache with capacity for 10,000 blocks (~40MB at 4KB/block)
+        // This prevents unbounded memory growth and OOM issues
+        let block_cache = Arc::new(Cache::new(10_000));
+
         Ok(Self {
             file: Arc::new(Mutex::new(file)),
             path,
@@ -477,7 +481,7 @@ impl SSTable {
             bloom,
             num_entries,
             vlog: None,
-            block_cache: Arc::new(Mutex::new(HashMap::new())),
+            block_cache,
             min_key,
             max_key,
             cache_hits: Arc::new(AtomicU64::new(0)),
@@ -671,14 +675,11 @@ impl SSTable {
     }
 
     fn load_block(&self, offset: u64, size: u32) -> Result<Block> {
-        // Fast path: check cache first
-        {
-            let cache = self.block_cache.lock().unwrap();
-            if let Some(block) = cache.get(&offset) {
-                // Cache hit!
-                self.cache_hits.fetch_add(1, Ordering::Relaxed);
-                return Ok(block.clone());
-            }
+        // Fast path: check cache first (quick_cache is lock-free!)
+        if let Some(block) = self.block_cache.get(&offset) {
+            // Cache hit!
+            self.cache_hits.fetch_add(1, Ordering::Relaxed);
+            return Ok(block);
         }
 
         // Cache miss - record and load from disk
@@ -696,11 +697,8 @@ impl SSTable {
         // Parse and verify block (CRC check happens here)
         let block = Block::new(block_data)?;
 
-        // Cache the verified block
-        {
-            let mut cache = self.block_cache.lock().unwrap();
-            cache.insert(offset, block.clone());
-        }
+        // Cache the verified block (automatic LRU eviction when full)
+        self.block_cache.insert(offset, block.clone());
 
         Ok(block)
     }
@@ -914,7 +912,7 @@ pub struct SSTableIterator {
 /// Lazy iterator that loads blocks on-demand during range scans
 pub struct SSTableRangeIterator {
     file: Arc<Mutex<File>>,
-    block_cache: Arc<Mutex<HashMap<u64, Block>>>,
+    block_cache: Arc<Cache<u64, Block>>,
     vlog: Option<Arc<Mutex<VLog>>>,
     top_level_index: Vec<TopLevelIndexEntry>,
     start_key: Bytes,
@@ -936,7 +934,7 @@ pub struct SSTableRangeIterator {
 impl SSTableRangeIterator {
     fn new(
         file: Arc<Mutex<File>>,
-        block_cache: Arc<Mutex<HashMap<u64, Block>>>,
+        block_cache: Arc<Cache<u64, Block>>,
         vlog: Option<Arc<Mutex<VLog>>>,
         top_level_index: Vec<TopLevelIndexEntry>,
         start_key: &[u8],
@@ -963,14 +961,11 @@ impl SSTableRangeIterator {
     }
 
     fn load_block(&self, offset: u64, size: u32) -> Result<Block> {
-        // Check cache first
-        {
-            let cache = self.block_cache.lock().unwrap();
-            if let Some(block) = cache.get(&offset) {
-                // Cache hit!
-                self.cache_hits.fetch_add(1, Ordering::Relaxed);
-                return Ok(block.clone());
-            }
+        // Check cache first (quick_cache is lock-free!)
+        if let Some(block) = self.block_cache.get(&offset) {
+            // Cache hit!
+            self.cache_hits.fetch_add(1, Ordering::Relaxed);
+            return Ok(block);
         }
 
         // Cache miss - record and load from disk
@@ -988,11 +983,8 @@ impl SSTableRangeIterator {
         // Parse and verify block
         let block = Block::new(block_data)?;
 
-        // Cache the block
-        {
-            let mut cache = self.block_cache.lock().unwrap();
-            cache.insert(offset, block.clone());
-        }
+        // Cache the block (automatic LRU eviction when full)
+        self.block_cache.insert(offset, block.clone());
 
         Ok(block)
     }
