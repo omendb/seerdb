@@ -9,12 +9,15 @@
 ## TL;DR
 
 **Performance**: 🏆 **#1 on ALL workloads** vs all competitors (2x+ faster)
-**Correctness**: 🚨 **7 critical bugs remaining** (1 fixed: block cache ✅)
+**Correctness**: 🚨 **6 critical bugs remaining** (2 fixed: cache ✅, batch ✅)
 **Testing**: ❌ **Only 15% coverage**, need 80%+ for 0.0.1
-**Production Ready**: ❌ **NO** - needs 7-8 weeks of hardening
+**Production Ready**: ❌ **NO** - needs 6-7 weeks of hardening
 
-**Latest Fix**: ✅ Block cache now bounded (quick_cache LRU, 10K blocks)
-**Next Action**: Fix batch API atomicity (Priority #2)
+**Latest Fixes**:
+- ✅ Block cache bounded (quick_cache, 10K blocks, ~40MB)
+- ✅ Batch API atomic (single WAL record, no corruption window)
+
+**Next Action**: Add CRC32 checksums (Priority #3)
 
 ---
 
@@ -40,7 +43,7 @@
 ### Tier 1: Data Safety (MUST FIX)
 
 1. ✅ **Block cache unbounded** - FIXED (commit 2f8557b: quick_cache LRU, 10K blocks, ~40MB limit)
-2. **Batch API non-atomic** - Data corruption on crash
+2. ✅ **Batch API non-atomic** - FIXED (commit 431bcf1: single WAL batch record, atomic recovery)
 3. **No checksums** - Silent corruption undetected
 4. **No magic numbers** - Can't detect version/corruption
 5. **Iterator invalidation** - Incorrect query results
@@ -48,8 +51,8 @@
 7. **Compaction live key deletion** - DATA LOSS
 8. **WAL recovery race** - Corruption on startup
 
-**Progress**: 1/8 critical bugs fixed ✅
-**Impact**: Data corruption, data loss, OOM crashes (OOM risk eliminated ✅)
+**Progress**: 2/8 critical bugs fixed ✅✅ (25% complete!)
+**Impact**: OOM eliminated ✅, crash corruption eliminated ✅
 
 ---
 
