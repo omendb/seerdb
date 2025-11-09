@@ -46,6 +46,7 @@ quick_cache = "0.6"  # Optimized caching library (fjall uses this)
 hdrhistogram = "7.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+sysinfo = "0.29"  # System information (disk space, memory, etc.)
 
 # Optional baseline systems for benchmarking (only compiled when baseline-benchmarks feature is enabled)
 rocksdb = { version = "0.22", optional = true }

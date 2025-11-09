@@ -74,6 +74,9 @@ pub enum DBError {
 
     #[error("Database not opened")]
     NotOpened,
+
+    #[error("Insufficient disk space: {available} bytes available, {required} bytes required")]
+    DiskSpaceFull { available: u64, required: u64 },
 }
 
 pub type Result<T> = std::result::Result<T, DBError>;
@@ -271,6 +274,32 @@ pub struct DBOptions {
     /// **Warning**: Set `max_memory_bytes` to at least 2x `memtable_capacity` to allow
     /// for immutable memtables during flush. Recommended: 3-4x for headroom.
     pub max_memory_bytes: Option<usize>,
+
+    /// Minimum required free disk space (optional)
+    ///
+    /// If set, seerdb will reject writes when available disk space falls below this threshold.
+    /// This prevents:
+    /// - Disk full errors during write operations
+    /// - Database corruption from partial writes
+    /// - System instability from consuming all disk space
+    ///
+    /// Default: `None` (no disk space checking)
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use seerdb::DBOptions;
+    ///
+    /// // Require at least 1GB free space
+    /// let opts = DBOptions {
+    ///     min_disk_space_bytes: Some(1024 * 1024 * 1024),  // 1GB
+    ///     ..Default::default()
+    /// };
+    /// ```
+    ///
+    /// **Recommended**: Set to at least 2-3x your expected write burst size to ensure
+    /// writes can complete even if disk space runs low.
+    pub min_disk_space_bytes: Option<u64>,
 }
 
 impl Default for DBOptions {
@@ -287,6 +316,7 @@ impl Default for DBOptions {
             background_flush: false,      // Disabled by default - enable for large workloads
             adaptive_compaction: false,   // Disabled by default - enable for mixed workloads
             max_memory_bytes: None,       // No global memory limit by default
+            min_disk_space_bytes: None,   // No disk space check by default
         }
     }
 }
@@ -930,6 +960,9 @@ impl DB {
                 }
             }
         }
+
+        // Disk space check (if configured)
+        self.check_disk_space()?;
 
         // Write to WAL first (durability) - lock-free via channel
         let record = Record::Put {
@@ -2101,6 +2134,34 @@ impl DB {
         const SSTABLE_CACHE_BYTES: usize = 1_000 * 1024;
 
         active_memtable_bytes + immutable_memtable_bytes + BLOCK_CACHE_BYTES + SSTABLE_CACHE_BYTES
+    }
+
+    /// Check if there's sufficient disk space for writes
+    ///
+    /// Returns an error if available disk space is below the configured minimum.
+    fn check_disk_space(&self) -> Result<()> {
+        if let Some(min_space) = self.options.min_disk_space_bytes {
+            use sysinfo::{System, SystemExt, DiskExt};
+
+            // Get disk information
+            let mut sys = System::new_all();
+            sys.refresh_disks_list();
+
+            // Find the disk containing our data directory
+            let data_dir = &self.options.data_dir;
+            if let Some(disk) = sys.disks().iter().find(|d| {
+                data_dir.starts_with(d.mount_point())
+            }) {
+                let available = disk.available_space();
+                if available < min_space {
+                    return Err(DBError::DiskSpaceFull {
+                        available,
+                        required: min_space,
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn stats(&self) -> DBStats {
