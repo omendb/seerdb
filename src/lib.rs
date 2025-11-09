@@ -110,6 +110,7 @@
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 pub mod alex;
+pub mod batch;
 pub mod bloom;
 pub mod compaction;
 pub mod db;
@@ -125,6 +126,7 @@ pub mod wal;
 
 // Re-export main types for convenient access
 pub use alex::AlexTree;
+pub use batch::Batch;
 pub use bloom::{BloomFilter, LearnedBloomFilter};
 pub use db::{DBOptions, DB};
 pub use health::{CheckStatus, HealthCheck, HealthStatus};

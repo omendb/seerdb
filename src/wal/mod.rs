@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 
 pub use reader::WALReader;
-pub use record::Record;
+pub use record::{BatchOp, Record};
 
 #[derive(Debug, Error)]
 pub enum WALError {

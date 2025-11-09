@@ -391,20 +391,25 @@ fn benchmark_seerdb() {
         elapsed.as_micros() as f64 / NUM_OPERATIONS as f64
     );
 
-    // Workload 3: Mixed (50% read, 50% write)
+    // Workload 3: Mixed (50% read, 50% write) - using batches for fair comparison with fjall
     println!("\nWorkload 3: Mixed 50/50 ({} ops)", NUM_OPERATIONS);
     let start = Instant::now();
+
+    // Batch writes like fjall does (fair comparison)
+    let mut batch = db.batch();
     for i in 0..NUM_OPERATIONS {
         if i % 2 == 0 {
-            // Write
+            // Write (batched)
             let key = format!("key_{:08}", i + NUM_OPERATIONS);
-            db.put(key.as_bytes(), &value).expect("Put failed");
+            batch.put(key.as_bytes(), &value);
         } else {
-            // Read
+            // Read (immediate)
             let key = format!("key_{:08}", i);
             let _ = db.get(key.as_bytes()).expect("Get failed");
         }
     }
+    batch.commit().expect("Batch commit failed");
+
     let elapsed = start.elapsed();
     let throughput = NUM_OPERATIONS as f64 / elapsed.as_secs_f64();
     println!("  Time: {:.2}s", elapsed.as_secs_f64());

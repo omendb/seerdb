@@ -3,7 +3,7 @@
 **Repository**: seerdb (Storage Engine with Learned Data Structures)
 **Last Updated**: November 8, 2025
 **License**: Elastic License 2.0 (source-available)
-**Status**: Production-Ready (all tests passing, 1.8x-2.5x faster than RocksDB, 878K writes/sec, 2.2M reads/sec)
+**Status**: Development (0.0.0 pre-alpha) - 8 critical bugs, working towards 0.0.1 (8 weeks)
 
 ---
 
@@ -30,18 +30,20 @@
 
 **→ First time?** Load these in order:
 1. This file (CLAUDE.md) - Project overview
-2. `ai/PLAN.md` - Strategic roadmap
-3. `ai/STATUS.md` - Current state and progress
-4. `ai/TODO.md` - Current tasks
-5. `ai/DECISIONS.md` - Design decisions
+2. `ai/CURRENT_STATE.md` - TL;DR current status (start here!)
+3. `ai/PRODUCTION_READINESS.md` - Roadmap to 0.0.1 (8 weeks)
+4. `ai/BUGS_AND_EDGE_CASES.md` - All known bugs (critical to minor)
+5. `ai/DECISIONS.md` - Design decisions with rationale
 
-**→ Continuing work?** Check `ai/STATUS.md` first, then `ai/TODO.md`
+**→ Continuing work?** Check `ai/CURRENT_STATE.md` first, then `ai/TODO.md`
+
+**→ Full documentation guide**: See `ai/README.md` for all available docs
 
 ---
 
-## Current Phase: Advanced Optimizations
+## Current Phase: Production Hardening (0.0.1 Preparation)
 
-**Status**: ✅ **Production-Ready** - Beating RocksDB on all major workloads
+**Status**: 🚨 **Development** - 8 critical bugs to fix, 15% test coverage (need 80%+)
 
 **Latest Performance** (jemalloc + ArcSwap + SIMD - Nov 8, 2025):
 - **Writes**: 878K ops/sec (2.47x RocksDB, 2.06x fjall) 🏆
@@ -62,11 +64,17 @@
 - ✅ foldhash (2x faster hashing)
 - ✅ varint-rs (space-efficient encoding)
 
-**Next Focus**:
-1. Investigate fjall's mixed workload advantage (14% gap)
-2. Evaluate large-scale optimizations (rkyv, multi-tier caching)
-3. Consider mmap for read-only SSTables
-4. Comprehensive stability and integrity testing
+**Critical Issues** (must fix before 0.0.1):
+1. 🚨 Block cache unbounded (OOM risk) - Priority #1
+2. 🚨 Batch API non-atomic (data corruption risk)
+3. 🚨 No checksums (silent corruption)
+4. 🚨 No magic numbers (can't detect version mismatch)
+5. 🚨 Iterator invalidation (snapshot isolation missing)
+6. 🚨 VLog GC race (wrong values returned)
+7. 🚨 Compaction can delete live keys (DATA LOSS)
+8. 🚨 WAL recovery race (corruption on startup)
+
+**Next Focus**: Fix all critical bugs, achieve 80%+ test coverage, production hardening
 
 ---
 
@@ -80,12 +88,13 @@
 - ✅ Mixed: 1.79x RocksDB 🏆
 - ⚠️ Mixed: 0.86x fjall (14% gap - investigating)
 
-### Quality ✅
-- All operations tested (unit + integration)
-- Crash recovery validated
-- Memory safety (Rust + minimal unsafe)
-- Zero data loss under failures
-- Performance claims documented with benchmarks
+### Quality Status
+- ⚠️ Test coverage: 15% (need 80%+ for 0.0.1)
+- ❌ Crash recovery: Not comprehensively tested
+- ✅ Memory safety: Rust + minimal unsafe
+- ❌ Data loss prevention: 3 critical bugs (batch atomicity, compaction, VLog GC)
+- ✅ Performance claims: Documented with benchmarks
+- ❌ Production ready: NO - 7-8 weeks of hardening needed
 
 ---
 
@@ -243,55 +252,83 @@ seerdb/
 ├── benches/               # Performance benchmarks
 ├── tests/                 # Integration tests
 └── ai/
-    ├── STATUS.md          # Current progress
-    ├── TODO.md            # Active tasks
-    ├── DECISIONS.md       # Design decisions
-    ├── PLAN.md            # Strategic roadmap
-    └── research/          # Paper summaries, analyses
+    ├── README.md                  # Documentation guide
+    ├── CURRENT_STATE.md           # TL;DR current status
+    ├── PRODUCTION_READINESS.md    # Roadmap to 0.0.1 (8 weeks)
+    ├── BUGS_AND_EDGE_CASES.md     # All known bugs
+    ├── API_REVIEW.md              # Batch API critique
+    ├── OPTIMIZATION_STATUS.md     # Performance analysis
+    ├── STATUS.md                  # Detailed performance history
+    ├── TODO.md                    # Active tasks
+    ├── DECISIONS.md               # Design decisions
+    ├── research/                  # Paper summaries, analyses
+    └── archive/                   # Historical documents
 ```
 
 ---
 
-## Next Phase: Close fjall Gap (Nov 8-15, 2025)
+## Roadmap to 0.0.1 (8 Weeks)
 
-**Current Gap**: 14% behind fjall on mixed workload (718K vs 832K)
+### Week 1-2: Critical Bugs (Data Safety) 🚨
+- Fix block cache (add quick_cache with size limits) - **Priority #1**
+- Fix batch API atomicity (single WAL record)
+- Add checksums (CRC32 for all data blocks)
+- Add magic numbers + version detection
+- Fix iterator invalidation (snapshot isolation)
+- **Timeline**: 2 weeks
+- **Risk**: Medium (architectural changes)
 
-**The Mystery**: We're faster on BOTH pure workloads but slower on mixed!
-- ✅ Writes: 2.06x faster than fjall
-- ✅ Reads: 1.90x faster than fjall
-- ❌ Mixed: 0.86x slower than fjall
+### Week 3-4: Production Hardening ⚠️
+- Memory budget enforcement
+- Disk space checks
+- File descriptor limits
+- SSTable fsync
+- Background panic handling
+- VLog GC race fix
+- Compaction live key deletion fix
+- **Timeline**: 2 weeks
+- **Risk**: Medium (subtle race conditions)
 
-**Critical Finding**: fjall achieves >100% theoretical mixed performance (832K vs 794K theoretical max)!
+### Week 5-6: Comprehensive Testing 🧪
+- Crash recovery tests (10+)
+- Concurrency tests (15+)
+- Edge case tests (50+)
+- Failure injection tests (20+)
+- Achieve 80%+ test coverage
+- Sanitizer runs (ASAN, MSAN, TSAN)
+- **Timeline**: 2 weeks
+- **Risk**: Low (testing only)
 
-### Three Focus Areas
+### Week 7: Documentation 📚
+- Complete API documentation
+- Architecture guide
+- Performance tuning guide
+- Examples (5+)
+- **Timeline**: 1 week
+- **Risk**: Low
 
-1. **🔍 Investigate fjall's Code** (Days 1-2) - **PRIORITY 1**
-   - Clone and analyze their mixed workload implementation
-   - Identify read/write pipelining, batch synergies, cache optimizations
-   - Profile our mixed workload for comparison
-   - **Goal**: Find specific techniques we're missing
-   - **Potential**: +10-20% improvement
+### Week 8: Buffer & Release 🚀
+- Full validation
+- Long-running stability tests
+- Release notes
+- Version tagging (0.0.1)
+- **Timeline**: 1 week
+- **Risk**: Low
 
-2. **📊 Create Large-Scale Benchmarks** (Day 3) - **PRIORITY 2**
-   - Current 100K benchmark too small (95%+ cache hit rate)
-   - Create 1M ops (1GB dataset) and 10M ops (10GB dataset) benchmarks
-   - Implement Zipfian distribution (realistic 80/20 access pattern)
-   - **Goal**: Validate rkyv/caching benefits at scale
-   - **Rationale**: Small benchmarks don't show cache pressure
-
-3. **🧪 Test rkyv + Multi-Tier Cache** (Day 4) - **PRIORITY 3**
-   - Test rkyv zero-copy deserialization at 1M+ scale
-   - Test multi-tier cache (L1 decompressed + L3 compressed)
-   - Data-driven decision (implement if >5% improvement each)
-   - **Goal**: Validate optimizations with real data, not theory
-   - **Potential**: +13-22% combined if validated
+### Deferred to 0.0.2+ (Post-Release)
+- rkyv zero-copy (only +3% benefit, high complexity)
+- Multi-tier caching (needs production workload data)
+- Close fjall mixed gap (already 1.79x faster than RocksDB)
+- Advanced learned components
+- **Rationale**: Correctness > optimization
 
 ---
 
-*Last Updated: November 8, 2025 - jemalloc allocator optimization*
+*Last Updated: November 8, 2025 - Production hardening phase*
 
-**Product**: seerdb - Research-grade storage engine  
-**Status**: Production-ready - All tests passing, beating RocksDB on all major workloads  
-**Performance**: 878K writes/sec, 2.2M reads/sec (2.5x RocksDB) 🏆  
-**Next**: Investigate fjall gap, large-scale optimizations, stability testing  
-**GitHub**: omendb/seerdb (will be migrated to standalone repo)
+**Product**: seerdb - Research-grade storage engine
+**Status**: Development (0.0.0 pre-alpha) - 8 critical bugs, working towards 0.0.1
+**Performance**: 878K writes/sec, 2.2M reads/sec (2.5x RocksDB in benchmarks) 🏆
+**Critical Issues**: Block cache unbounded, batch non-atomic, no checksums, missing snapshot isolation
+**Timeline**: 8 weeks to 0.0.1 (correctness first, optimization second)
+**Next**: Fix block cache (Priority #1), batch atomicity, comprehensive testing

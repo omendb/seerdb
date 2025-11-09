@@ -22,10 +22,20 @@ pub enum RecordError {
 
 pub type Result<T> = std::result::Result<T, RecordError>;
 
+/// Operation within a batch record
+#[derive(Debug, Clone, PartialEq)]
+pub enum BatchOp {
+    Put { key: Bytes, value: Bytes },
+    Delete { key: Bytes },
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Record {
     Put { key: Bytes, value: Bytes },
     Delete { key: Bytes },
+    /// Atomic batch of operations
+    /// All operations in a batch succeed or fail together
+    Batch { operations: Vec<BatchOp> },
 }
 
 impl Record {
@@ -36,6 +46,16 @@ impl Record {
         let data_len = match self {
             Record::Put { key, value } => 1 + 4 + key.len() + 4 + value.len(),
             Record::Delete { key } => 1 + 4 + key.len(),
+            Record::Batch { operations } => {
+                let mut len = 1 + 4; // type + count
+                for op in operations {
+                    len += match op {
+                        BatchOp::Put { key, value } => 1 + 4 + key.len() + 4 + value.len(),
+                        BatchOp::Delete { key } => 1 + 4 + key.len(),
+                    };
+                }
+                len
+            }
         };
         let total_len = 4 + data_len + 4; // length_prefix + data + crc32
 
@@ -60,6 +80,26 @@ impl Record {
                 buf.put_u8(2); // Type: Delete
                 buf.put_u32(key.len() as u32);
                 buf.put_slice(key);
+            }
+            Record::Batch { operations } => {
+                buf.put_u8(3); // Type: Batch
+                buf.put_u32(operations.len() as u32);
+                for op in operations {
+                    match op {
+                        BatchOp::Put { key, value } => {
+                            buf.put_u8(1); // Op type: Put
+                            buf.put_u32(key.len() as u32);
+                            buf.put_slice(key);
+                            buf.put_u32(value.len() as u32);
+                            buf.put_slice(value);
+                        }
+                        BatchOp::Delete { key } => {
+                            buf.put_u8(2); // Op type: Delete
+                            buf.put_u32(key.len() as u32);
+                            buf.put_slice(key);
+                        }
+                    }
+                }
             }
         }
 
@@ -119,6 +159,37 @@ impl Record {
                 let key = buf.split_to(key_len);
 
                 Ok(Record::Delete { key })
+            }
+            3 => {
+                // Batch
+                let count = buf.get_u32() as usize;
+                let mut operations = Vec::with_capacity(count);
+
+                for _ in 0..count {
+                    let op_type = buf.get_u8();
+                    match op_type {
+                        1 => {
+                            // Put
+                            let key_len = buf.get_u32() as usize;
+                            let key = buf.split_to(key_len);
+
+                            let value_len = buf.get_u32() as usize;
+                            let value = buf.split_to(value_len);
+
+                            operations.push(BatchOp::Put { key, value });
+                        }
+                        2 => {
+                            // Delete
+                            let key_len = buf.get_u32() as usize;
+                            let key = buf.split_to(key_len);
+
+                            operations.push(BatchOp::Delete { key });
+                        }
+                        _ => return Err(RecordError::InvalidRecordType(op_type)),
+                    }
+                }
+
+                Ok(Record::Batch { operations })
             }
             _ => Err(RecordError::InvalidRecordType(record_type)),
         }
