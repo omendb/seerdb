@@ -2423,7 +2423,41 @@ impl DB {
         self.read_count
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-        // Get all SSTables from LSM tree (in reverse level order: L0, L1, ..., LN) (LOCK-FREE!)
+        // **CRITICAL FIX**: Collect memtables FIRST, then SSTables
+        // This prevents missing keys if flush happens during collection:
+        //
+        // Before fix (SSTables then memtables):
+        //   1. Collect SSTables (without new SSTable)
+        //   2. Flush happens → memtable → new SSTable
+        //   3. Collect memtables (now empty)
+        //   4. Result: MISSING KEYS in new SSTable
+        //
+        // After fix (memtables then SSTables):
+        //   1. Collect memtables (with keys)
+        //   2. Flush happens → memtable → new SSTable
+        //   3. Collect SSTables (includes new SSTable with same keys)
+        //   4. Result: Keys seen twice, but k-way merge deduplicates ✅
+
+        // Collect Arc references to ALL active memtable partitions (lock-free)
+        // load() returns Guard<Arc<Memtable>>, we need to clone the Arc out
+        let partition_arcs: Vec<Arc<Memtable>> = self.memtables.iter()
+            .map(|mt| (*mt.load()).clone())
+            .collect();
+        let mut partition_refs: Vec<&Memtable> = partition_arcs.iter()
+            .map(|arc| arc.as_ref())
+            .collect();
+
+        // Also include immutable partitions if they exist (LOCK-FREE!)
+        let immutable_arc = self.immutable_memtables.load();
+        let immutable_refs: Vec<&Memtable> = if let Some(ref immutable_partitions) = **immutable_arc {
+            immutable_partitions.iter().map(|arc| arc.as_ref()).collect()
+        } else {
+            Vec::new()
+        };
+        // Arc automatically dropped (lock-free, no explicit drop needed!)
+        partition_refs.extend(immutable_refs);
+
+        // Now collect SSTables from LSM tree (in reverse level order: L0, L1, ..., LN) (LOCK-FREE!)
         let lsm_arc = self.lsm.load();
         let mut sstables = Vec::new();
 
@@ -2454,25 +2488,6 @@ impl DB {
             }
         }
         // Arc automatically dropped (lock-free, no explicit drop needed!)
-
-        // Collect Arc references to ALL active memtable partitions (lock-free)
-        // load() returns Guard<Arc<Memtable>>, we need to clone the Arc out
-        let partition_arcs: Vec<Arc<Memtable>> = self.memtables.iter()
-            .map(|mt| (*mt.load()).clone())
-            .collect();
-        let mut partition_refs: Vec<&Memtable> = partition_arcs.iter()
-            .map(|arc| arc.as_ref())
-            .collect();
-
-        // Also include immutable partitions if they exist (LOCK-FREE!)
-        let immutable_arc = self.immutable_memtables.load();
-        let immutable_refs: Vec<&Memtable> = if let Some(ref immutable_partitions) = **immutable_arc {
-            immutable_partitions.iter().map(|arc| arc.as_ref()).collect()
-        } else {
-            Vec::new()
-        };
-        // Arc automatically dropped (lock-free, no explicit drop needed!)
-        partition_refs.extend(immutable_refs);
 
         // Create range iterator with all memtable partitions
         RangeIterator::new(start_key, end_key, &partition_refs, sstables)
