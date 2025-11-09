@@ -82,6 +82,9 @@ pub struct SSTableBuilder {
     index_blocks_start: u64,
     min_key: Option<Bytes>,
     max_key: Option<Bytes>,
+    /// Maximum sequence number in this SSTable
+    /// Used to coordinate flush and compaction to prevent live key deletion
+    max_sequence: u64,
 }
 
 impl SSTableBuilder {
@@ -111,11 +114,19 @@ impl SSTableBuilder {
             index_blocks_start: 0,
             min_key: None,
             max_key: None,
+            max_sequence: 0,
         })
     }
 
     pub fn with_vlog_threshold(mut self, threshold: usize) -> Self {
         self.vlog_threshold = Some(threshold);
+        self
+    }
+
+    /// Set the maximum sequence number for this SSTable
+    /// Should be called before finish() to track flush/compaction coordination
+    pub fn with_max_sequence(mut self, seq: u64) -> Self {
+        self.max_sequence = seq;
         self
     }
 
@@ -329,9 +340,10 @@ impl SSTableBuilder {
 
         self.write_footer(top_level_offset, bloom_offset, metadata_offset)?;
 
-        self.file.seek(SeekFrom::Start(8))?;
-        self.file.write_all(&0u64.to_le_bytes())?;
-        self.file.write_all(&self.num_entries.to_le_bytes())?;
+        // Write num_entries and max_sequence to header
+        self.file.seek(SeekFrom::Start(16))?;  // Skip magic (4) + version (4) + reserved (8)
+        self.file.write_all(&self.num_entries.to_le_bytes())?;  // Offset 16-23
+        self.file.write_all(&self.max_sequence.to_le_bytes())?; // Offset 24-31
 
         self.file.sync_all()?;
         Ok(())
@@ -411,11 +423,11 @@ impl SSTableBuilder {
 
     fn create_header() -> Vec<u8> {
         let mut header = Vec::with_capacity(32);
-        header.extend_from_slice(&MAGIC.to_le_bytes());
-        header.extend_from_slice(&VERSION.to_le_bytes());
-        header.extend_from_slice(&0u64.to_le_bytes());
-        header.extend_from_slice(&0u64.to_le_bytes());
-        header.extend_from_slice(&0u64.to_le_bytes());
+        header.extend_from_slice(&MAGIC.to_le_bytes());        // 4 bytes: magic
+        header.extend_from_slice(&VERSION.to_le_bytes());      // 4 bytes: version
+        header.extend_from_slice(&0u64.to_le_bytes());         // 8 bytes: reserved
+        header.extend_from_slice(&0u64.to_le_bytes());         // 8 bytes: num_entries (filled in finish())
+        header.extend_from_slice(&0u64.to_le_bytes());         // 8 bytes: max_sequence (filled in finish())
         header
     }
 }
@@ -436,6 +448,9 @@ pub struct SSTable {
     block_cache: Arc<Cache<u64, Block>>,  // LRU cache with size limits
     min_key: Option<Bytes>,
     max_key: Option<Bytes>,
+    /// Maximum sequence number in this SSTable
+    /// Used to coordinate flush and compaction to prevent live key deletion
+    max_sequence: u64,
     // Cache performance metrics (Arc for sharing with iterators)
     cache_hits: Arc<AtomicU64>,
     cache_misses: Arc<AtomicU64>,
@@ -446,7 +461,7 @@ impl SSTable {
         let path = path.as_ref().to_path_buf();
         let mut file = File::open(&path)?;
 
-        let (num_entries, _) = Self::read_header(&mut file)?;
+        let (num_entries, max_sequence) = Self::read_header(&mut file)?;
         let (top_level_offset, bloom_offset, metadata_offset) = Self::read_footer(&mut file)?;
         let top_level_index = Self::load_top_level_index(&mut file, top_level_offset)?;
         let bloom = Self::load_bloom_filter(&mut file, bloom_offset)?;
@@ -484,6 +499,7 @@ impl SSTable {
             block_cache,
             min_key,
             max_key,
+            max_sequence,
             cache_hits: Arc::new(AtomicU64::new(0)),
             cache_misses: Arc::new(AtomicU64::new(0)),
         })
@@ -492,6 +508,11 @@ impl SSTable {
     pub fn with_vlog(mut self, vlog: VLog) -> Self {
         self.vlog = Some(Arc::new(Mutex::new(vlog)));
         self
+    }
+
+    /// Get maximum sequence number in this SSTable
+    pub fn max_sequence(&self) -> u64 {
+        self.max_sequence
     }
 
     /// Get the minimum key in this SSTable (for range filtering)
@@ -720,7 +741,12 @@ impl SSTable {
             header[20], header[21], header[22], header[23],
         ]);
 
-        Ok((num_entries, 0))
+        let max_sequence = u64::from_le_bytes([
+            header[24], header[25], header[26], header[27],
+            header[28], header[29], header[30], header[31],
+        ]);
+
+        Ok((num_entries, max_sequence))
     }
 
     fn read_footer(file: &mut File) -> Result<(u64, u64, u64)> {

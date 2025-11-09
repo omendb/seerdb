@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::AtomicU64;
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
 use thiserror::Error;
@@ -389,6 +390,12 @@ pub struct DB {
     write_count: std::sync::atomic::AtomicU64,
     /// Total read operations (get + range scans) since database opened
     read_count: std::sync::atomic::AtomicU64,
+    /// Maximum sequence number that has been fully flushed to disk
+    /// Compaction will only compact SSTables with max_seq <= this value
+    /// This prevents compaction from deleting keys still in immutable memtables
+    max_flushed_seq: Arc<AtomicU64>,
+    /// Global sequence number counter (increments on every write)
+    next_seq: Arc<AtomicU64>,
 }
 
 impl DB {
@@ -563,6 +570,10 @@ impl DB {
         // Create metrics early (needed by background worker)
         let metrics = Arc::new(MetricsCollector::new());
 
+        // Initialize sequence tracking (needed by background compaction worker)
+        let max_flushed_seq = Arc::new(AtomicU64::new(0));
+        let next_seq = Arc::new(AtomicU64::new(1));
+
         // Start background compaction worker if enabled
         let (compaction_tx, compaction_worker) = if options.background_compaction {
             let (tx, rx) = channel::<CompactionTask>();
@@ -572,6 +583,7 @@ impl DB {
             let sstable_counter_clone = Arc::clone(&sstable_counter);
             let data_dir = options.data_dir.clone();
             let metrics_clone = Arc::clone(&metrics);
+            let max_flushed_seq_clone = Arc::clone(&max_flushed_seq);
 
             // Spawn compaction worker thread
             let worker = thread::spawn(move || {
@@ -585,6 +597,7 @@ impl DB {
                                 &data_dir,
                                 level_num,
                                 &metrics_clone,
+                                &max_flushed_seq_clone,
                             ) {
                                 error!(error = %e, level = level_num, "Background compaction failed");
                             }
@@ -709,6 +722,8 @@ impl DB {
             has_vlog: std::sync::atomic::AtomicBool::new(has_vlog),
             write_count: std::sync::atomic::AtomicU64::new(0),
             read_count: std::sync::atomic::AtomicU64::new(0),
+            max_flushed_seq,
+            next_seq,
         };
 
         // Flush memtables if any partition filled up during recovery
@@ -1390,6 +1405,7 @@ impl DB {
 
             // Generate filename for pending flush
             let mut counter = self.sstable_counter.lock().expect("SSTable counter mutex poisoned");
+            let pending_flush_sequence = *counter; // Capture sequence for retry flush
             let pending_sstable_path = self.options.data_dir.join(format!("L0_{:06}.sst", *counter));
             *counter += 1;
             drop(counter);
@@ -1406,7 +1422,7 @@ impl DB {
             all_entries.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
 
             // Build SSTable from sorted entries
-            self.build_sstable_from_entries(&pending_sstable_path, all_entries.iter())?;
+            self.build_sstable_from_entries(&pending_sstable_path, all_entries.iter(), pending_flush_sequence)?;
             let pending_size = std::fs::metadata(&pending_sstable_path)?.len();
 
             // Track physical bytes written to SSTable (retry case)
@@ -1422,6 +1438,9 @@ impl DB {
             wal.clear()?;
             drop(wal);
 
+            // Update max_flushed_seq for retry flush
+            self.max_flushed_seq.store(pending_flush_sequence, Ordering::SeqCst);
+
             info!("Successfully flushed previously failed immutable partitions");
         }
 
@@ -1436,6 +1455,7 @@ impl DB {
 
         // Generate SSTable filename for main flush
         let mut counter = self.sstable_counter.lock().expect("SSTable counter mutex poisoned");
+        let flush_sequence = *counter; // Capture sequence for this flush
         let sstable_path = self.options.data_dir.join(format!("L0_{:06}.sst", *counter));
         *counter += 1;
         drop(counter);
@@ -1472,7 +1492,7 @@ impl DB {
         all_entries.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
 
         // Build SSTable from sorted entries
-        self.build_sstable_from_entries(&sstable_path, all_entries.iter())?;
+        self.build_sstable_from_entries(&sstable_path, all_entries.iter(), flush_sequence)?;
 
         let size = std::fs::metadata(&sstable_path)?.len();
 
@@ -1491,6 +1511,10 @@ impl DB {
         let mut wal = self.wal.lock().expect("WAL mutex poisoned");
         wal.clear()?;
         drop(wal);
+
+        // Update max_flushed_seq to allow compaction of this SSTable
+        // This MUST happen after immutable_memtables is cleared to prevent data loss
+        self.max_flushed_seq.store(flush_sequence, Ordering::SeqCst);
 
         let flush_duration_ms = flush_start.elapsed().as_millis();
         info!(
@@ -1542,7 +1566,7 @@ impl DB {
 
     /// Helper: Build SSTable from iterator of (key, entry) pairs
     /// Handles both normal values and vLog separation
-    fn build_sstable_from_entries<'a, I>(&self, sstable_path: &Path, entries: I) -> Result<()>
+    fn build_sstable_from_entries<'a, I>(&self, sstable_path: &Path, entries: I, sequence: u64) -> Result<()>
     where
         I: Iterator<Item = &'a (Bytes, crate::memtable::Entry)>,
     {
@@ -1553,7 +1577,9 @@ impl DB {
 
         if let (Some(threshold), Some(ref mut vlog)) = (self.options.vlog_threshold, vlog_guard.as_mut()) {
             // KV separation enabled - use vLog for large values
-            let mut builder = SSTableBuilder::create(sstable_path)?.with_vlog_threshold(threshold);
+            let mut builder = SSTableBuilder::create(sstable_path)?
+                .with_vlog_threshold(threshold)
+                .with_max_sequence(sequence);
 
             for (key, entry) in entries {
                 match entry {
@@ -1574,7 +1600,8 @@ impl DB {
             // No KV separation - traditional flush
             drop(vlog_guard);
 
-            let mut builder = SSTableBuilder::create(sstable_path)?;
+            let mut builder = SSTableBuilder::create(sstable_path)?
+                .with_max_sequence(sequence);
 
             for (key, entry) in entries {
                 match entry {
@@ -1643,6 +1670,7 @@ impl DB {
             &self.options.data_dir,
             level_num,
             &self.metrics,
+            &self.max_flushed_seq,
         )
     }
 
@@ -1653,6 +1681,7 @@ impl DB {
         data_dir: &Path,
         level_num: usize,
         metrics: &Arc<MetricsCollector>,
+        max_flushed_seq: &Arc<AtomicU64>,
     ) -> Result<()> {
         let compaction_start = Instant::now();
 
@@ -1661,9 +1690,42 @@ impl DB {
 
         // Get SSTables to compact
         let level = lsm_arc.level(level_num).ok_or(DBError::NotOpened)?;
-        let input_paths: Vec<PathBuf> = level.sstables().to_vec();
+        let all_input_paths: Vec<PathBuf> = level.sstables().to_vec();
+
+        if all_input_paths.is_empty() {
+            return Ok(());
+        }
+
+        // **CRITICAL FIX**: Only compact SSTables with max_sequence <= max_flushed_seq
+        // This prevents compaction from deleting keys still in immutable memtables
+        let safe_seq = max_flushed_seq.load(Ordering::SeqCst);
+        let mut input_paths = Vec::new();
+        let mut skipped_count = 0;
+
+        for path in all_input_paths {
+            // Read SSTable header to get max_sequence
+            if let Ok(sstable) = SSTable::open(&path) {
+                if sstable.max_sequence() <= safe_seq {
+                    input_paths.push(path);
+                } else {
+                    // Skip this SSTable - it has unflushed keys
+                    skipped_count += 1;
+                    debug!(
+                        path = ?path,
+                        sstable_seq = sstable.max_sequence(),
+                        safe_seq = safe_seq,
+                        "Skipping SSTable with sequence > max_flushed_seq (preventing live key deletion)"
+                    );
+                }
+            }
+        }
 
         if input_paths.is_empty() {
+            debug!(
+                level = level_num,
+                skipped = skipped_count,
+                "No SSTables eligible for compaction (all sequences > max_flushed_seq)"
+            );
             return Ok(());
         }
 
@@ -1671,6 +1733,8 @@ impl DB {
         debug!(
             level = level_num,
             input_sstables = input_count,
+            skipped_sstables = skipped_count,
+            safe_seq = safe_seq,
             "Starting compaction"
         );
 
@@ -1723,8 +1787,9 @@ impl DB {
         data_dir: &Path,
         level_num: usize,
         metrics: &Arc<MetricsCollector>,
+        max_flushed_seq: &Arc<AtomicU64>,
     ) -> Result<()> {
-        Self::do_compact_level(lsm, sstable_counter, data_dir, level_num, metrics)
+        Self::do_compact_level(lsm, sstable_counter, data_dir, level_num, metrics, max_flushed_seq)
     }
 
     /// Static flush method for background worker thread
