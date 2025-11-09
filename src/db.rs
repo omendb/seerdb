@@ -14,10 +14,9 @@ use bytes::Bytes;
 use crossbeam_channel::{Sender as CrossbeamSender, unbounded};
 use quick_cache::sync::Cache;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::AtomicU64;
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
 use thiserror::Error;
@@ -77,6 +76,9 @@ pub enum DBError {
 
     #[error("Insufficient disk space: {available} bytes available, {required} bytes required")]
     DiskSpaceFull { available: u64, required: u64 },
+
+    #[error("Background thread panic: {thread_name} - database may be in inconsistent state")]
+    BackgroundThreadPanic { thread_name: String },
 }
 
 pub type Result<T> = std::result::Result<T, DBError>;
@@ -478,6 +480,12 @@ pub struct DB {
     max_flushed_seq: Arc<AtomicU64>,
     /// Global sequence number counter (increments on every write)
     next_seq: Arc<AtomicU64>,
+    /// Health status of background WAL writer thread (true = healthy, false = panicked)
+    wal_healthy: Arc<AtomicBool>,
+    /// Health status of background flush worker thread (true = healthy, false = panicked)
+    flush_healthy: Arc<AtomicBool>,
+    /// Health status of background compaction worker thread (true = healthy, false = panicked)
+    compaction_healthy: Arc<AtomicBool>,
 }
 
 impl DB {
@@ -656,6 +664,11 @@ impl DB {
         let max_flushed_seq = Arc::new(AtomicU64::new(0));
         let next_seq = Arc::new(AtomicU64::new(1));
 
+        // Initialize background thread health tracking
+        let wal_healthy = Arc::new(AtomicBool::new(true));
+        let flush_healthy = Arc::new(AtomicBool::new(true));
+        let compaction_healthy = Arc::new(AtomicBool::new(true));
+
         // Start background compaction worker if enabled
         let (compaction_tx, compaction_worker) = if options.background_compaction {
             let (tx, rx) = channel::<CompactionTask>();
@@ -666,31 +679,44 @@ impl DB {
             let data_dir = options.data_dir.clone();
             let metrics_clone = Arc::clone(&metrics);
             let max_flushed_seq_clone = Arc::clone(&max_flushed_seq);
+            let health_clone = Arc::clone(&compaction_healthy);
 
-            // Spawn compaction worker thread
-            let worker = thread::spawn(move || {
-                while let Ok(task) = rx.recv() {
-                    match task {
-                        CompactionTask::CompactLevel(level_num) => {
-                            // Perform compaction
-                            if let Err(e) = Self::run_compaction(
-                                &lsm_clone,
-                                &sstable_counter_clone,
-                                &data_dir,
-                                level_num,
-                                &metrics_clone,
-                                &max_flushed_seq_clone,
-                            ) {
-                                error!(error = %e, level = level_num, "Background compaction failed");
+            // Spawn compaction worker thread with panic detection
+            let worker = thread::Builder::new()
+                .name("compaction-worker".to_string())
+                .spawn(move || {
+                    // Wrap in catch_unwind to detect panics and mark health status
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        while let Ok(task) = rx.recv() {
+                            match task {
+                                CompactionTask::CompactLevel(level_num) => {
+                                    // Perform compaction
+                                    if let Err(e) = Self::run_compaction(
+                                        &lsm_clone,
+                                        &sstable_counter_clone,
+                                        &data_dir,
+                                        level_num,
+                                        &metrics_clone,
+                                        &max_flushed_seq_clone,
+                                    ) {
+                                        error!(error = %e, level = level_num, "Background compaction failed");
+                                    }
+                                }
+                                CompactionTask::Shutdown => {
+                                    // Exit worker thread
+                                    break;
+                                }
                             }
                         }
-                        CompactionTask::Shutdown => {
-                            // Exit worker thread
-                            break;
-                        }
+                    }));
+
+                    // If panicked, mark as unhealthy
+                    if result.is_err() {
+                        error!("Compaction worker thread panicked");
+                        health_clone.store(false, Ordering::SeqCst);
                     }
-                }
-            });
+                })
+                .expect("Failed to spawn compaction worker thread");
 
             (Some(tx), Some(worker))
         } else {
@@ -714,36 +740,49 @@ impl DB {
             let memtable_capacity = options.memtable_capacity;
             let vlog_threshold = options.vlog_threshold;
             let flush_mutex_clone = Arc::clone(&flush_mutex);
+            let health_clone = Arc::clone(&flush_healthy);
 
-            // Spawn flush worker thread
-            let worker = thread::spawn(move || {
-                while let Ok(task) = rx.recv() {
-                    match task {
-                        FlushTask::Flush => {
-                            // Perform background flush (now with partitioned memtables)
-                            if let Err(e) = Self::run_background_flush_partitioned(
-                                &memtables_refs,
-                                &immutable_memtables_ref,
-                                &wal_ref,
-                                &lsm_clone,
-                                &vlog_clone,
-                                &sstable_counter_clone,
-                                &data_dir,
-                                &metrics_clone,
-                                memtable_capacity,
-                                vlog_threshold,
-                                &flush_mutex_clone,
-                            ) {
-                                error!(error = %e, "Background flush failed");
+            // Spawn flush worker thread with panic detection
+            let worker = thread::Builder::new()
+                .name("flush-worker".to_string())
+                .spawn(move || {
+                    // Wrap in catch_unwind to detect panics and mark health status
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        while let Ok(task) = rx.recv() {
+                            match task {
+                                FlushTask::Flush => {
+                                    // Perform background flush (now with partitioned memtables)
+                                    if let Err(e) = Self::run_background_flush_partitioned(
+                                        &memtables_refs,
+                                        &immutable_memtables_ref,
+                                        &wal_ref,
+                                        &lsm_clone,
+                                        &vlog_clone,
+                                        &sstable_counter_clone,
+                                        &data_dir,
+                                        &metrics_clone,
+                                        memtable_capacity,
+                                        vlog_threshold,
+                                        &flush_mutex_clone,
+                                    ) {
+                                        error!(error = %e, "Background flush failed");
+                                    }
+                                }
+                                FlushTask::Shutdown => {
+                                    // Exit worker thread
+                                    break;
+                                }
                             }
                         }
-                        FlushTask::Shutdown => {
-                            // Exit worker thread
-                            break;
-                        }
+                    }));
+
+                    // If panicked, mark as unhealthy
+                    if result.is_err() {
+                        error!("Flush worker thread panicked");
+                        health_clone.store(false, Ordering::SeqCst);
                     }
-                }
-            });
+                })
+                .expect("Failed to spawn flush worker thread");
 
             (Some(tx), Some(worker))
         } else {
@@ -753,36 +792,49 @@ impl DB {
         // Start background WAL writer (always enabled for lock-free writes)
         let (wal_tx, wal_rx) = unbounded::<Record>();
         let wal_ref = Arc::clone(&wal);
-        let wal_worker = thread::spawn(move || {
-            let mut batch = Vec::with_capacity(1000);
+        let health_clone = Arc::clone(&wal_healthy);
+        let wal_worker = thread::Builder::new()
+            .name("wal-writer".to_string())
+            .spawn(move || {
+                // Wrap in catch_unwind to detect panics and mark health status
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let mut batch = Vec::with_capacity(1000);
 
-            loop {
-                // Block on first record
-                match wal_rx.recv() {
-                    Ok(record) => batch.push(record),
-                    Err(_) => break,  // Channel closed, shutdown
-                }
+                    loop {
+                        // Block on first record
+                        match wal_rx.recv() {
+                            Ok(record) => batch.push(record),
+                            Err(_) => break,  // Channel closed, shutdown
+                        }
 
-                // Drain channel up to batch limit (amortize lock overhead)
-                while batch.len() < 1000 {
-                    match wal_rx.try_recv() {
-                        Ok(record) => batch.push(record),
-                        Err(_) => break,  // Channel empty or closed
+                        // Drain channel up to batch limit (amortize lock overhead)
+                        while batch.len() < 1000 {
+                            match wal_rx.try_recv() {
+                                Ok(record) => batch.push(record),
+                                Err(_) => break,  // Channel empty or closed
+                            }
+                        }
+
+                        // Write batch with single lock acquisition
+                        if let Err(e) = wal_ref.lock()
+                            .expect("WAL mutex poisoned")
+                            .write_batch(&batch) {
+                            error!(error = %e, "WAL batch write failed");
+                        }
+
+                        batch.clear();
                     }
+
+                    info!("WAL writer thread shutting down");
+                }));
+
+                // If panicked, mark as unhealthy - CRITICAL for data safety
+                if result.is_err() {
+                    error!("WAL writer thread panicked - DATA LOSS MAY OCCUR");
+                    health_clone.store(false, Ordering::SeqCst);
                 }
-
-                // Write batch with single lock acquisition
-                if let Err(e) = wal_ref.lock()
-                    .expect("WAL mutex poisoned")
-                    .write_batch(&batch) {
-                    error!(error = %e, "WAL batch write failed");
-                }
-
-                batch.clear();
-            }
-
-            info!("WAL writer thread shutting down");
-        });
+            })
+            .expect("Failed to spawn WAL writer thread");
 
         let db = Self {
             options: options.clone(),
@@ -806,6 +858,9 @@ impl DB {
             read_count: std::sync::atomic::AtomicU64::new(0),
             max_flushed_seq,
             next_seq,
+            wal_healthy,
+            flush_healthy,
+            compaction_healthy,
         };
 
         // Flush memtables if any partition filled up during recovery
@@ -983,6 +1038,14 @@ impl DB {
 
         // Disk space check (if configured)
         self.check_disk_space()?;
+
+        // Check WAL writer thread health BEFORE writing
+        // If WAL died, writes would be lost even though we return Ok()
+        if !self.wal_healthy.load(Ordering::SeqCst) {
+            return Err(DBError::BackgroundThreadPanic {
+                thread_name: "wal-writer".to_string(),
+            });
+        }
 
         // Write to WAL first (durability) - lock-free via channel
         let record = Record::Put {
@@ -2698,7 +2761,9 @@ impl Drop for DB {
         // Wait for flush worker thread to finish
         if let Some(worker) = self.flush_worker.take() {
             debug!("Waiting for background flush thread to finish");
-            let _ = worker.join();
+            if let Err(e) = worker.join() {
+                error!("Flush worker thread panicked during shutdown: {:?}", e);
+            }
         }
 
         // Shutdown background compaction worker
@@ -2711,7 +2776,9 @@ impl Drop for DB {
         // Wait for compaction worker thread to finish
         if let Some(worker) = self.compaction_worker.take() {
             debug!("Waiting for background compaction thread to finish");
-            let _ = worker.join();
+            if let Err(e) = worker.join() {
+                error!("Compaction worker thread panicked during shutdown: {:?}", e);
+            }
         }
 
         // Shutdown WAL writer (drop channel, closes it)
@@ -2721,7 +2788,9 @@ impl Drop for DB {
         // Wait for WAL worker thread to finish
         if let Some(worker) = self.wal_worker.take() {
             debug!("Waiting for background WAL writer thread to finish");
-            let _ = worker.join();
+            if let Err(e) = worker.join() {
+                error!("WAL writer thread panicked during shutdown: {:?} - DATA LOSS MAY HAVE OCCURRED", e);
+            }
         }
 
         info!("Database closed");
