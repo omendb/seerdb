@@ -365,70 +365,60 @@ for level in lsm_arc { ... }  // Includes new SSTable if flush happened
 
 ---
 
-### 1.8 SSTable Format v1 Missing Magic Number 🚨
+### 1.8 File Format Magic Numbers ✅ FIXED
 
-**Issue**: SSTable files have no magic number to detect corruption or version mismatch
+**Status**: Fixed for all file formats (SSTable already had it, WAL/VLog added in commit 02c0c68)
 
-**Location**: `src/sstable/mod.rs::SSTableBuilder`
+**Issue**: Need magic numbers to detect corruption and version mismatches
 
-**Problem**:
+**Current State**:
+- ✅ SSTable: Has magic "SSTB" (0x53535442) + version in header and footer (already implemented)
+- ✅ WAL: Has magic "WLOG" (0x574C4F47) + version in 8-byte header (commit 02c0c68)
+- ✅ VLog: Has magic "VLOG" (0x564C4F47) + version in 8-byte header (commit 02c0c68)
+
+**Previous Problem** (WAL/VLog before fix):
 ```rust
-// Current format:
-// [data blocks][index][bloom][footer]
+// WAL/VLog had no header:
+// [record1][record2][record3]...
 //
-// No way to:
-// - Detect file corruption (random file could be parsed as SSTable)
-// - Version detection (v0 vs v1 vs v2)
-// - Endianness detection (cross-platform issues)
+// Could not:
+// - Detect file corruption (random file could be parsed as WAL)
+// - Version detection
+// - Format validation
 ```
 
-**Impact**:
-- Silent corruption (parse garbage as valid SSTable)
-- Cannot upgrade format in future
-- Cross-platform compatibility issues
-
-**Test**: None (missing!)
-
-**Fix**: Add magic number + version
+**Solution** (commit 02c0c68):
 ```rust
-const SSTABLE_MAGIC: u32 = 0x5353_5442;  // "SSTB" in hex
-const SSTABLE_VERSION: u16 = 1;
+// WAL header (8 bytes at file start):
+const MAGIC: u32 = 0x574C4F47;  // "WLOG"
+const VERSION: u32 = 0x00000001;
+// Format: [magic: u32][version: u32][record1][record2]...
 
-// New format:
-// [MAGIC: u32][VERSION: u16][data blocks][index][bloom][footer][MAGIC: u32]
-//    ^                                                              ^
-//    Header magic                                          Footer magic
+// VLog header (8 bytes at file start):
+const MAGIC: u32 = 0x564C4F47;  // "VLOG"
+const VERSION: u32 = 0x00000001;
+// Format: [magic: u32][version: u32][record1][record2]...
 
-pub fn write(&self, writer: &mut impl Write) -> Result<()> {
-    // Write header magic
-    writer.write_u32::<LittleEndian>(SSTABLE_MAGIC)?;
-    writer.write_u16::<LittleEndian>(SSTABLE_VERSION)?;
+// create() writes header:
+file.write_all(&MAGIC.to_le_bytes())?;
+file.write_all(&VERSION.to_le_bytes())?;
 
-    // ... write data ...
-
-    // Write footer magic (detect truncation)
-    writer.write_u32::<LittleEndian>(SSTABLE_MAGIC)?;
-}
-
-pub fn open(path: &Path) -> Result<Self> {
-    let mut reader = File::open(path)?;
-
-    // Validate header magic
-    let magic = reader.read_u32::<LittleEndian>()?;
-    if magic != SSTABLE_MAGIC {
-        return Err(DBError::CorruptedSSTable("Invalid magic number"));
-    }
-
-    let version = reader.read_u16::<LittleEndian>()?;
-    if version != SSTABLE_VERSION {
-        return Err(DBError::UnsupportedVersion(version));
-    }
-
-    // ... read data ...
+// open() validates header:
+let mut header = [0u8; 8];
+file.read_exact(&mut header)?;
+let magic = u32::from_le_bytes([header[0..4]]);
+let version = u32::from_le_bytes([header[4..8]]);
+if magic != MAGIC || version != VERSION {
+    return Err(InvalidFormat);
 }
 ```
 
-**Estimated Time**: 1 day (format change, all tests need update)
+**Impact**: Format validation prevents reading garbage files
+- Detects corrupted/wrong files immediately on open
+- Enables future format upgrades (version checking)
+- Minimal overhead (single 8-byte header per file)
+
+**Testing**: All WAL and VLog tests updated and passing ✅
 
 ---
 
