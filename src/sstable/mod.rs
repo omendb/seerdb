@@ -747,12 +747,33 @@ impl SSTable {
             footer[28], footer[29], footer[30], footer[31],
         ]);
 
-        let _checksum = u32::from_le_bytes([footer[32], footer[33], footer[34], footer[35]]);
+        let stored_checksum = u32::from_le_bytes([footer[32], footer[33], footer[34], footer[35]]);
         let magic = u32::from_le_bytes([footer[36], footer[37], footer[38], footer[39]]);
         let version = u32::from_le_bytes([footer[40], footer[41], footer[42], footer[43]]);
 
         if magic != MAGIC || version != VERSION {
             return Err(SSTableError::InvalidFormat);
+        }
+
+        // Validate checksum over entire file content (before footer)
+        let footer_start = file_size - 48;
+        file.seek(SeekFrom::Start(0))?;
+        let mut computed_checksum = 0u32;
+        let mut buf = vec![0u8; 4096];
+        let mut remaining = footer_start;
+
+        while remaining > 0 {
+            let to_read = remaining.min(4096) as usize;
+            file.read_exact(&mut buf[..to_read])?;
+            computed_checksum = crc32c::crc32c_append(computed_checksum, &buf[..to_read]);
+            remaining -= to_read as u64;
+        }
+
+        if computed_checksum != stored_checksum {
+            return Err(SSTableError::Corruption {
+                expected: stored_checksum,
+                actual: computed_checksum,
+            });
         }
 
         Ok((top_level_offset, bloom_offset, metadata_offset))

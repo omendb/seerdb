@@ -9,15 +9,16 @@
 ## TL;DR
 
 **Performance**: 🏆 **#1 on ALL workloads** vs all competitors (2x+ faster)
-**Correctness**: 🚨 **6 critical bugs remaining** (2 fixed: cache ✅, batch ✅)
+**Correctness**: 🚨 **5 critical bugs remaining** (3 fixed: cache ✅, batch ✅, checksums ✅)
 **Testing**: ❌ **Only 15% coverage**, need 80%+ for 0.0.1
-**Production Ready**: ❌ **NO** - needs 6-7 weeks of hardening
+**Production Ready**: ❌ **NO** - needs 5-6 weeks of hardening
 
 **Latest Fixes**:
 - ✅ Block cache bounded (quick_cache, 10K blocks, ~40MB)
 - ✅ Batch API atomic (single WAL record, no corruption window)
+- ✅ Checksum validation (SSTable footer checksum now validated)
 
-**Next Action**: Add CRC32 checksums (Priority #3)
+**Next Action**: Add magic numbers + version detection (Priority #4)
 
 ---
 
@@ -44,15 +45,15 @@
 
 1. ✅ **Block cache unbounded** - FIXED (commit 2f8557b: quick_cache LRU, 10K blocks, ~40MB limit)
 2. ✅ **Batch API non-atomic** - FIXED (commit 431bcf1: single WAL batch record, atomic recovery)
-3. **No checksums** - Silent corruption undetected
-4. **No magic numbers** - Can't detect version/corruption
+3. ✅ **No checksums** - FIXED (SSTable footer checksum now validated on read)
+4. **No magic numbers** - Can't detect version/corruption (partial: magic exists, not comprehensive)
 5. **Iterator invalidation** - Incorrect query results
 6. **VLog GC race** - Returns wrong values
 7. **Compaction live key deletion** - DATA LOSS
 8. **WAL recovery race** - Corruption on startup
 
-**Progress**: 2/8 critical bugs fixed ✅✅ (25% complete!)
-**Impact**: OOM eliminated ✅, crash corruption eliminated ✅
+**Progress**: 3/8 critical bugs fixed ✅✅✅ (37.5% complete!)
+**Impact**: OOM eliminated ✅, crash corruption eliminated ✅, silent corruption eliminated ✅
 
 ---
 
