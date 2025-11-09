@@ -338,12 +338,15 @@ impl SSTableBuilder {
         let metadata_offset = self.current_offset;
         self.write_metadata()?;
 
-        self.write_footer(top_level_offset, bloom_offset, metadata_offset)?;
-
-        // Write num_entries and max_sequence to header
+        // Write num_entries and max_sequence to header BEFORE computing footer checksum
+        // This ensures the checksum includes these header fields
+        let footer_offset = self.current_offset;
         self.file.seek(SeekFrom::Start(16))?;  // Skip magic (4) + version (4) + reserved (8)
         self.file.write_all(&self.num_entries.to_le_bytes())?;  // Offset 16-23
         self.file.write_all(&self.max_sequence.to_le_bytes())?; // Offset 24-31
+        self.file.seek(SeekFrom::Start(footer_offset))?;  // Return to footer position
+
+        self.write_footer(top_level_offset, bloom_offset, metadata_offset)?;
 
         // CRITICAL: Fsync to ensure durability (sync data + metadata)
         // This guarantees all SSTable data is persisted to disk before returning
