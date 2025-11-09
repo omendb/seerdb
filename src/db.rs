@@ -110,6 +110,26 @@ pub type Result<T> = std::result::Result<T, DBError>;
 ///     ..Default::default()
 /// };
 /// ```
+///
+/// # File Descriptor Limits
+///
+/// **IMPORTANT**: seerdb can open many file descriptors (SSTable files, WAL, VLog).
+/// For production deployments with large databases:
+///
+/// - **Recommended**: Increase OS file descriptor limit (ulimit -n) to at least 10,000
+/// - **Estimate**: ~2 FDs per 10MB of data (1 SSTable + metadata files)
+/// - **TODO**: Future versions will implement LRU file handle caching with configurable limits
+///
+/// On Linux/macOS, check current limit:
+/// ```bash
+/// ulimit -n  # Current soft limit
+/// ulimit -Hn # Hard limit
+/// ```
+///
+/// Increase limit (requires root for hard limit):
+/// ```bash
+/// ulimit -n 10000  # Soft limit for current session
+/// ```
 #[derive(Debug, Clone)]
 pub struct DBOptions {
     /// Directory for database files
