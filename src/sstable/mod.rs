@@ -345,6 +345,8 @@ impl SSTableBuilder {
         self.file.write_all(&self.num_entries.to_le_bytes())?;  // Offset 16-23
         self.file.write_all(&self.max_sequence.to_le_bytes())?; // Offset 24-31
 
+        // CRITICAL: Fsync to ensure durability (sync data + metadata)
+        // This guarantees all SSTable data is persisted to disk before returning
         self.file.sync_all()?;
         Ok(())
     }
