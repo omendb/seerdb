@@ -7,11 +7,11 @@
 > ⚠️ **Experimental - Research Implementation**
 >
 > seerdb is an experimental storage engine implementing 2018-2024 research advances.
-> Use at your own risk - not recommended for production workloads.
+> Not recommended for production workloads.
 >
-> **Status**: All tests passing, SOTA library optimizations complete
-> **Performance**: **Beats RocksDB on ALL major workloads** (2.14x writes, 1.12x reads, 1.23x mixed)
-> **Purpose**: Validate research claims, demonstrate learned data structures + modern libraries
+> **Status**: 271 tests passing, 81.54% coverage, testing phase complete
+> **Performance**: 2.47x faster writes, 2.07x faster reads vs RocksDB
+> **Quality**: Memory safety validated (ASAN clean), crash recovery tested
 >
 > See [ai/STATUS.md](ai/STATUS.md) for detailed benchmarks and validation results.
 >
@@ -32,10 +32,10 @@
 
 **Why This Matters**:
 - Validates research claims with real-world implementation
-- **Beat RocksDB on ALL major workloads** (2.14x writes, 1.12x reads, 1.23x mixed)
-- 4.82x better write amplification than traditional LSM (measured)
-- Demonstrates practical benefits of learned data structures + modern libraries
-- Research-quality implementation (all tests passing, crash recovery, durability)
+- Beat RocksDB on writes (2.47x) and reads (2.07x)
+- 4.82x better write amplification than traditional LSM
+- Demonstrates practical benefits of learned data structures
+- Well-tested (271 tests, 81.54% coverage, memory safety validated)
 
 ## Research Papers Implemented
 
@@ -53,28 +53,23 @@ See [ai/research/](ai/research/) for paper summaries and implementation details.
 
 **Baseline Benchmark** (100K ops, 1KB values, M3 Max):
 
-| Workload | seerdb | RocksDB | fjall | vs RocksDB | vs fjall | Status |
-|----------|--------|---------|-------|------------|----------|--------|
-| **Writes** | **763K** | 356K | 442K | **2.14x** ✅ | **1.73x** ✅ | **Best** 🏆 |
-| **Reads** | **1,154K** | 1,032K | 1,053K | **1.12x** ✅ | **1.10x** ✅ | **Best** 🏆 |
-| **Mixed** | **506K** | 411K | 748K | **1.23x** ✅ | 0.68x ⚠️ | **Beat RocksDB** 🏆 |
-| **Scans** | 16.8K | 20.2K | 18.3K | 0.83x ⚠️ | 0.92x ⚠️ | Competitive |
+| Workload | seerdb | RocksDB | fjall | vs RocksDB | vs fjall |
+|----------|--------|---------|-------|------------|----------|
+| **Writes** | 878K | 356K | 426K | **2.47x** | **2.06x** |
+| **Reads** | 2,207K | 1,065K | 1,159K | **2.07x** | **1.90x** |
+| **Mixed** | 718K | 400K | 834K | **1.79x** | 0.86x |
+| **Scans** | 19.6K | 19.7K | 20.1K | 0.99x | 0.98x |
 
 **Write Amplification**: 1.01x with vLog (4.82x better than traditional LSM at 4.88x)
 
-**Summary**:
-- ✅ **Best-in-class writes**: 2.14x RocksDB, 1.73x fjall (LZ4 compression + efficient write path)
-- ✅ **Best-in-class reads**: 1.12x RocksDB, 1.10x fjall (lock-free cache + efficient lookup)
-- ✅ **Beat RocksDB mixed**: 1.23x faster (SOTA library optimizations)
-- ⚠️ **Gap vs fjall mixed**: 32% behind (targeted for closure via profiling → ALEX → rkyv)
-- ✅ **Best-in-class write amp**: 4.82x better than traditional LSM (key-value separation)
-
-**Key Optimization** (Nov 8, 2025): LZ4 block compression
-- Writes: +34.7% (566K → 763K ops/sec)
-- Mixed: +25.2% (404K → 506K ops/sec)
-- **Exactly as predicted** (expected +30-40%, got +34.7%)
-
-**Experimental Status**: Not recommended for production use.
+**Key Optimizations**:
+- LZ4 block compression (+34.7% writes)
+- jemalloc allocator (+17-21% all workloads)
+- ArcSwap lock-free structures (+1-4%)
+- SIMD key comparison (+3-4% reads)
+- ALEX learned index (+55% reads)
+- Partitioned memtables (16 partitions)
+- Lock-free WAL
 
 **Platform**: M3 Max (ARM64). Results may vary on x86_64.
 **Methodology**: Release mode, 100K operations, 1KB values, default configuration.
@@ -93,11 +88,17 @@ See [ai/STATUS.md](ai/STATUS.md) for detailed performance analysis and validatio
 - Dostoevsky adaptive compaction (workload-aware tuning)
 - std::simd portable SIMD operations
 
+**Quality & Testing**:
+- 271 tests passing (unit, integration, stress tests)
+- 81.54% test coverage
+- Memory safety validated (ASAN clean)
+- Thread safety validated (50+ concurrent tests)
+- Crash recovery tested
+
 **Design Principles**:
 - Research-driven (every decision backed by papers or benchmarks)
 - Measured performance (all claims validated with benchmarks)
-- Experimental quality (141 tests, crash recovery, durability validation)
-- Not production-ready (use at your own risk)
+- Experimental - not production-ready
 
 ## Building and Testing
 
@@ -115,15 +116,11 @@ cargo run --release --features baseline-benchmarks --example baseline_benchmark
 cargo run --release --example write_amplification
 ```
 
-**Recent Work** (November 8, 2025):
-- **LZ4 block compression**: +34.7% writes (566K → 763K ops/sec) - **Critical win** 🔥
-- **Beat RocksDB on ALL workloads**: 2.14x writes, 1.12x reads, 1.23x mixed
-- **SOTA library optimizations complete**: LZ4, quick_cache, foldhash, varint-rs (4/4)
-- **100% prediction accuracy**: Expected +30-40% from LZ4, got +34.7%
-- Lock-free WAL: +26.5% writes, +64% reads
-- Partitioned memtables: 2.14x multi-threaded speedup
-
-**Status**: Experimental - use at your own risk. Research implementation not production-ready.
+**Development Status**:
+- Testing phase complete (271 tests, 81.54% coverage)
+- Performance optimizations complete
+- Memory and thread safety validated
+- Experimental - not recommended for production use
 
 See [ai/STATUS.md](ai/STATUS.md) for detailed progress and validation results.
 
