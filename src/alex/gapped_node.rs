@@ -529,13 +529,21 @@ impl GappedNode {
                 }
             }
 
+            // Only return candidate if we've searched from the beginning
+            // Otherwise, we might have missed an earlier key
             if let Some(result) = candidate {
-                return Some(result);
+                if start == 0 {
+                    // We've searched from position 0, so this is definitely the first key >= search_key
+                    return Some(result);
+                }
             }
 
             // Expand search radius
             if radius >= max_radius || (start == 0 && end == self.keys.len()) {
-                // Searched entire array - do full scan as fallback
+                // Searched entire array - return candidate or do full scan as fallback
+                if let Some(result) = candidate {
+                    return Some(result);
+                }
                 return self.keys
                     .iter()
                     .enumerate()
