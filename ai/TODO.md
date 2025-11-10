@@ -1,12 +1,26 @@
 # TODO - seerdb
 
-**Last Updated**: November 8, 2025
-**Current Sprint**: Close fjall Gap (Nov 8-15, 2025)
-**Goal**: Beat fjall on mixed workload (+18% from 718K → 850K+)
+**Last Updated**: November 10, 2025
+**Current Sprint**: Week 5-6 Testing Phase (Nov 10-23, 2025)
+**Goal**: Achieve 80%+ test coverage for 0.0.1 release
 
 ---
 
-## Current Performance (Nov 8, 2025 - After jemalloc)
+## Current Status (Nov 10, 2025)
+
+### ✅ All Critical Bugs Fixed!
+
+**Major Milestones**:
+- ✅ All 9 critical bugs resolved
+- ✅ All tests passing (100% pass rate)
+- ✅ Crash recovery validated
+- ✅ Compaction safety (delayed deletion queue)
+- ✅ WAL recovery race fixed
+- ✅ Batch API atomicity (single WAL record)
+- ✅ Checksum validation on all reads
+- ✅ MVCC decision: Defer to 0.0.2+ (Read Committed sufficient for vectors)
+
+### Performance Achievement
 
 | Workload | seerdb | RocksDB | fjall | vs RocksDB | vs fjall | Status |
 |----------|--------|---------|-------|------------|----------|--------|
@@ -17,225 +31,150 @@
 
 **Write Amplification**: 1.01x (4.82x better than traditional LSM) 🏆 **BEST-IN-CLASS**
 
-### Achievement Summary
-
-✅ **CRUSHING ROCKSDB**:
-- Beat RocksDB on ALL 3 major workloads (1.79x-2.47x faster)
-- Best-in-class: Writes (2.47x), Reads (2.07x), Write Amplification (4.82x better)
-- Competitive scans (within 2% of RocksDB/fjall)
-
-⚠️ **fjall Gap**:
-- Only remaining issue: 14% behind fjall on mixed (718K vs 832K)
-- **Mystery**: We're faster on BOTH pure workloads but slower on mixed!
-
-**Latest Optimizations** (Nov 8):
-- jemalloc allocator: +17-21% all workloads
-- ArcSwap lock-free: +1-4%
-- SIMD k-way merge: +3-4% reads
-- LZ4 compression: +34.7% writes
-- ALEX learned index: +55% reads
+**Verdict**: fjall mixed gap (14%) is acceptable. We're 1.79x faster than RocksDB (industry standard). Focus on correctness over marginal mixed workload optimization.
 
 ---
 
-## Phase 10: Close fjall Gap (Nov 8-15, 2025) 🎯
+## Week 5-6: Testing Phase (Nov 10-23, 2025) 🧪
 
-**The Mystery**: fjall achieves >100% theoretical mixed performance!
-```
-fjall theoretical: (427K writes + 1,161K reads) / 2 = 794K
-fjall actual: 832K (104.8% efficiency!)
-```
+**Goal**: Achieve 80%+ code coverage for 0.0.1 release
 
-This suggests:
-- Read/write pipelining (operations overlap)
-- Batch synergies (mixed triggers optimizations)
-- Cache warming (writes benefit reads)
+**Current Coverage**: ~15% (estimated)
+**Target**: 80%+ overall, 90%+ for critical modules (WAL, memtable, SSTable, compaction)
 
-### Priority 1: Investigate fjall's Code (Days 1-2) 🔍
+### Detailed Plan
 
+See `ai/TESTING_STRATEGY.md` for comprehensive testing roadmap.
+
+### Phase 1: Critical Coverage Gaps (Days 1-3)
+
+**Goal**: +20% coverage (15% → 35%)
+
+#### Day 1: ALEX Learned Index Tests (~300 LOC, 15 tests)
 **Status**: ⏭️ **START NOW**
 
-**Tasks**:
-- [ ] Clone fjall repository (`git clone https://github.com/fjall-rs/fjall`)
-- [ ] Map out their architecture (memtable, WAL, LSM tree, compaction)
-- [ ] Analyze mixed workload code path
-- [ ] Search for read/write pipelining (`rg "read.*write|batch|pipeline"`)
-- [ ] Identify cache synergies
-- [ ] Profile our mixed workload with samply
-- [ ] Compare hot paths (ours vs theirs)
-- [ ] Document findings in `ai/research/FJALL_MIXED_ANALYSIS.md`
+**Missing Coverage**:
+- [ ] Node split logic (when node exceeds capacity)
+- [ ] Node merge logic (when node underflows)
+- [ ] Multi-level tree traversal (root → inner → leaf)
+- [ ] Bulk loading (initial index construction)
+- [ ] Error prediction bounds (validate O(log error) guarantee)
+- [ ] Concurrent modifications (thread safety)
 
-**Questions to Answer**:
-1. How do they achieve >100% theoretical mixed performance?
-2. Do they pipeline reads while writes happen?
-3. Do they batch operations differently in mixed vs pure workloads?
-4. What's their cache strategy?
+**Target**: +5% coverage
+**File**: Create `tests/alex_learned_index_tests.rs`
 
-**Deliverable**: Specific optimizations to implement
-**Timeline**: 1-2 days
-**Potential**: +10-20% if we find and implement their techniques
+#### Day 2: VLog Tests (~400 LOC, 20 tests)
+**Status**: Pending
 
----
+**Missing Coverage**:
+- [ ] VLog corruption detection (checksum validation)
+- [ ] VLog truncation handling (partial writes)
+- [ ] VLog header validation (magic number, version)
+- [ ] VLog rotation (when file exceeds size limit)
+- [ ] VLog concurrent reads (multiple readers)
 
-### Priority 2: Create Large-Scale Benchmarks (Day 3) 📊
+**Target**: +5% coverage
+**File**: Create `tests/vlog_tests.rs`
 
-**Status**: Pending (after fjall investigation)
+#### Day 3: Compaction Tests (~300 LOC, 15 tests)
+**Status**: Pending
 
-**Problem**: Our 100K benchmark is too small
-- Dataset: ~100MB (100K * 1KB)
-- Cache hit rate: ~95%+
-- Working set fits entirely in cache
-- **Result**: Doesn't stress rkyv or multi-tier caching
+**Missing Coverage**:
+- [ ] Multi-level cascading compaction (L0→L1→L2→...)
+- [ ] Size ratio enforcement (10x between levels)
+- [ ] Overlapping key ranges (L0 → L1 merges)
+- [ ] Compaction throttling (when too many L0 files)
+- [ ] Compaction cancellation (on DB close)
 
-**Tasks**:
-- [ ] Create `examples/large_benchmark.rs` (1M ops, 1GB dataset)
-- [ ] Create `examples/stress_benchmark.rs` (10M ops, 10GB dataset)
-- [ ] Implement Zipfian distribution (80/20 access pattern)
-- [ ] Add configurable access patterns (uniform, zipfian, sequential)
-- [ ] Measure cache hit rates explicitly
-- [ ] Run baseline benchmarks (1M and 10M)
-- [ ] Document in `ai/research/LARGE_SCALE_BENCHMARKS.md`
+**Target**: +5% coverage
+**File**: Extend `tests/compaction_correctness_tests.rs`
 
-**Benchmark Configuration**:
-```rust
-// 1M ops benchmark
-Operations: 1_000_000
-Value size: 1024 bytes
-Dataset: ~1GB
-Distributions: uniform, zipfian(0.8), sequential
-Expected cache hit rate: 60-80%
+### Phase 2: Medium Priority (Days 4-5)
 
-// 10M ops stress test
-Operations: 10_000_000
-Value size: 1024 bytes
-Dataset: ~10GB
-Distributions: uniform, zipfian(0.8)
-Expected cache hit rate: 40-60%
+**Goal**: +10% coverage (35% → 45%)
+
+#### Day 4: SSTable + WAL Tests (~400 LOC, 20 tests)
+- [ ] Prefix compression edge cases (empty prefix, full key prefix)
+- [ ] Varint decoding errors (truncated, invalid)
+- [ ] Block corruption (CRC mismatch, invalid format)
+- [ ] WAL partial record writes (truncated at end)
+- [ ] WAL recovery with batch records (batch atomicity)
+
+**Target**: +5% coverage
+
+#### Day 5: Iterator + Memtable Tests (~350 LOC, 18 tests)
+- [ ] Iterator edge cases (empty range, single key)
+- [ ] Memtable partition selection (key distribution)
+- [ ] Memtable concurrent reads/writes
+
+**Target**: +5% coverage
+
+### Phase 3: Polish (Day 6)
+
+**Goal**: +5% coverage (45% → 50%+)
+
+- [ ] Remaining gaps identified by coverage tool
+- [ ] Edge cases from code review
+- [ ] Integration test scenarios
+
+**Target**: +5% coverage
+
+### Phase 4: Sanitizer Runs (Days 7-8)
+
+#### Day 7: Address Sanitizer (ASAN)
+```bash
+RUSTFLAGS="-Z sanitizer=address" cargo test --target x86_64-apple-darwin
 ```
+**Detects**: Use-after-free, buffer overflows, memory leaks
 
-**Success Criteria**:
-- Cache hit rate <80% (shows cache pressure)
-- Benchmarks complete in reasonable time (<10 min for 1M, <2 hours for 10M)
-- Stable, reproducible results
-
-**Timeline**: 1 day
-
----
-
-### Priority 3: Test rkyv + Multi-Tier Cache at Scale (Day 4) 🧪
-
-**Status**: Pending (after benchmarks exist)
-
-**Test Plan**:
-1. Run 1M baseline (document performance)
-2. Implement rkyv for Block deserialization
-3. Run 1M with rkyv (measure improvement)
-4. Implement multi-tier cache (L1 decompressed + L3 compressed)
-5. Run 1M with multi-tier cache (measure improvement)
-6. Run 1M with both (measure combined)
-7. Document results in `ai/research/RKYV_CACHE_EVALUATION.md`
-
-**Expected Benefits** (at 1M+ scale):
-- rkyv: +5-10% (7x faster deserialization on cache misses)
-- Multi-tier cache: +8-12% (2x effective cache capacity)
-- **Combined**: +13-22% potential
-
-**Decision Criteria**:
-| Optimization | Threshold | Action |
-|--------------|-----------|--------|
-| rkyv alone | >5% improvement | ✅ Implement |
-| Multi-tier cache alone | >8% improvement | ✅ Implement |
-| Combined | >15% improvement | ✅ Implement both |
-| Either | <5% improvement | ❌ Skip |
-
-**Timeline**: 1 day
+#### Day 8: Thread Sanitizer (TSAN)
+```bash
+RUSTFLAGS="-Z sanitizer=thread" cargo test --target x86_64-apple-darwin
+```
+**Detects**: Data races, deadlocks
 
 ---
 
-### Priority 4: Implement Winning Optimizations (Day 5+)
+## Deferred to 0.0.2+ (Post-Release) ⏸️
 
-**Status**: Pending (depends on findings)
+### Performance Optimizations
+- **fjall mixed gap** (718K vs 832K) - Already 1.79x faster than RocksDB ✅
+- **rkyv zero-copy** - Only +3% benefit, high complexity
+- **Multi-tier caching** - Needs production workload data
+- **tokio-uring** (Linux I/O) - Deferred until profiling shows I/O >20% of time
 
-**Potential Implementations**:
-
-1. **fjall's techniques** (if found):
-   - Read/write pipelining
-   - Batch optimizations
-   - Cache synergies
-   - Expected: +10-20%
-   - Timeline: Varies (depends on complexity)
-
-2. **rkyv** (if validated at scale):
-   - Zero-copy Block deserialization
-   - Expected: +5-10%
-   - Complexity: 3-5 days
-   - Trade-offs: API complexity, larger serialized size
-
-3. **Multi-tier cache** (if validated at scale):
-   - L1: Decompressed blocks (1000 entries)
-   - L3: Compressed blocks (10000 entries)
-   - Expected: +8-12%
-   - Complexity: 1-2 weeks
-
-**Implementation Order** (based on impact/effort):
-1. fjall techniques (highest impact, varies effort)
-2. rkyv (medium impact, medium effort)
-3. Multi-tier cache (high impact, high effort)
-
----
-
-## Success Target
-
-**Goal**: 718K → 850K+ mixed ops/sec (+18%)
-- Beat fjall by ~5% (832K → 850K+)
-
-**Optimistic Path**:
-1. fjall techniques → +10-15%
-2. rkyv (if validated) → +5-10%
-3. Multi-tier cache (if validated) → +8-12%
-4. **Cumulative**: +23-37% → 883K-984K ops/sec 🎯 **CRUSH FJALL**
-
-**Conservative Path**:
-1. fjall techniques → +5-10%
-2. One of rkyv or multi-tier cache → +5-10%
-3. **Cumulative**: +10-20% → 790K-862K ops/sec 🎯 **BEAT FJALL**
-
----
-
-## Deferred Optimizations ⏸️
-
-### tokio-uring (Linux I/O)
-- **Status**: Deferred until profiling shows I/O >20% of time
-- **Effort**: 4 days, 300-500 LOC, NOT drop-in
-- **Potential**: +20-50% I/O throughput (Linux only)
-- **Blocker**: Need profiling data + cross-platform complexity
-
-### mmap for Read-Only SSTables
-- **Status**: Skipped (doesn't help compressed blocks)
-- **Benefit**: +2-5% (bloom/index only)
-- **Reason**: Main data is LZ4 compressed, mmap doesn't help
+### Advanced Features
+- **MVCC/Snapshot API** - Deferred (Read Committed sufficient for vectors)
+- **VLog GC** - Deferred (GC not implemented yet, will be done correctly)
+- **Learned bloom filters** - Prototype exists, needs validation
 
 ---
 
 ## Completed Optimizations ✅
 
-### Phase 9: Advanced Optimizations (Nov 8, 2025)
+### Bug Fixes (Nov 9-10, 2025)
+- ✅ All 9 critical bugs resolved
+- ✅ Block cache unbounded (fixed with quick_cache LRU, 10K blocks, ~40MB limit)
+- ✅ Batch API atomicity (single WAL batch record, atomic recovery)
+- ✅ Checksums (SSTable footer validated on read)
+- ✅ Magic numbers (WAL/VLog have magic + version)
+- ✅ Iterator invalidation (memtables collected before SSTables)
+- ✅ Compaction live key deletion (delayed deletion queue)
+- ✅ WAL recovery race (barrier synchronization + file cursor seek)
+- ✅ Tombstone handling (SSTable.contains() distinguishes tombstone from miss)
+
+### Performance Optimizations (Nov 7-8, 2025)
 - ✅ jemalloc allocator (+17-21% all workloads) 🔥
 - ✅ ArcSwap lock-free structures (+1-4%)
 - ✅ SIMD k-way merge (+3-4% reads)
-- ✅ Individual optimization testing methodology
-- ✅ Allocator comparison (jemalloc vs mimalloc vs system)
-
-### Phase 8: SOTA Library Implementation (Nov 8, 2025)
 - ✅ LZ4 block compression (+34.7% writes) 🔥
 - ✅ foldhash (2x faster hashing)
 - ✅ varint-rs (space-efficient encoding)
 - ✅ quick_cache (lock-free SSTable cache)
+- ✅ ALEX learned index (+55% reads) 🔥
 
-### Phase 7: ALEX Learned Index (Nov 7, 2025)
-- ✅ O(log error) lower_bound (+55% reads) 🔥
-- ✅ Exponential search around model prediction
-
-### Earlier Phases
+### Core Features (Oct-Nov 2025)
 - ✅ Partitioned memtables (16 partitions)
 - ✅ Lock-free WAL
 - ✅ Decompressed block cache
@@ -246,23 +185,26 @@ Expected cache hit rate: 40-60%
 
 ## References
 
+**Planning**:
+- `ai/TESTING_STRATEGY.md` - Comprehensive testing roadmap (80%+ coverage)
+- `ai/PRODUCTION_READINESS.md` - 8-week roadmap to 0.0.1
+- `ai/BUGS_AND_EDGE_CASES.md` - All known bugs (all resolved!)
+
 **Current State**:
-- `ai/STATUS.md` - Complete current state and next phase plan
-- `ai/research/COMPREHENSIVE_INVESTIGATION.md` - Full investigation of fjall gap + optimizations
-- `ai/research/ALLOCATOR_ANALYSIS.md` - jemalloc vs mimalloc comparison
-- `ai/research/ADVANCED_OPTIMIZATIONS.md` - rkyv, caching, io_uring, mmap analysis
+- `ai/CURRENT_STATE.md` - TL;DR current status
+- `ai/STATUS.md` - Detailed performance history
 
 **Design**:
+- `ai/DECISIONS.md` - All architecture decisions (including MVCC deferral)
 - `ai/design/BLOCK_SSTABLE_FORMAT.md` - V3 format with LZ4 + varint
-- `ai/DECISIONS.md` - All architecture decisions
 
-**Performance**:
-- Crushing RocksDB: 1.79x-2.47x across all major workloads ✅
-- Gap to fjall: 14% on mixed workload (718K vs 832K) - **investigating**
-- Write amplification: 4.82x better than traditional LSM ✅
+**Research**:
+- `ai/research/LSM_MVCC_CONCURRENCY_RESEARCH.md` - MVCC analysis (800+ lines)
+- `ai/research/COMPREHENSIVE_INVESTIGATION.md` - fjall gap investigation
+- `ai/research/ALLOCATOR_ANALYSIS.md` - jemalloc vs mimalloc comparison
 
 ---
 
-**Status**: 🔍 **Investigation Phase** - Understanding fjall's mixed workload advantage
-**Next Action**: Clone fjall, analyze their code, profile our mixed workload
-**Updated**: November 8, 2025 - After jemalloc allocator optimization
+**Status**: 🧪 **Testing Phase (Week 5-6)** - Achieving 80%+ test coverage
+**Next Action**: Implement ALEX learned index tests (~300 LOC, 15 tests)
+**Updated**: November 10, 2025 - After strategic planning and MVCC decision
