@@ -105,6 +105,11 @@
 - ✅ Performance claims: Documented with benchmarks
 - ⚠️ Production ready: 6-7 weeks of testing + hardening needed
 
+### Isolation Level
+- **Current**: Read Committed (per-operation snapshot consistency)
+- **Future (0.0.2+)**: Snapshot Isolation (multi-operation MVCC)
+- **Rationale**: Vector databases (Milvus, Qdrant, Weaviate) use eventual consistency for ANN search. Read Committed is sufficient for omendb vector database workload. MVCC deferred to 0.0.2+ based on user feedback. See: ai/research/LSM_MVCC_CONCURRENCY_RESEARCH.md
+
 ---
 
 ## Workload Optimization
