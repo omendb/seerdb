@@ -1331,7 +1331,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "seerdb"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1361,6 +1361,7 @@ dependencies = [
  "tracing-subscriber",
  "twox-hash",
  "varint-rs",
+ "varint-simd",
 ]
 
 [[package]]
@@ -1748,6 +1749,15 @@ name = "varint-rs"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f54a172d0620933a27a4360d3db3e2ae0dd6cceae9730751a036bbf182c4b23"
+
+[[package]]
+name = "varint-simd"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "655d0cf8bfc2bd1f079e767f7ff613cbfa0ef06ca3ceaf1fd6b6cde08cbd012a"
+dependencies = [
+ "rustc_version",
+]
 
 [[package]]
 name = "vcpkg"

@@ -208,7 +208,7 @@ impl<'db> Batch<'db> {
             operations: wal_ops,
         };
 
-        self.db.wal_tx.send(batch_record).map_err(|_| {
+        self.db.wal_tx.send(crate::db::WALMessage::Record(batch_record)).map_err(|_| {
             DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
                 std::io::ErrorKind::BrokenPipe,
                 "WAL writer thread died",

@@ -252,10 +252,19 @@ impl WAL {
         // Flush any pending batch first
         self.flush_batch()?;
 
-        let file = self.file.lock().expect("WAL file mutex poisoned");
-        file.set_len(0)?;
+        let mut file = self.file.lock().expect("WAL file mutex poisoned");
+        // CRITICAL FIX (Bug #8): Truncate to HEADER_SIZE (not 0!) to preserve magic + version
+        // WALReader::open() expects a valid 8-byte header, truncating to 0 causes UnexpectedEof
+        file.set_len(HEADER_SIZE)?;
+
+        // CRITICAL: Seek to HEADER_SIZE after truncating
+        // set_len() doesn't move the file cursor, so subsequent writes would be at the wrong position
+        use std::io::Seek;
+        file.seek(std::io::SeekFrom::Start(HEADER_SIZE))?;
+
         file.sync_all()?;
-        self.offset = 0;
+        // Reset offset to after header (not 0!)
+        self.offset = HEADER_SIZE;
         Ok(())
     }
 }

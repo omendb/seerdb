@@ -1,6 +1,6 @@
 [package]
 name = "seerdb"
-version = "0.1.0"
+version = "0.0.0"
 edition = "2024"
 license = "Elastic-2.0"
 authors = ["seerdb contributors"]
@@ -54,6 +54,7 @@ sled = { version = "0.34", optional = true }
 fjall = { version = "2.3", optional = true }
 anyhow = "1.0.100"
 tikv-jemallocator = "0.6.1"
+varint-simd = { version = "0.4.1", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -69,9 +70,14 @@ hdrhistogram = "7.5"      # Accurate latency percentiles
 default = ["simd"]
 # SIMD optimizations using std::simd (requires nightly)
 simd = []
+# Enable S3/object storage backend support (adds generic trait overhead)
+# Default: LocalDiskBackend only (zero overhead)
+# With feature: StorageBackend trait + S3Backend (monomorphized generics)
+s3-backend = []
 # Enable baseline benchmark dependencies (RocksDB, sled, fjall)
 # Only needed when running comparative benchmarks, not for regular tests
 baseline-benchmarks = ["dep:rocksdb", "dep:sled", "dep:fjall"]
+varint-simd = ["dep:varint-simd"]
 # Note: io_uring support can be added later as opt-in (security concerns)
 
 [[bench]]
@@ -84,6 +90,18 @@ harness = false
 
 [[bench]]
 name = "background_compaction"
+harness = false
+
+[[bench]]
+name = "storage_overhead"
+harness = false
+
+[[bench]]
+name = "block_parsing"
+harness = false
+
+[[bench]]
+name = "varint_comparison"
 harness = false
 
 [profile.release]

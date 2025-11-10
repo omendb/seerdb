@@ -1,4 +1,4 @@
-# seerdb Current State - November 8, 2025
+# seerdb Current State - November 9, 2025
 
 **Version**: 0.0.0 (pre-alpha, unstable)
 **Status**: Development in progress
@@ -17,7 +17,7 @@
 - ✅ Block cache bounded (quick_cache, 10K blocks, ~40MB)
 - ✅ Batch API atomic (single WAL record, no corruption window)
 - ✅ Checksum validation (SSTable footer checksum now validated)
-- ✅ Compaction DATA LOSS (sequence coordination prevents deleting live keys)
+- ✅ Compaction DATA LOSS (tombstone resurrection fixed + delayed deletion queue prevents file race)
 - ✅ WAL recovery race (already correct: recovery before background threads)
 - ✅ Iterator invalidation (memtables collected first, prevents missing keys)
 - ✅ Magic numbers (WAL/VLog validate format + version on open)
@@ -63,7 +63,7 @@
 1. ✅ **Block cache unbounded** - FIXED (commit 2f8557b: quick_cache LRU, 10K blocks, ~40MB limit)
 2. ✅ **Batch API non-atomic** - FIXED (commit 431bcf1: single WAL batch record, atomic recovery)
 3. ✅ **No checksums** - FIXED (commit 04110a3: SSTable footer checksum validated on read)
-4. ✅ **Compaction live key deletion** - FIXED (commit 1eea05b: sequence coordination, prevents DATA LOSS)
+4. ✅ **Compaction live key deletion** - FIXED (tombstone resurrection + file deletion race: delayed deletion queue prevents concurrent reader corruption)
 5. ✅ **WAL recovery race** - FIXED (already correct: recovery happens before background threads start)
 6. ✅ **Iterator invalidation** - FIXED (commit e78d6c0: collect memtables before SSTables, prevents missing keys)
 7. ✅ **No magic numbers** - FIXED (commit 02c0c68: WAL/VLog have magic numbers + version for format detection)

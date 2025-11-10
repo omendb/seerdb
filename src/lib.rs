@@ -121,6 +121,7 @@ pub mod range;
 pub mod range_merge;
 pub mod simd;
 pub mod sstable;
+pub mod storage;
 pub mod vlog;
 pub mod wal;
 
@@ -133,6 +134,9 @@ pub use health::{CheckStatus, HealthCheck, HealthStatus};
 pub use memtable::Memtable;
 pub use metrics::DBStats;
 pub use sstable::{SSTable, SSTableBuilder};
+pub use storage::LocalStorage;
+#[cfg(feature = "s3-backend")]
+pub use storage::Storage;
 pub use vlog::{VLog, ValuePointer};
 pub use wal::{Record, SyncPolicy, WAL};
 

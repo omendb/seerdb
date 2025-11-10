@@ -11,7 +11,7 @@ use crate::vlog::VLog;
 use crate::wal::{Record, SyncPolicy, WALReader, WAL};
 use arc_swap::ArcSwap;
 use bytes::Bytes;
-use crossbeam_channel::{Sender as CrossbeamSender, unbounded};
+use crossbeam_channel::{Sender as CrossbeamSender, unbounded, bounded};
 use quick_cache::sync::Cache;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -425,6 +425,16 @@ enum FlushTask {
 /// # Ok(())
 /// # }
 /// ```
+
+/// Messages sent to the background WAL writer thread
+pub(crate) enum WALMessage {
+    /// Write a record to the WAL
+    Record(Record),
+    /// Barrier: flush all pending records and send acknowledgement
+    /// Used by flush() to ensure WAL is fully written before clearing
+    Barrier(CrossbeamSender<()>),
+}
+
 pub struct DB {
     /// Database options
     options: DBOptions,
@@ -458,11 +468,15 @@ pub struct DB {
     /// Background flush worker thread
     flush_worker: Option<JoinHandle<()>>,
     /// Channel for lock-free WAL writes (pub(crate) for batch API access)
-    pub(crate) wal_tx: CrossbeamSender<Record>,
+    pub(crate) wal_tx: CrossbeamSender<WALMessage>,
     /// Background WAL writer thread
     wal_worker: Option<JoinHandle<()>>,
     /// Flush mutex to serialize flush operations and prevent concurrent flush races
     flush_mutex: Arc<Mutex<()>>,
+    /// LSM mutex to serialize LSM tree updates and prevent concurrent update races
+    /// CRITICAL FIX (Bug #7c): Prevents ABA problem where concurrent flush/compaction
+    /// overwrite each other's LSM tree changes, causing data loss
+    lsm_mutex: Arc<Mutex<()>>,
     /// SSTable reader cache to avoid re-opening files on every read (CRITICAL for performance)
     /// Maps SSTable path -> opened SSTable with loaded indexes and bloom filters
     /// Uses quick_cache for efficient LRU eviction and lock-free concurrent access
@@ -486,6 +500,10 @@ pub struct DB {
     flush_healthy: Arc<AtomicBool>,
     /// Health status of background compaction worker thread (true = healthy, false = panicked)
     compaction_healthy: Arc<AtomicBool>,
+    /// Pending SSTable file deletions (path, timestamp when queued)
+    /// Files are queued here after compaction updates LSM tree, then deleted after a safe delay
+    /// This prevents race conditions with concurrent readers holding old LSM snapshots
+    pending_deletions: Arc<Mutex<Vec<(PathBuf, std::time::Instant)>>>,
 }
 
 impl DB {
@@ -626,6 +644,7 @@ impl DB {
         let vlog = Arc::new(Mutex::new(vlog));
         let lsm = Arc::new(ArcSwap::from_pointee(lsm));
         let flush_mutex = Arc::new(Mutex::new(()));
+        let lsm_mutex = Arc::new(Mutex::new(()));
 
         // Initialize SSTable counter from existing files to avoid overwriting
         // Collect all SSTable paths first to avoid borrow issues
@@ -669,17 +688,22 @@ impl DB {
         let flush_healthy = Arc::new(AtomicBool::new(true));
         let compaction_healthy = Arc::new(AtomicBool::new(true));
 
+        // Initialize pending deletions queue (for Bug #7b fix)
+        let pending_deletions = Arc::new(Mutex::new(Vec::new()));
+
         // Start background compaction worker if enabled
         let (compaction_tx, compaction_worker) = if options.background_compaction {
             let (tx, rx) = channel::<CompactionTask>();
 
             // Clone references for worker thread
             let lsm_clone = Arc::clone(&lsm);
+            let lsm_mutex_clone = Arc::clone(&lsm_mutex);
             let sstable_counter_clone = Arc::clone(&sstable_counter);
             let data_dir = options.data_dir.clone();
             let metrics_clone = Arc::clone(&metrics);
             let max_flushed_seq_clone = Arc::clone(&max_flushed_seq);
             let health_clone = Arc::clone(&compaction_healthy);
+            let pending_deletions_clone = Arc::clone(&pending_deletions);
 
             // Spawn compaction worker thread with panic detection
             let worker = thread::Builder::new()
@@ -693,11 +717,13 @@ impl DB {
                                     // Perform compaction
                                     if let Err(e) = Self::run_compaction(
                                         &lsm_clone,
+                                        &lsm_mutex_clone,
                                         &sstable_counter_clone,
                                         &data_dir,
                                         level_num,
                                         &metrics_clone,
                                         &max_flushed_seq_clone,
+                                        &pending_deletions_clone,
                                     ) {
                                         error!(error = %e, level = level_num, "Background compaction failed");
                                     }
@@ -740,6 +766,8 @@ impl DB {
             let memtable_capacity = options.memtable_capacity;
             let vlog_threshold = options.vlog_threshold;
             let flush_mutex_clone = Arc::clone(&flush_mutex);
+            let lsm_mutex_clone = Arc::clone(&lsm_mutex);
+            let max_flushed_seq_clone = Arc::clone(&max_flushed_seq);
             let health_clone = Arc::clone(&flush_healthy);
 
             // Spawn flush worker thread with panic detection
@@ -757,6 +785,7 @@ impl DB {
                                         &immutable_memtables_ref,
                                         &wal_ref,
                                         &lsm_clone,
+                                        &lsm_mutex_clone,
                                         &vlog_clone,
                                         &sstable_counter_clone,
                                         &data_dir,
@@ -764,6 +793,7 @@ impl DB {
                                         memtable_capacity,
                                         vlog_threshold,
                                         &flush_mutex_clone,
+                                        &max_flushed_seq_clone,
                                     ) {
                                         error!(error = %e, "Background flush failed");
                                     }
@@ -790,7 +820,7 @@ impl DB {
         };
 
         // Start background WAL writer (always enabled for lock-free writes)
-        let (wal_tx, wal_rx) = unbounded::<Record>();
+        let (wal_tx, wal_rx) = unbounded::<WALMessage>();
         let wal_ref = Arc::clone(&wal);
         let health_clone = Arc::clone(&wal_healthy);
         let wal_worker = thread::Builder::new()
@@ -801,11 +831,25 @@ impl DB {
                     let mut batch = Vec::with_capacity(1000);
 
                     loop {
-                        // Block on first record
+                        // Block on first message
                         let channel_closed = match wal_rx.recv() {
-                            Ok(record) => {
+                            Ok(WALMessage::Record(record)) => {
                                 batch.push(record);
                                 false
+                            }
+                            Ok(WALMessage::Barrier(ack_tx)) => {
+                                // Flush all pending records before acknowledging
+                                if !batch.is_empty() {
+                                    if let Err(e) = wal_ref.lock()
+                                        .expect("WAL mutex poisoned")
+                                        .write_batch(&batch) {
+                                        error!(error = %e, "WAL batch write failed during barrier");
+                                    }
+                                    batch.clear();
+                                }
+                                // Send acknowledgement (flush() is waiting for this)
+                                let _ = ack_tx.send(());
+                                false  // Continue processing
                             }
                             Err(_) => {
                                 // Channel closed - need to drain remaining messages
@@ -818,12 +862,26 @@ impl DB {
                         // If channel open, drain up to batch limit
                         loop {
                             match wal_rx.try_recv() {
-                                Ok(record) => {
+                                Ok(WALMessage::Record(record)) => {
                                     batch.push(record);
                                     // Keep draining if channel closed, otherwise respect batch limit
                                     if !channel_closed && batch.len() >= 1000 {
                                         break;
                                     }
+                                }
+                                Ok(WALMessage::Barrier(ack_tx)) => {
+                                    // Flush current batch before acknowledging
+                                    if !batch.is_empty() {
+                                        if let Err(e) = wal_ref.lock()
+                                            .expect("WAL mutex poisoned")
+                                            .write_batch(&batch) {
+                                            error!(error = %e, "WAL batch write failed during barrier");
+                                        }
+                                        batch.clear();
+                                    }
+                                    // Send acknowledgement
+                                    let _ = ack_tx.send(());
+                                    // Continue draining if more messages
                                 }
                                 Err(_) => break,  // Channel empty
                             }
@@ -841,7 +899,13 @@ impl DB {
 
                         // Exit after writing final batch
                         if channel_closed {
-                            debug!("WAL writer thread: channel closed, all records flushed");
+                            // Final fsync to ensure all data is on disk before thread exits
+                            if let Err(e) = wal_ref.lock()
+                                .expect("WAL mutex poisoned")
+                                .sync() {
+                                error!(error = %e, "Final WAL sync failed - DATA MAY BE LOST");
+                            }
+                            debug!("WAL writer thread: channel closed, all records flushed and synced");
                             break;
                         }
                     }
@@ -873,6 +937,7 @@ impl DB {
             wal_tx,
             wal_worker: Some(wal_worker),
             flush_mutex,
+            lsm_mutex,
             sstable_cache: Arc::new(Cache::new(1000)),  // Cache up to 1000 SSTables
             has_vlog: std::sync::atomic::AtomicBool::new(has_vlog),
             write_count: std::sync::atomic::AtomicU64::new(0),
@@ -882,6 +947,7 @@ impl DB {
             wal_healthy,
             flush_healthy,
             compaction_healthy,
+            pending_deletions,
         };
 
         // Flush memtables if any partition filled up during recovery
@@ -1076,7 +1142,7 @@ impl DB {
             value: value.clone(),
         };
         let wal_bytes = record.encode().len() as u64;
-        self.wal_tx.send(record)
+        self.wal_tx.send(WALMessage::Record(record))
             .map_err(|_| DBError::Wal(crate::wal::WALError::Io(
                 std::io::Error::new(std::io::ErrorKind::BrokenPipe, "WAL writer thread died")
             )))?;
@@ -1281,11 +1347,15 @@ impl DB {
                             return Ok(Some(value));
                         }
                         None => {
-                            // Key not in this SSTable (bloom filter said no, false positive, or tombstone)
-                            // For L0, we can't distinguish tombstone from miss without double bloom check
-                            // Trade-off: Accept checking one extra L0 SSTable in rare tombstone case
-                            // vs doubling bloom filter overhead on every read
-                            // Continue to next SSTable
+                            // CRITICAL FIX (Bug #9): Distinguish tombstone from miss
+                            // If key exists in SSTable but get() returned None, it's a tombstone
+                            // Don't continue to older SSTables - tombstone masks older values
+                            if sstable.contains(key)? {
+                                // Key exists in this SSTable as tombstone - stop here
+                                self.metrics.record_get(start.elapsed());
+                                return Ok(None);
+                            }
+                            // Key not in this SSTable - continue to next SSTable
                         }
                     }
                 }
@@ -1357,7 +1427,7 @@ impl DB {
 
         // Write to WAL (durability) - lock-free via channel
         let record = Record::Delete { key: key.clone() };
-        self.wal_tx.send(record)
+        self.wal_tx.send(WALMessage::Record(record))
             .map_err(|_| DBError::Wal(crate::wal::WALError::Io(
                 std::io::Error::new(std::io::ErrorKind::BrokenPipe, "WAL writer thread died")
             )))?;
@@ -1643,18 +1713,36 @@ impl DB {
             // Track physical bytes written to SSTable (retry case)
             self.metrics.record_physical_bytes(pending_size);
 
-            // Add to LSM tree (LOCK-FREE: clone, modify, store!)
-            let mut lsm_clone = (**self.lsm.load()).clone();
-            lsm_clone.add_l0_sstable(pending_sstable_path.clone(), pending_size);
-            self.lsm.store(Arc::new(lsm_clone));
+            // CRITICAL FIX (Bug #7c): Serialize LSM tree updates to prevent ABA race
+            {
+                let _lsm_lock = self.lsm_mutex.lock().expect("LSM mutex poisoned");
 
-            // Clear WAL (pending data now in SSTable)
+                // Add to LSM tree (serialized)
+                let mut lsm_clone = (**self.lsm.load()).clone();
+                lsm_clone.add_l0_sstable(pending_sstable_path.clone(), pending_size);
+                self.lsm.store(Arc::new(lsm_clone));
+            }
+
+            // CRITICAL FIX (Bug #8): Barrier synchronization before clearing WAL
+            // Send barrier message and wait for background thread to flush all pending records
+            let (ack_tx, ack_rx) = bounded(1);  // Oneshot channel
+            self.wal_tx.send(WALMessage::Barrier(ack_tx))
+                .map_err(|_| DBError::Wal(crate::wal::WALError::Io(
+                    std::io::Error::new(std::io::ErrorKind::BrokenPipe, "WAL writer thread died")
+                )))?;
+            // Wait for acknowledgement (blocks until all pending records written)
+            ack_rx.recv().map_err(|_| DBError::Wal(crate::wal::WALError::Io(
+                std::io::Error::new(std::io::ErrorKind::BrokenPipe, "WAL writer thread died during barrier")
+            )))?;
+
+            // Now safe to clear WAL (all records written to disk)
             let mut wal = self.wal.lock().expect("WAL mutex poisoned");
             wal.clear()?;
             drop(wal);
 
             // Update max_flushed_seq for retry flush
-            self.max_flushed_seq.store(pending_flush_sequence, Ordering::SeqCst);
+            // Use fetch_max to handle out-of-order flush completions (only update if new value is greater)
+            self.max_flushed_seq.fetch_max(pending_flush_sequence, Ordering::SeqCst);
 
             info!("Successfully flushed previously failed immutable partitions");
         }
@@ -1714,22 +1802,41 @@ impl DB {
         // Track physical bytes written to SSTable
         self.metrics.record_physical_bytes(size);
 
-        // Add to LSM tree L0 (LOCK-FREE: clone, modify, store!)
-        let mut lsm_clone = (**self.lsm.load()).clone();
+        // CRITICAL FIX (Bug #7c): Serialize LSM tree updates to prevent ABA race
         let sstable_path_for_log = sstable_path.clone();
-        lsm_clone.add_l0_sstable(sstable_path, size);
-        self.lsm.store(Arc::new(lsm_clone));
+        {
+            let _lsm_lock = self.lsm_mutex.lock().expect("LSM mutex poisoned");
+
+            // Add to LSM tree L0 (serialized)
+            let mut lsm_clone = (**self.lsm.load()).clone();
+            lsm_clone.add_l0_sstable(sstable_path, size);
+            self.lsm.store(Arc::new(lsm_clone));
+        }
 
         // Clear immutable partitions + WAL after successful flush (LOCK-FREE!)
         self.immutable_memtables.store(Arc::new(None));
 
+        // CRITICAL FIX (Bug #8): Barrier synchronization before clearing WAL
+        // Send barrier message and wait for background thread to flush all pending records
+        let (ack_tx, ack_rx) = bounded(1);  // Oneshot channel
+        self.wal_tx.send(WALMessage::Barrier(ack_tx))
+            .map_err(|_| DBError::Wal(crate::wal::WALError::Io(
+                std::io::Error::new(std::io::ErrorKind::BrokenPipe, "WAL writer thread died")
+            )))?;
+        // Wait for acknowledgement (blocks until all pending records written)
+        ack_rx.recv().map_err(|_| DBError::Wal(crate::wal::WALError::Io(
+            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "WAL writer thread died during barrier")
+        )))?;
+
+        // Now safe to clear WAL (all records written to disk)
         let mut wal = self.wal.lock().expect("WAL mutex poisoned");
         wal.clear()?;
         drop(wal);
 
         // Update max_flushed_seq to allow compaction of this SSTable
         // This MUST happen after immutable_memtables is cleared to prevent data loss
-        self.max_flushed_seq.store(flush_sequence, Ordering::SeqCst);
+        // Use fetch_max to handle out-of-order flush completions (only update if new value is greater)
+        self.max_flushed_seq.fetch_max(flush_sequence, Ordering::SeqCst);
 
         let flush_duration_ms = flush_start.elapsed().as_millis();
         info!(
@@ -1759,10 +1866,13 @@ impl DB {
         // Record flush
         self.metrics.record_flush();
 
-        // Adjust LSM size ratios based on workload (Dostoevsky adaptive compaction - LOCK-FREE!)
+        // Adjust LSM size ratios based on workload (Dostoevsky adaptive compaction)
+        // CRITICAL FIX (Bug #7c): Serialize LSM tree updates to prevent ABA race
         if self.options.adaptive_compaction {
             let writes = self.write_count.load(std::sync::atomic::Ordering::Relaxed);
             let reads = self.read_count.load(std::sync::atomic::Ordering::Relaxed);
+
+            let _lsm_lock = self.lsm_mutex.lock().expect("LSM mutex poisoned");
             let mut lsm_clone = (**self.lsm.load()).clone();
             if lsm_clone.adjust_for_workload(writes, reads) {
                 let strategy = lsm_clone.strategy();
@@ -1881,22 +1991,26 @@ impl DB {
     fn compact_level(&self, level_num: usize) -> Result<()> {
         Self::do_compact_level(
             &self.lsm,
+            &self.lsm_mutex,
             &self.sstable_counter,
             &self.options.data_dir,
             level_num,
             &self.metrics,
             &self.max_flushed_seq,
+            &self.pending_deletions,
         )
     }
 
     /// Internal compaction implementation (shared by both sync and async paths)
     fn do_compact_level(
         lsm: &Arc<ArcSwap<LSMTree>>,
+        lsm_mutex: &Arc<Mutex<()>>,
         sstable_counter: &Arc<Mutex<u64>>,
         data_dir: &Path,
         level_num: usize,
         metrics: &Arc<MetricsCollector>,
         max_flushed_seq: &Arc<AtomicU64>,
+        pending_deletions: &Arc<Mutex<Vec<(PathBuf, std::time::Instant)>>>,
     ) -> Result<()> {
         let compaction_start = Instant::now();
 
@@ -1969,18 +2083,34 @@ impl DB {
         // Track physical bytes written during compaction
         metrics.record_physical_bytes(size);
 
-        // Update LSM tree - clone, modify, store (LOCK-FREE!)
-        let mut lsm_clone = (**lsm.load()).clone();
-        lsm_clone.add_to_level(level_num + 1, result_path, size);
-        lsm_clone.remove_sstables_from_level(level_num, &input_paths);
-        lsm.store(Arc::new(lsm_clone));
+        // CRITICAL FIX (Bug #7c): Serialize LSM tree updates to prevent ABA race
+        // Hold mutex during read-modify-write to ensure atomicity
+        {
+            let _lsm_lock = lsm_mutex.lock().expect("LSM mutex poisoned");
 
-        // Delete input SSTables from disk
-        for path in input_paths {
-            if let Err(e) = std::fs::remove_file(&path) {
-                warn!(path = ?path, error = %e, "Failed to delete SSTable after compaction");
+            // Update LSM tree - clone, modify, store (serialized)
+            let mut lsm_clone = (**lsm.load()).clone();
+            lsm_clone.add_to_level(level_num + 1, result_path, size);
+            lsm_clone.remove_sstables_from_level(level_num, &input_paths);
+            lsm.store(Arc::new(lsm_clone));
+
+            // Lock released here (automatic drop)
+        }
+
+        // PRODUCTION FIX (Bug #7b): Queue SSTables for delayed deletion
+        // Concurrent readers may hold LSM snapshots pointing to these files.
+        // By queuing deletions with timestamps, we ensure files are only deleted
+        // after a safe delay (5 seconds), giving readers time to finish.
+        {
+            let mut pending = pending_deletions.lock().unwrap();
+            let now = std::time::Instant::now();
+            for path in input_paths {
+                pending.push((path, now));
             }
         }
+
+        // Clean up old pending deletions (files queued >5 seconds ago)
+        Self::cleanup_old_deletions(&pending_deletions);
 
         let compaction_duration_ms = compaction_start.elapsed().as_millis();
         info!(
@@ -1998,13 +2128,15 @@ impl DB {
     /// This is called from the worker thread without &self
     fn run_compaction(
         lsm: &Arc<ArcSwap<LSMTree>>,
+        lsm_mutex: &Arc<Mutex<()>>,
         sstable_counter: &Arc<Mutex<u64>>,
         data_dir: &Path,
         level_num: usize,
         metrics: &Arc<MetricsCollector>,
         max_flushed_seq: &Arc<AtomicU64>,
+        pending_deletions: &Arc<Mutex<Vec<(PathBuf, std::time::Instant)>>>,
     ) -> Result<()> {
-        Self::do_compact_level(lsm, sstable_counter, data_dir, level_num, metrics, max_flushed_seq)
+        Self::do_compact_level(lsm, lsm_mutex, sstable_counter, data_dir, level_num, metrics, max_flushed_seq, pending_deletions)
     }
 
     /// Static flush method for background worker thread
@@ -2017,6 +2149,7 @@ impl DB {
         immutable_memtables: &Arc<ArcSwap<Option<Arc<Vec<Arc<Memtable>>>>>>,
         wal: &Arc<Mutex<WAL>>,
         lsm: &Arc<ArcSwap<LSMTree>>,
+        lsm_mutex: &Arc<Mutex<()>>,
         vlog: &Arc<Mutex<Option<VLog>>>,
         sstable_counter: &Arc<Mutex<u64>>,
         data_dir: &Path,
@@ -2024,6 +2157,7 @@ impl DB {
         _memtable_capacity: usize,
         vlog_threshold: Option<usize>,
         flush_mutex: &Arc<Mutex<()>>,
+        max_flushed_seq: &Arc<AtomicU64>,
     ) -> Result<()> {
         use crate::memtable::Entry;
         use crate::sstable::SSTableBuilder;
@@ -2044,6 +2178,7 @@ impl DB {
 
         // Generate SSTable filename
         let mut counter = sstable_counter.lock().expect("SSTable counter mutex poisoned");
+        let flush_sequence = *counter; // Capture sequence for this background flush
         let sstable_path = data_dir.join(format!("L0_{:06}.sst", *counter));
         *counter += 1;
         drop(counter);
@@ -2069,7 +2204,9 @@ impl DB {
 
         if let (Some(threshold), Some(ref mut vlog_ref)) = (vlog_threshold, vlog_guard.as_mut()) {
             // KV separation enabled - use vLog for large values
-            let mut builder = SSTableBuilder::create(&sstable_path)?.with_vlog_threshold(threshold);
+            let mut builder = SSTableBuilder::create(&sstable_path)?
+                .with_vlog_threshold(threshold)
+                .with_max_sequence(flush_sequence);
 
             for (key, entry) in &all_entries {
                 match entry {
@@ -2090,7 +2227,8 @@ impl DB {
             // No KV separation - traditional flush
             drop(vlog_guard);
 
-            let mut builder = SSTableBuilder::create(&sstable_path)?;
+            let mut builder = SSTableBuilder::create(&sstable_path)?
+                .with_max_sequence(flush_sequence);
             for (key, entry) in &all_entries {
                 match entry {
                     Entry::Value(value) => {
@@ -2110,10 +2248,18 @@ impl DB {
         // Track physical bytes written
         metrics.record_physical_bytes(size);
 
-        // Add to LSM tree L0 (LOCK-FREE: clone, modify, store!)
-        let mut lsm_clone = (**lsm.load()).clone();
-        lsm_clone.add_l0_sstable(sstable_path.clone(), size);
-        lsm.store(Arc::new(lsm_clone));
+        // CRITICAL FIX (Bug #7c): Serialize LSM tree updates to prevent ABA race
+        // Hold mutex during read-modify-write to ensure atomicity
+        {
+            let _lsm_lock = lsm_mutex.lock().expect("LSM mutex poisoned");
+
+            // Add to LSM tree L0 (serialized)
+            let mut lsm_clone = (**lsm.load()).clone();
+            lsm_clone.add_l0_sstable(sstable_path.clone(), size);
+            lsm.store(Arc::new(lsm_clone));
+
+            // Lock released here (automatic drop)
+        }
 
         // Clear immutable memtables + WAL after successful flush (LOCK-FREE!)
         immutable_memtables.store(Arc::new(None));
@@ -2122,6 +2268,12 @@ impl DB {
             let mut wal_guard = wal.lock().expect("WAL mutex poisoned");
             wal_guard.clear()?;
         }
+
+        // CRITICAL FIX (Bug #7d): Update max_flushed_seq to allow compaction of this SSTable
+        // This MUST happen after immutable_memtables is cleared to prevent data loss
+        // Without this, compaction will skip all background-flushed SSTables forever!
+        // Use fetch_max to handle out-of-order flush completions (only update if new value is greater)
+        max_flushed_seq.fetch_max(flush_sequence, Ordering::SeqCst);
 
         let flush_duration_ms = flush_start.elapsed().as_millis();
         info!(
@@ -2242,9 +2394,42 @@ impl DB {
         active_memtable_bytes + immutable_memtable_bytes + BLOCK_CACHE_BYTES + SSTABLE_CACHE_BYTES
     }
 
-    /// Check if there's sufficient disk space for writes
-    ///
-    /// Returns an error if available disk space is below the configured minimum.
+    /// Clean up old pending deletions (files queued for deletion >5 seconds ago)
+    /// This is called after each compaction to safely delete old SSTable files
+    /// without interfering with concurrent readers.
+    fn cleanup_old_deletions(pending_deletions: &Arc<Mutex<Vec<(PathBuf, std::time::Instant)>>>) {
+        const DELETION_DELAY: std::time::Duration = std::time::Duration::from_secs(5);
+
+        let mut pending = pending_deletions.lock().unwrap();
+        let now = std::time::Instant::now();
+
+        // Separate files into (ready_to_delete, still_pending)
+        let mut still_pending = Vec::new();
+        let mut ready_to_delete = Vec::new();
+
+        for (path, queued_at) in pending.drain(..) {
+            if now.duration_since(queued_at) >= DELETION_DELAY {
+                ready_to_delete.push(path);
+            } else {
+                still_pending.push((path, queued_at));
+            }
+        }
+
+        // Keep files that aren't old enough yet
+        *pending = still_pending;
+        drop(pending);  // Release lock before doing I/O
+
+        // Delete old files (outside the lock to avoid blocking)
+        for path in ready_to_delete {
+            if let Err(e) = std::fs::remove_file(&path) {
+                // Log but don't fail - file might already be deleted
+                warn!(path = ?path, error = %e, "Failed to delete old SSTable");
+            } else {
+                debug!(path = ?path, "Deleted old SSTable after safe delay");
+            }
+        }
+    }
+
     fn check_disk_space(&self) -> Result<()> {
         if let Some(min_space) = self.options.min_disk_space_bytes {
             use sysinfo::{System, SystemExt, DiskExt};
@@ -2807,15 +2992,12 @@ impl Drop for DB {
         // Shutdown WAL writer - drop the sender to close the channel
         debug!("Closing WAL writer channel");
         // Replace our sender with a dummy one, dropping the original
-        let (dummy_tx, _dummy_rx) = crossbeam_channel::unbounded::<Record>();
+        let (dummy_tx, _dummy_rx) = crossbeam_channel::unbounded::<WALMessage>();
         let _old_tx = std::mem::replace(&mut self.wal_tx, dummy_tx);
         drop(_old_tx);  // Explicitly drop to close channel
 
-        // Give WAL writer a moment to detect channel closure and flush remaining records
-        // This prevents race where we join before the writer finishes draining
-        std::thread::sleep(std::time::Duration::from_millis(10));
-
         // Wait for WAL worker thread to finish
+        // join() provides proper synchronization - thread won't exit until all records are written
         if let Some(worker) = self.wal_worker.take() {
             debug!("Waiting for background WAL writer thread to finish");
             if let Err(e) = worker.join() {

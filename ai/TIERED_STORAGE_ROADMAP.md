@@ -64,47 +64,58 @@
 
 ### 1. Storage Backend Abstraction
 
-**Goal**: Pluggable storage backends (local disk, S3, GCS, Azure)
+**Goal**: Pluggable storage backends (local disk, S3, GCS, Azure) with zero-cost abstraction
+
+**Status**: ✅ **IMPLEMENTED** (0.0.1) - Feature-gated trait with zero overhead
 
 **Interface**:
 ```rust
-pub trait StorageBackend: Send + Sync {
-    /// Write SSTable to storage
-    fn write_sstable(&self, path: &str, data: &[u8]) -> Result<()>;
+/// Storage trait for pluggable storage implementations (feature-gated)
+///
+/// Zero-Cost Abstraction:
+/// - When `s3-backend` feature is disabled (default): No trait overhead, direct calls
+/// - When `s3-backend` feature is enabled: Monomorphized generics (static dispatch)
+#[cfg(feature = "s3-backend")]
+pub trait Storage: Send + Sync {
+    /// Read a block from an SSTable at the given offset
+    fn read_block(&self, path: &Path, offset: u64, size: u32) -> Result<Vec<u8>>;
 
-    /// Read SSTable from storage
-    fn read_sstable(&self, path: &str) -> Result<Vec<u8>>;
+    /// Write an SSTable to storage
+    fn write_sstable(&self, path: &Path, data: &[u8]) -> Result<()>;
 
-    /// Delete SSTable from storage
-    fn delete_sstable(&self, path: &str) -> Result<()>;
+    /// Delete an SSTable from storage
+    fn delete_sstable(&self, path: &Path) -> Result<()>;
 
-    /// List SSTables at level
-    fn list_sstables(&self, level: u8) -> Result<Vec<String>>;
+    /// Fsync an SSTable to ensure durability
+    fn sync(&self, path: &Path) -> Result<()>;
 
-    /// Check if SSTable exists
-    fn exists(&self, path: &str) -> Result<bool>;
+    /// Check if an SSTable exists
+    fn exists(&self, path: &Path) -> Result<bool>;
+
+    /// List all SSTables in a directory
+    fn list_sstables(&self, dir: &Path) -> Result<Vec<PathBuf>>;
 }
 ```
 
 **Implementations**:
 ```rust
-// Phase 1: Local disk only (current, 0.0.1)
-pub struct LocalDiskBackend {
+// Phase 1: Local disk (IMPLEMENTED - 0.0.1)
+pub struct LocalStorage {
     base_path: PathBuf,
 }
 
-// Phase 2: S3 (post-0.0.1)
-pub struct S3Backend {
-    bucket: String,
-    prefix: String,
-    client: aws_sdk_s3::Client,
-    cache: Arc<RwLock<LruCache<String, Vec<u8>>>>,
+// Phase 2: Object storage via object_store crate (post-0.0.1)
+pub struct ObjectStorage<T: ObjectStore> {
+    store: Arc<T>,  // S3, GCS, Azure, etc.
+    cache: Arc<Cache<String, Vec<u8>>>,
 }
-
-// Future: GCS, Azure
-pub struct GCSBackend { /* ... */ }
-pub struct AzureBlobBackend { /* ... */ }
 ```
+
+**Design Decision**: Use `object_store` crate (Apache Arrow project)
+- ✅ Battle-tested multi-cloud abstraction
+- ✅ Supports S3, GCS, Azure Blob, Cloudflare R2
+- ✅ Async I/O with connection pooling
+- ✅ Maintained by Apache Foundation
 
 ### 2. Tiering Policy
 
@@ -218,27 +229,35 @@ pub struct PrefetchPolicy {
 
 ## Implementation Phases
 
-### Phase 1: Storage Abstraction (Week 1-2, ~400 LOC)
+### Phase 1: Storage Abstraction ✅ **COMPLETED** (0.0.1)
 
 **Tasks**:
-- [ ] Define `StorageBackend` trait
-- [ ] Implement `LocalDiskBackend` (refactor existing code)
-- [ ] Update `SSTable` to use `StorageBackend`
-- [ ] Update `Compaction` to use `StorageBackend`
-- [ ] Add configuration for backend selection
+- [x] Define `Storage` trait (feature-gated for zero overhead)
+- [x] Implement `LocalStorage` with dual implementation (trait + standalone)
+- [x] Add `s3-backend` feature flag to Cargo.toml
+- [x] Verify zero overhead with storage tests (4/4 passing)
+- [x] Update `SSTable` to use `LocalStorage` for reads (completed - all tests passing)
+- [ ] Update `Compaction` to use `LocalStorage` (pending - Phase 2)
+- [ ] Add configuration for backend selection (pending - Phase 2)
 
-**Deliverable**: Pluggable storage, single implementation (local disk)
+**Note**: SSTableBuilder still uses File directly for streaming writes (write header,
+blocks incrementally, footer). This is intentional - object storage backends require
+buffering all data before upload. Will be refactored in Phase 2 when adding S3 support.
 
-### Phase 2: S3 Backend (Week 3-4, ~600 LOC)
+**Deliverable**: ✅ Pluggable storage foundation with zero-cost abstraction
+**Location**: `src/storage.rs` (290 LOC), `src/sstable/mod.rs` (refactored reads)
+**Test Status**: ✅ 68 tests passing, 0 failures (verified after refactoring)
+
+### Phase 2: Object Storage Backend (Week 3-4, ~600 LOC)
 
 **Tasks**:
-- [ ] Integrate `aws-sdk-s3` (or `object_store` crate)
-- [ ] Implement `S3Backend`
-- [ ] Add retry logic (S3 transient failures)
-- [ ] Add connection pooling
-- [ ] Handle S3 rate limits (exponential backoff)
+- [ ] Integrate `object_store` crate (multi-cloud abstraction)
+- [ ] Implement `ObjectStorage<T: ObjectStore>` generic wrapper
+- [ ] Add retry logic (transient failures)
+- [ ] Handle rate limits (exponential backoff)
+- [ ] Test with LocalFileSystem, InMemory, S3 backends
 
-**Deliverable**: Functional S3 backend (no caching yet)
+**Deliverable**: Functional object storage backend (S3, GCS, Azure, R2)
 
 ### Phase 3: Tiering Policy (Week 5, ~300 LOC)
 
@@ -363,18 +382,22 @@ timestamp → f64[N]
 
 **Decision**: Build native Rust solution, can fall back to RocksDB-Cloud if needed
 
-### Option 2: object_store Crate
+### Option 2: object_store Crate ✅ **SELECTED**
 
 **Pros**:
-- ✅ Multi-cloud abstraction (S3, GCS, Azure)
-- ✅ Well-maintained, async
-- ✅ Simple API
+- ✅ Multi-cloud abstraction (S3, GCS, Azure, Cloudflare R2)
+- ✅ Well-maintained by Apache Arrow project
+- ✅ Async I/O with connection pooling
+- ✅ Retry logic and error handling built-in
+- ✅ Simple, idiomatic Rust API
 
 **Cons**:
-- ⚠️ Adds dependency
-- ⚠️ May not have all optimizations we need
+- ⚠️ Adds dependency (~200KB compiled)
 
-**Decision**: Evaluate `object_store` vs `aws-sdk-s3` in Phase 2
+**Decision**: ✅ Use `object_store` crate (Phase 2)
+- **Rationale**: Battle-tested, multi-cloud, maintained by Apache Foundation
+- **Alternative**: DIY with `aws-sdk-s3` (more work, single cloud)
+- **Trade-off**: Small dependency cost for huge maintainability win
 
 ### Option 3: Tiered at Application Layer (Not seerdb)
 

@@ -407,7 +407,6 @@ fn test_multiple_db_instances_fd_limits() {
 // ============================================================================
 
 #[test]
-#[ignore] // TODO: Same WAL race as test_db_recovery_with_flush
 fn test_sstable_fsync_on_flush() {
     // Test that SSTables are fsync'd on creation
     let temp_dir = TempDir::new().unwrap();
@@ -447,7 +446,6 @@ fn test_sstable_fsync_on_flush() {
 }
 
 #[test]
-#[ignore] // TODO: Same WAL race as test_db_recovery_with_flush
 fn test_sstable_durability_after_crash() {
     // Test that flushed SSTables survive simulated crash
     let temp_dir = TempDir::new().unwrap();
