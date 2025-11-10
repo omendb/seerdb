@@ -1,25 +1,19 @@
 # seerdb
 
-**Research-grade storage engine with learned data structures**
+Research-grade LSM storage engine with learned data structures.
 
 [![License](https://img.shields.io/badge/license-Elastic%202.0-blue.svg)](LICENSE)
 
-> ⚠️ **Experimental - Research Implementation**
->
-> seerdb is an experimental storage engine implementing 2018-2024 research advances.
-> Not recommended for production workloads.
->
-> **License**: Elastic License 2.0 (free to use/modify, cannot resell as managed service)
+> **Experimental**: Not recommended for production use.
 
----
+Modern embedded storage engine integrating learned indexes (ALEX), key-value separation (WiscKey), and workload-aware compaction (Dostoevsky) from recent systems research.
 
-Modern embedded storage engine integrating learned data structures, workload-aware LSM optimizations, and key-value separation from recent research (2016-2024).
+## Features
 
-**Features**:
-- Learned data structures (ALEX indexes)
-- Key-value separation (WiscKey vLog)
-- Workload-aware compaction (Dostoevsky)
-- Modern optimizations (LZ4, jemalloc, SIMD, lock-free structures)
+- Learned indexes (ALEX) for faster lookups
+- Key-value separation (WiscKey vLog) for lower write amplification
+- Workload-aware LSM compaction (Dostoevsky)
+- Modern optimizations: LZ4 compression, jemalloc, SIMD, lock-free structures
 
 ## Performance
 
@@ -36,24 +30,7 @@ Modern embedded storage engine integrating learned data structures, workload-awa
 
 Platform: M3 Max (ARM64). See [ai/STATUS.md](ai/STATUS.md) for detailed analysis.
 
-## Architecture
-
-**Core Components**:
-- LSM tree with 7 levels (leveled compaction)
-- Partitioned skiplist memtables (16 partitions)
-- Write-ahead log (WAL) for durability
-- SSTable format with ALEX learned indexes
-- WiscKey vLog (key-value separation)
-- Lock-free structures (WAL, cache)
-- SIMD operations (key comparison)
-
-**Testing**:
-- 271 tests (unit, integration, stress)
-- 81.54% test coverage
-- Memory safety validated (ASAN clean)
-- Thread safety validated (50+ concurrent tests)
-
-## Usage
+## Getting Started
 
 ```bash
 # Requires nightly Rust (for std::simd)
@@ -69,16 +46,28 @@ cargo run --release --features baseline-benchmarks --example baseline_benchmark
 cargo run --release --example write_amplification
 ```
 
+## Testing
+
+- 271 tests (unit, integration, stress)
+- 81.54% test coverage
+- Memory safety validated (ASAN clean)
+- Thread safety validated (50+ concurrent tests)
+
+## Architecture
+
+LSM tree with 7 levels, partitioned skiplist memtables (16 partitions), write-ahead log for durability, SSTable format with ALEX learned indexes, WiscKey vLog for key-value separation, lock-free WAL and cache structures, SIMD key comparison.
+
+See [ai/DECISIONS.md](ai/DECISIONS.md) for design rationale.
+
 ## References
 
-**Key Papers**:
-- "ALEX: An Updatable Adaptive Learned Index" (MIT/Columbia 2020)
-- "WiscKey: Separating Keys from Values" (Wisconsin 2016)
-- "Dostoevsky: Better LSM-Tree Trade-Offs" (Harvard 2018)
-- "The Case for Learned Index Structures" (Kraska et al., MIT 2018)
+- "ALEX: An Updatable Adaptive Learned Index" (Ding et al., 2020)
+- "WiscKey: Separating Keys from Values" (Lu et al., 2016)
+- "Dostoevsky: Better LSM-Tree Trade-Offs" (Dayan et al., 2018)
+- "The Case for Learned Index Structures" (Kraska et al., 2018)
 
-See [ai/research/](ai/research/) for implementation details and [ai/STATUS.md](ai/STATUS.md) for validation results.
+See [ai/research/](ai/research/) for paper summaries and [ai/STATUS.md](ai/STATUS.md) for benchmarks.
 
 ## License
 
-Elastic License 2.0 - Free to use, modify, and self-host. Cannot resell as managed service. See [LICENSE](LICENSE).
+[Elastic License 2.0](LICENSE) - Free to use and modify, cannot resell as managed service.
