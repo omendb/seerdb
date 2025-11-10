@@ -39,88 +39,121 @@
 
 **Goal**: Achieve 80%+ code coverage for 0.0.1 release
 
-**Current Coverage**: ~15% (estimated)
-**Target**: 80%+ overall, 90%+ for critical modules (WAL, memtable, SSTable, compaction)
+**Current Coverage**: **UNMEASURED** (estimated 15-20%)
+**Target**: 80%+ overall, 90%+ for critical modules (SSTable, WAL, memtable, compaction)
 
-### Detailed Plan
+### Key Finding: Unit Test Gap
 
-See `ai/TESTING_STRATEGY.md` for comprehensive testing roadmap.
+**Analysis**: After reviewing codebase, discovered **SSTable module (50KB, 24 public functions) has ZERO unit tests** ❌
 
-### Phase 1: Critical Coverage Gaps (Days 1-3)
+**Strategy Change**: Focus on **unit tests for untested modules** instead of more integration tests.
 
-**Goal**: +20% coverage (15% → 35%)
+**Existing Coverage** (already has tests):
+- ✅ Compaction: 15 comprehensive integration tests
+- ✅ Iterator: `iterator_tests.rs` exists
+- ✅ Crash recovery, corruption detection, batch atomicity: covered
+- ✅ ALEX: 20 new tests (Day 1 complete)
+- ✅ VLog: 24 new tests (Day 2 complete)
 
-#### Day 1: ALEX Learned Index Tests (~300 LOC, 15 tests)
-**Status**: ⏭️ **START NOW**
+---
 
-**Missing Coverage**:
-- [ ] Node split logic (when node exceeds capacity)
-- [ ] Node merge logic (when node underflows)
-- [ ] Multi-level tree traversal (root → inner → leaf)
-- [ ] Bulk loading (initial index construction)
-- [ ] Error prediction bounds (validate O(log error) guarantee)
-- [ ] Concurrent modifications (thread safety)
+### Revised Phase 1: Data-Driven Coverage (Days 1-3)
 
-**Target**: +5% coverage
-**File**: Create `tests/alex_learned_index_tests.rs`
+**Goal**: Measure actual gaps, prioritize by ROI
 
-#### Day 2: VLog Tests (~400 LOC, 20 tests)
+#### Day 1-2: ALEX + VLog Tests ✅ **COMPLETE**
+- ✅ ALEX tests: 20 tests, 462 LOC
+- ✅ VLog tests: 24 tests, 631 LOC
+- ✅ All tests passing
+- ✅ Estimated +10% coverage
+
+#### Day 3: Coverage Measurement (4 hours)
+**Status**: ⏭️ **NEXT**
+
+**Tasks**:
+1. Fix flaky test that breaks coverage tool:
+   - Mark `test_concurrent_reads_consistent` as `#[ignore]`
+   - Reason: Requires snapshot isolation (deferred to 0.0.2+)
+
+2. Run coverage tool:
+   ```bash
+   cargo tarpaulin --lib --tests --ignore-tests --timeout 600 --out Html
+   ```
+
+3. Analyze HTML report:
+   - Identify modules with <50% coverage
+   - Prioritize by (criticality × LOC × gap)
+
+4. Update plan based on **actual data** (not estimates)
+
+**Why**: Writing tests without coverage data wastes effort on already-tested code.
+
+---
+
+### Revised Phase 2: Unit Tests for Critical Gaps (Days 4-6)
+
+**Goal**: Target highest-value gaps identified by coverage tool
+
+#### Day 4-5: SSTable Unit Tests (HIGH VALUE - 2-3 hours)
+**Status**: Pending (awaiting coverage confirmation)
+
+**Rationale**:
+- Largest source file (50KB)
+- 24 public functions
+- **ZERO unit tests** (confirmed)
+- Critical for read/write path
+
+**Target**: 25 tests, ~500 LOC
+**File**: Add `#[cfg(test)] mod tests` to `src/sstable/mod.rs`
+
+**Coverage areas**:
+- Footer checksum validation (write + read + corruption)
+- ALEX index integration (build partition_point + queries)
+- Bloom filter integration (build + query + false positive rate)
+- Vlog pointer encoding/decoding
+- Tombstone flag handling (FLAG_TOMBSTONE)
+- Multi-block iteration edge cases
+- Invalid format detection (bad magic/version)
+- Empty SSTable edge case
+- Single-key SSTable
+- Max sequence tracking
+
+**Expected**: +15-20% coverage
+
+#### Day 6: WAL Edge Cases (MEDIUM VALUE - 1-2 hours)
 **Status**: Pending
 
-**Missing Coverage**:
-- [ ] VLog corruption detection (checksum validation)
-- [ ] VLog truncation handling (partial writes)
-- [ ] VLog header validation (magic number, version)
-- [ ] VLog rotation (when file exceeds size limit)
-- [ ] VLog concurrent reads (multiple readers)
+**Target**: 15 tests, ~300 LOC
+**File**: Extend `src/wal/mod.rs` tests or `tests/wal_edge_cases.rs`
 
-**Target**: +5% coverage
-**File**: Create `tests/vlog_tests.rs`
+**Coverage areas**:
+- Batch record encoding/decoding (Bug #2 fix validation)
+- Magic number validation
+- Truncated batch record handling
+- Concurrent WAL appends (lock-free verification)
+- WAL reader recovery from partial writes
+- Record CRC validation edge cases
 
-#### Day 3: Compaction Tests (~300 LOC, 15 tests)
-**Status**: Pending
+**Expected**: +5-8% coverage
 
-**Missing Coverage**:
-- [ ] Multi-level cascading compaction (L0→L1→L2→...)
-- [ ] Size ratio enforcement (10x between levels)
-- [ ] Overlapping key ranges (L0 → L1 merges)
-- [ ] Compaction throttling (when too many L0 files)
-- [ ] Compaction cancellation (on DB close)
+#### Day 6 (Optional): Bloom Filter Tests
+**Status**: Pending (if coverage shows gap)
 
-**Target**: +5% coverage
-**File**: Extend `tests/compaction_correctness_tests.rs`
+**Target**: 10 tests, ~200 LOC
+**File**: Check `src/bloom/*.rs`, fill gaps
 
-### Phase 2: Medium Priority (Days 4-5)
+**Coverage areas**:
+- False positive rate verification
+- Learned vs traditional comparison
+- Empty filter edge case
+- Single-key filter
+- Hash collision handling
 
-**Goal**: +10% coverage (35% → 45%)
+**Expected**: +3-5% coverage
 
-#### Day 4: SSTable + WAL Tests (~400 LOC, 20 tests)
-- [ ] Prefix compression edge cases (empty prefix, full key prefix)
-- [ ] Varint decoding errors (truncated, invalid)
-- [ ] Block corruption (CRC mismatch, invalid format)
-- [ ] WAL partial record writes (truncated at end)
-- [ ] WAL recovery with batch records (batch atomicity)
+---
 
-**Target**: +5% coverage
-
-#### Day 5: Iterator + Memtable Tests (~350 LOC, 18 tests)
-- [ ] Iterator edge cases (empty range, single key)
-- [ ] Memtable partition selection (key distribution)
-- [ ] Memtable concurrent reads/writes
-
-**Target**: +5% coverage
-
-### Phase 3: Polish (Day 6)
-
-**Goal**: +5% coverage (45% → 50%+)
-
-- [ ] Remaining gaps identified by coverage tool
-- [ ] Edge cases from code review
-- [ ] Integration test scenarios
-
-**Target**: +5% coverage
-
-### Phase 4: Sanitizer Runs (Days 7-8)
+### Phase 3: Sanitizer Runs (Days 7-8)
 
 #### Day 7: Address Sanitizer (ASAN)
 ```bash
@@ -133,6 +166,18 @@ RUSTFLAGS="-Z sanitizer=address" cargo test --target x86_64-apple-darwin
 RUSTFLAGS="-Z sanitizer=thread" cargo test --target x86_64-apple-darwin
 ```
 **Detects**: Data races, deadlocks
+
+---
+
+### De-prioritized (Already Covered)
+
+**Not doing** (already have adequate tests):
+- ❌ More compaction tests (already has 15 comprehensive tests)
+- ❌ More iterator tests (`iterator_tests.rs` already exists)
+- ❌ More memtable tests (has unit tests + covered by integration tests)
+- ❌ More integration tests (21 test files covering end-to-end scenarios)
+
+**Focus**: Unit tests for **untested modules** (SSTable, WAL edge cases, Bloom filters)
 
 ---
 
@@ -206,5 +251,6 @@ RUSTFLAGS="-Z sanitizer=thread" cargo test --target x86_64-apple-darwin
 ---
 
 **Status**: 🧪 **Testing Phase (Week 5-6)** - Achieving 80%+ test coverage
-**Next Action**: Implement ALEX learned index tests (~300 LOC, 15 tests)
-**Updated**: November 10, 2025 - After strategic planning and MVCC decision
+**Completed**: Days 1-2 (ALEX + VLog tests: 44 tests, 1093 LOC)
+**Next Action**: Day 3 - Get coverage metrics, then SSTable unit tests
+**Updated**: November 10, 2025 - Revised to focus on unit tests for untested modules
