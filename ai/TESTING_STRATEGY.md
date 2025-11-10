@@ -1,326 +1,151 @@
-# Comprehensive Testing Strategy
+# seerdb Testing Strategy - Path to 80%+ Coverage
 
-**Goal**: Achieve 80%+ test coverage for 0.0.1 release
-**Current**: ~250+ tests (128 integration + ~120 unit tests)
-**Estimated Coverage**: ~15-20% (to be confirmed by tarpaulin)
-
-## Test Inventory (Current)
-
-### Integration Tests (tests/)
-- **Crash Recovery**: 15 tests (crash_recovery_test.rs + crash_recovery_tests.rs)
-- **Concurrency**: 8 tests (concurrent_edge_case_tests.rs)
-- **Edge Cases**: 18 tests (edge_case_tests.rs)
-- **Config Edge Cases**: 15 tests (config_edge_case_tests.rs)
-- **I/O Failures**: 8 tests (io_failure_tests.rs)
-- **Corruption Detection**: 7 tests (corruption_detection_tests.rs)
-- **Iterator Tests**: 14 tests (iterator_tests.rs)
-- **Snapshot Consistency**: 9 tests (snapshot_consistency_tests.rs)
-- **Leak Detection**: 8 tests (leak_detection_tests.rs)
-- **Stress**: 7 tests (stress_test.rs)
-- **Soak**: 5 tests (soak_test.rs)
-- **Integration**: 14 tests (db_integration_test.rs + integration_test.rs)
-
-### Unit Tests (src/)
-- **DB Core**: 20 tests (src/db.rs)
-- **SIMD**: 15 tests (src/simd.rs)
-- **ALEX Index**: 36 tests (alex/ modules)
-- **Memtable**: 9 tests (src/memtable/mod.rs)
-- **Compaction**: 14 tests (compaction/ modules)
-- **WAL**: 8 tests (wal/ modules)
-- **VLog**: 6 tests (src/vlog/mod.rs)
-- **Bloom Filters**: 9 tests (bloom/ modules)
-- **Other**: ~23 tests (various modules)
-
-**Total**: ~250+ tests
+**Date**: November 10, 2025
+**Current Status**: 287 tests (279 passing, 8 ignored), ~15% coverage estimate
+**Goal**: 80%+ code coverage for 0.0.1 release
+**Timeline**: Week 5-6 of 8-week roadmap
 
 ---
 
-## Critical Gaps (Must Fix for 80%+ Coverage)
+## Current Test Inventory
 
-### 1. Production Hardening (NEW - Nov 9, 2025)
-**Current**: 0 tests 🚨
-**Target**: 15+ tests
-**Priority**: CRITICAL
+### Test Files (19 total, 8,301 LOC)
 
-Tests needed:
-- Memory budget enforcement (3 tests)
-  - Test write blocking at 95% memory
-  - Test early flush at 80% memory
-  - Test memory estimation accuracy
-- Disk space checks (3 tests)
-  - Test write rejection when disk full
-  - Test disk space validation on startup
-  - Test configurable disk space thresholds
-- Background thread panic detection (5 tests)
-  - Test WAL writer panic detection
-  - Test flush thread panic detection
-  - Test compaction thread panic detection
-  - Test health status propagation
-  - Test graceful degradation on panic
-- File descriptor limits (2 tests)
-  - Test FD usage estimation
-  - Test behavior near FD limits
-- SSTable fsync validation (2 tests)
-  - Test fsync on SSTable creation
-  - Test data durability after fsync
-
-### 2. Batch API Atomicity
-**Current**: 3 tests (src/batch.rs)
-**Target**: 15+ tests
-**Priority**: CRITICAL
-
-Tests needed:
-- Single WAL record for batches (2 tests)
-  - Test batch written as single record
-  - Test WAL replay preserves batch atomicity
-- Partial batch failure (3 tests)
-  - Test batch rollback on error
-  - Test no partial writes visible
-  - Test recovery after batch failure
-- Concurrent batches (3 tests)
-  - Test multiple batches don't interfere
-  - Test batch ordering preserved
-  - Test concurrent batch commit
-- Large batches (2 tests)
-  - Test 1000+ operations in batch
-  - Test batch memory limits
-- Mixed operations (3 tests)
-  - Test put+delete in same batch
-  - Test overwrite in batch
-  - Test delete+put same key in batch
-- Batch sync policies (2 tests)
-  - Test SyncData on batch
-  - Test SyncAll on batch
-
-### 3. Compaction Correctness
-**Current**: 14 tests
-**Target**: 30+ tests
-**Priority**: HIGH
-
-Tests needed:
-- Live key preservation (5 tests)
-  - Test compaction doesn't delete live keys
-  - Test sequence number coordination
-  - Test concurrent writes during compaction
-  - Test key resurrection prevention
-  - Test tombstone handling
-- Multi-level compaction (3 tests)
-  - Test L0→L1→L2 cascade
-  - Test level ratio maintenance
-  - Test compaction priority
-- Range overlaps (3 tests)
-  - Test overlapping SSTable merge
-  - Test range boundary handling
-  - Test key ordering preservation
-- Compaction interruption (3 tests)
-  - Test graceful shutdown during compaction
-  - Test crash during compaction recovery
-  - Test compaction resume
-
-### 4. VLog (Value Log)
-**Current**: 6 tests
-**Target**: 20+ tests
-**Priority**: HIGH
-
-Tests needed:
-- Large value handling (4 tests)
-  - Test 4KB threshold
-  - Test 1MB values
-  - Test mixed small/large values
-  - Test VLog space reclamation
-- VLog recovery (3 tests)
-  - Test VLog replay on open
-  - Test corrupt VLog detection
-  - Test VLog truncation recovery
-- VLog GC (5 tests) - DEFERRED TO 0.0.2+
-  - Test stale value identification
-  - Test GC doesn't delete live values
-  - Test GC concurrent with reads
-  - Test GC space reclamation
-  - Test GC scheduling
-- VLog corruption (3 tests)
-  - Test CRC validation
-  - Test partial write detection
-  - Test magic number validation
-
-### 5. Cache (Block Cache)
-**Current**: ~5 tests
-**Target**: 15+ tests
-**Priority**: HIGH
-
-Tests needed:
-- LRU eviction (4 tests)
-  - Test LRU eviction policy
-  - Test cache size limits (10K blocks)
-  - Test memory pressure handling
-  - Test eviction preserves hot blocks
-- Cache hit/miss (3 tests)
-  - Test cache hit rates
-  - Test cache warming
-  - Test cache invalidation
-- Concurrent cache access (3 tests)
-  - Test multi-threaded reads
-  - Test cache contention
-  - Test cache consistency
-
-### 6. Concurrent Stress Tests
-**Current**: 8 tests
-**Target**: 25+ tests
-**Priority**: HIGH
-
-Tests needed:
-- Multi-threaded writes (3 tests)
-  - Test 10+ threads concurrent writes
-  - Test write ordering
-  - Test no lost writes
-- Multi-threaded reads (2 tests)
-  - Test concurrent read consistency
-  - Test read isolation
-- Mixed workload stress (5 tests)
-  - Test reads+writes concurrently
-  - Test scans+writes concurrently
-  - Test deletes+reads concurrently
-  - Test batches+single ops concurrently
-  - Test all operations mixed
-- Resource exhaustion (3 tests)
-  - Test high memory pressure
-  - Test high disk I/O
-  - Test high compaction load
-
-### 7. Failure Injection
-**Current**: 8 tests (io_failure_tests.rs)
-**Target**: 25+ tests
-**Priority**: MEDIUM
-
-Tests needed:
-- Disk errors (5 tests)
-  - Test disk full during write
-  - Test disk full during compaction
-  - Test disk read errors
-  - Test disk write errors
-  - Test fsync failure
-- OOM simulation (3 tests)
-  - Test allocation failure handling
-  - Test large value OOM
-  - Test memtable flush under OOM
-- I/O errors (5 tests)
-  - Test WAL write failure
-  - Test SSTable read failure
-  - Test VLog write failure
-  - Test metadata corruption
-  - Test file deletion failure
-- Network/filesystem delays (2 tests)
-  - Test slow fsync
-  - Test slow reads
+| Test File | Tests | Focus Area | Status |
+|-----------|-------|------------|--------|
+| batch_atomicity_tests.rs | 4 | Batch API atomic semantics | ✅ Complete |
+| compaction_correctness_tests.rs | 8 | Compaction data integrity | ✅ Complete |
+| concurrent_edge_case_tests.rs | 14 | Concurrent operations | ✅ Good |
+| config_edge_case_tests.rs | ~8 | Configuration edge cases | ✅ Good |
+| corruption_detection_tests.rs | ? | Checksum validation | ⚠️ Unknown |
+| crash_recovery_tests.rs | ? | WAL recovery | ⚠️ Unknown |
+| db_integration_test.rs | ? | End-to-end DB lifecycle | ⚠️ Unknown |
+| edge_case_tests.rs | ? | General edge cases | ⚠️ Unknown |
+| integration_test.rs | ? | WAL + Memtable + SSTable | ⚠️ Unknown |
+| io_failure_tests.rs | ? | I/O error handling | ⚠️ Unknown |
+| iterator_tests.rs | ? | Range scans, iteration | ⚠️ Unknown |
+| leak_detection_tests.rs | 8 | Memory/FD leaks | ✅ Good |
+| minimal_hang_repro.rs | 1 | Hang debugging | ✅ Complete |
+| production_hardening_tests.rs | 15 | Memory budget, disk space, panics | ✅ Excellent |
+| property_tests.rs | 8 | Property-based testing | ✅ Good |
+| snapshot_consistency_tests.rs | 9 | Read consistency | ✅ Good |
+| soak_test.rs | 5 (ignored) | Long-running stability | ⏸️ Manual |
+| stress_test.rs | 7 (2 ignored) | High-load behavior | ✅ Good |
+| **TOTAL** | **287** | | **279 passing** |
 
 ---
 
-## Testing Roadmap (Priority Order)
+## Critical Coverage Gaps (High Priority)
 
-### Week 1: Production Hardening Tests (15 tests)
-**Days 1-2**: Memory budget + disk space tests (6 tests)
-**Days 3-4**: Background panic tests (5 tests)
-**Days 5**: FD limits + fsync tests (4 tests)
+### 1. ALEX Learned Index (src/alex/) - ~20% coverage
 
-**Deliverable**: Production hardening fully tested
+**Missing Tests**:
+- Node split logic (when node exceeds capacity)
+- Node merge logic (when node underflows)
+- Multi-level tree traversal (root → inner → leaf)
+- Bulk loading (initial index construction)
+- Error prediction bounds (validate O(log error) guarantee)
+- Concurrent modifications (thread safety)
 
-### Week 2: Batch API + Compaction (31 tests)
-**Days 1-3**: Batch atomicity tests (15 tests)
-**Days 4-5**: Compaction correctness tests (16 tests)
+**Action**: Add tests/alex_learned_index_tests.rs (~300 LOC, 15 tests)
 
-**Deliverable**: Critical data safety tests complete
+### 2. VLog (src/vlog/) - ~30% coverage
 
-### Week 3: VLog + Cache + Concurrency (40 tests)
-**Days 1-2**: VLog tests (15 tests)
-**Days 3**: Cache tests (10 tests)
-**Days 4-5**: Concurrent stress tests (15 tests)
+**Missing Tests**:
+- VLog corruption detection (checksum validation)
+- VLog truncation handling (partial writes)
+- VLog header validation (magic number, version)
+- VLog rotation (when file exceeds size limit)
+- VLog concurrent reads (multiple readers)
 
-**Deliverable**: Component tests complete
+**Action**: Add tests/vlog_tests.rs (~400 LOC, 20 tests)
 
-### Week 4: Failure Injection + Coverage (25 tests)
-**Days 1-2**: Disk errors + OOM tests (10 tests)
-**Days 3**: I/O errors + delays (7 tests)
-**Days 4-5**: Fill coverage gaps, achieve 80%+ (8+ tests)
+### 3. SSTable Block Parsing (src/sstable/block.rs) - ~40% coverage
 
-**Deliverable**: 80%+ test coverage achieved
+**Missing Tests**:
+- Prefix compression edge cases (empty prefix, full key prefix)
+- Varint decoding errors (truncated, invalid)
+- Block corruption (CRC mismatch, invalid format)
+- Block size limits (minimum, maximum)
+- Entry count mismatch (header vs actual)
+
+**Action**: Extend tests/corruption_detection_tests.rs (~200 LOC, 10 tests)
+
+### 4. Compaction Leveled Strategy (src/compaction/mod.rs) - ~40% coverage
+
+**Missing Tests**:
+- Multi-level cascading compaction (L0→L1→L2→...)
+- Size ratio enforcement (10x between levels)
+- Overlapping key ranges (L0 → L1 merges)
+- Compaction throttling (when too many L0 files)
+- Compaction cancellation (on DB close)
+
+**Action**: Extend tests/compaction_correctness_tests.rs (~300 LOC, 15 tests)
+
+### 5. WAL Recovery Edge Cases (src/wal/) - ~60% coverage
+
+**Missing Tests**:
+- Partial record writes (truncated at end)
+- WAL header corruption (magic number mismatch)
+- WAL multiple file rotation (when WAL spans multiple files)
+- WAL recovery with batch records (batch atomicity on recovery)
+- WAL recovery performance (large WAL replay latency)
+
+**Action**: Extend tests/crash_recovery_tests.rs (~200 LOC, 10 tests)
 
 ---
 
-## Test Coverage Measurement
+## Testing Implementation Plan
 
-### Tools
-- **cargo-tarpaulin**: Line coverage (target: 80%+)
-- **cargo-llvm-cov**: Alternative coverage tool
-- **Coverage reports**: HTML reports for visualization
+### Phase 1: Critical Gaps (Week 5, Days 1-3)
 
-### Coverage Targets by Module
-- **db.rs**: 80%+ (critical path)
-- **batch.rs**: 90%+ (atomicity critical)
-- **compaction/**: 75%+ (complex logic)
-- **vlog/**: 80%+ (data safety)
-- **wal/**: 85%+ (durability critical)
-- **memtable/**: 75%+ (concurrent access)
-- **sstable/**: 80%+ (data format)
-- **cache**: 70%+ (performance optimization)
-- **alex/**: 65%+ (learned index, research code)
-- **bloom/**: 70%+ (filter accuracy)
+**Goal**: Add 100-120 new tests, target +20% coverage
 
-### Continuous Monitoring
-```bash
-# Run coverage after every test addition
-cargo tarpaulin --lib --ignore-tests --out Html --output-dir coverage/
+1. Day 1: ALEX Tests (~300 LOC, 15 tests) - Target: +5% coverage
+2. Day 2: VLog Tests (~400 LOC, 20 tests) - Target: +5% coverage
+3. Day 3: Compaction Tests (~300 LOC, 15 tests) - Target: +5% coverage
 
-# Fail if coverage drops below 80%
-cargo tarpaulin --lib --ignore-tests --fail-under 80
-```
+**Milestone**: ~70% coverage after Phase 1
 
----
+### Phase 2: Medium Priority (Week 5, Days 4-5)
 
-## Test Quality Standards
+**Goal**: Add 50-60 new tests, target +10% coverage
 
-### All Tests Must:
-1. Be deterministic (no flaky tests)
-2. Run in <5 seconds (except stress/soak tests)
-3. Clean up resources (tempdir, files, threads)
-4. Test one thing (focused assertions)
-5. Have clear failure messages
-6. Use property-based testing where applicable
+4. Day 4: SSTable + WAL Tests (~400 LOC, 20 tests) - Target: +5% coverage
+5. Day 5: Iterator + Memtable Tests (~350 LOC, 18 tests) - Target: +5% coverage
 
-### Integration Tests Should:
-1. Test end-to-end workflows
-2. Test crash recovery scenarios
-3. Test concurrent operations
-4. Test production configurations
-5. Validate durability guarantees
+**Milestone**: ~80% coverage after Phase 2
 
-### Unit Tests Should:
-1. Test individual functions
-2. Test edge cases thoroughly
-3. Test error handling
-4. Test boundary conditions
-5. Be fast (<100ms each)
+### Phase 3: Polish (Week 6, Day 1)
+
+**Goal**: Add 20-30 tests to reach 85%+
+
+6. Day 6: Remaining Gaps (~250 LOC, 13 tests) - Target: +5% coverage
+
+**Final Milestone**: 85%+ coverage
+
+### Phase 4: Sanitizer Runs (Week 6, Days 2-3)
+
+7. Day 7: Address Sanitizer (ASAN) - Detect: Use-after-free, buffer overflows
+8. Day 8: Thread Sanitizer (TSAN) - Detect: Data races, deadlocks
 
 ---
 
 ## Success Criteria
 
-### For 0.0.1 Release:
-- [ ] **80%+ line coverage** (verified by tarpaulin)
-- [ ] **All 7 critical bugs tested** (batch, compaction, cache, etc.)
-- [ ] **100% production hardening tested** (memory, disk, panics)
-- [ ] **Zero test failures** (all tests pass consistently)
-- [ ] **No flaky tests** (all tests deterministic)
-- [ ] **Sanitizers clean** (ASAN, MSAN, TSAN pass)
-- [ ] **Stress tests pass** (10+ hour soak test)
+### Coverage Targets
 
-### Metrics to Track:
-- Test count: ~250 → ~400+ tests
-- Coverage: ~15% → 80%+
-- Test execution time: <2 minutes total
-- Zero known data safety issues
+- [ ] **Overall**: 80%+ line coverage
+- [ ] **Critical modules**: 90%+ coverage (WAL, Memtable, SSTable, Compaction)
+- [ ] **Complex modules**: 70%+ coverage (ALEX, VLog, Bloom)
+
+### Sanitizer Criteria
+
+- [ ] ASAN: No memory errors detected
+- [ ] TSAN: No data races detected
+- [ ] All tests pass under sanitizers
 
 ---
 
-**Last Updated**: November 9, 2025
-**Status**: Planning phase
-**Next**: Measure baseline coverage with tarpaulin
+**Status**: Phase 0 - Coverage analysis running
+**Next**: Phase 1 Day 1 - Implement ALEX tests after coverage results
