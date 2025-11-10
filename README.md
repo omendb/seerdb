@@ -51,16 +51,16 @@ See [ai/research/](ai/research/) for paper summaries and implementation details.
 
 ## Performance Characteristics
 
-**Baseline Benchmark** (100K ops, 1KB values, M3 Max):
+**Benchmark vs RocksDB** (100K ops, 1KB values, M3 Max):
 
-| Workload | seerdb | RocksDB | fjall | vs RocksDB | vs fjall |
-|----------|--------|---------|-------|------------|----------|
-| **Writes** | 878K | 356K | 426K | **2.47x** | **2.06x** |
-| **Reads** | 2,207K | 1,065K | 1,159K | **2.07x** | **1.90x** |
-| **Mixed** | 718K | 400K | 834K | **1.79x** | 0.86x |
-| **Scans** | 19.6K | 19.7K | 20.1K | 0.99x | 0.98x |
+| Workload | seerdb | RocksDB | Speedup |
+|----------|--------|---------|---------|
+| **Writes** | 878K ops/sec | 356K ops/sec | **2.47x** |
+| **Reads** | 2,207K ops/sec | 1,065K ops/sec | **2.07x** |
+| **Mixed** | 718K ops/sec | 400K ops/sec | **1.79x** |
+| **Scans** | 19.6K scans/sec | 19.7K scans/sec | 0.99x |
 
-**Write Amplification**: 1.01x with vLog (4.82x better than traditional LSM at 4.88x)
+**Write Amplification**: 1.01x (4.82x better than traditional LSM at 4.88x)
 
 **Key Optimizations**:
 - LZ4 block compression (+34.7% writes)
