@@ -115,6 +115,7 @@ pub mod batch;
 pub mod bloom;
 pub mod compaction;
 pub mod db;
+mod db_helpers;
 pub mod health;
 pub mod memtable;
 pub mod metrics;
