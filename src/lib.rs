@@ -110,6 +110,7 @@
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 pub mod alex;
+mod background_workers;
 pub mod batch;
 pub mod bloom;
 pub mod compaction;
