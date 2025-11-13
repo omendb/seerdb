@@ -13,12 +13,14 @@ use crate::vlog::VLog;
 use crate::wal::{Record, WAL};
 use arc_swap::ArcSwap;
 use bytes::Bytes;
-use crossbeam_channel::Sender as CrossbeamSender;
+use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender, unbounded};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
 use std::time::Instant;
-use tracing::info;
+use tracing::{debug, error, info};
 
 use crate::db::Result;
 
@@ -227,4 +229,249 @@ pub(crate) fn run_background_flush_partitioned(
     metrics.record_flush();
 
     Ok(())
+}
+
+/// Spawn background compaction worker thread if enabled
+///
+/// Returns (Option<Sender>, Option<JoinHandle>) for sending tasks and joining the thread
+pub(crate) fn spawn_compaction_worker(
+    enabled: bool,
+    lsm: Arc<ArcSwap<LSMTree>>,
+    lsm_mutex: Arc<Mutex<()>>,
+    sstable_counter: Arc<Mutex<u64>>,
+    data_dir: PathBuf,
+    metrics: Arc<MetricsCollector>,
+    max_flushed_seq: Arc<AtomicU64>,
+    compaction_healthy: Arc<AtomicBool>,
+    pending_deletions: Arc<Mutex<Vec<(PathBuf, Instant)>>>,
+) -> (Option<Sender<CompactionTask>>, Option<JoinHandle<()>>) {
+    if !enabled {
+        return (None, None);
+    }
+
+    let (tx, rx) = channel::<CompactionTask>();
+
+    // Spawn compaction worker thread with panic detection
+    let worker = thread::Builder::new()
+        .name("compaction-worker".to_string())
+        .spawn(move || {
+            // Wrap in catch_unwind to detect panics and mark health status
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                while let Ok(task) = rx.recv() {
+                    match task {
+                        CompactionTask::CompactLevel(level_num) => {
+                            // Perform compaction
+                            if let Err(e) = run_compaction(
+                                &lsm,
+                                &lsm_mutex,
+                                &sstable_counter,
+                                &data_dir,
+                                level_num,
+                                &metrics,
+                                &max_flushed_seq,
+                                &pending_deletions,
+                            ) {
+                                error!(error = %e, level = level_num, "Background compaction failed");
+                            }
+                        }
+                        CompactionTask::Shutdown => {
+                            // Exit worker thread
+                            break;
+                        }
+                    }
+                }
+            }));
+
+            // If panicked, mark as unhealthy
+            if result.is_err() {
+                error!("Compaction worker thread panicked");
+                compaction_healthy.store(false, Ordering::SeqCst);
+            }
+        })
+        .expect("Failed to spawn compaction worker thread");
+
+    (Some(tx), Some(worker))
+}
+
+/// Spawn background flush worker thread if enabled
+///
+/// Returns (Option<Sender>, Option<JoinHandle>) for sending tasks and joining the thread
+pub(crate) fn spawn_flush_worker(
+    enabled: bool,
+    memtables: Arc<[ArcSwap<Memtable>; NUM_PARTITIONS]>,
+    immutable_memtables: Arc<ArcSwap<Option<Arc<Vec<Arc<Memtable>>>>>>,
+    wal: Arc<Mutex<WAL>>,
+    lsm: Arc<ArcSwap<LSMTree>>,
+    lsm_mutex: Arc<Mutex<()>>,
+    vlog: Arc<Mutex<Option<VLog>>>,
+    sstable_counter: Arc<Mutex<u64>>,
+    data_dir: PathBuf,
+    metrics: Arc<MetricsCollector>,
+    memtable_capacity: usize,
+    vlog_threshold: Option<usize>,
+    flush_mutex: Arc<Mutex<()>>,
+    max_flushed_seq: Arc<AtomicU64>,
+    flush_healthy: Arc<AtomicBool>,
+) -> (Option<Sender<FlushTask>>, Option<JoinHandle<()>>) {
+    if !enabled {
+        return (None, None);
+    }
+
+    let (tx, rx) = channel::<FlushTask>();
+
+    // Spawn flush worker thread with panic detection
+    let worker = thread::Builder::new()
+        .name("flush-worker".to_string())
+        .spawn(move || {
+            // Wrap in catch_unwind to detect panics and mark health status
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                while let Ok(task) = rx.recv() {
+                    match task {
+                        FlushTask::Flush => {
+                            // Perform background flush (now with partitioned memtables)
+                            if let Err(e) = run_background_flush_partitioned(
+                                &memtables,
+                                &immutable_memtables,
+                                &wal,
+                                &lsm,
+                                &lsm_mutex,
+                                &vlog,
+                                &sstable_counter,
+                                &data_dir,
+                                &metrics,
+                                memtable_capacity,
+                                vlog_threshold,
+                                &flush_mutex,
+                                &max_flushed_seq,
+                            ) {
+                                error!(error = %e, "Background flush failed");
+                            }
+                        }
+                        FlushTask::Shutdown => {
+                            // Exit worker thread
+                            break;
+                        }
+                    }
+                }
+            }));
+
+            // If panicked, mark as unhealthy
+            if result.is_err() {
+                error!("Flush worker thread panicked");
+                flush_healthy.store(false, Ordering::SeqCst);
+            }
+        })
+        .expect("Failed to spawn flush worker thread");
+
+    (Some(tx), Some(worker))
+}
+
+/// Spawn background WAL writer thread (always enabled for lock-free writes)
+///
+/// Returns (Sender, JoinHandle) for sending messages and joining the thread
+pub(crate) fn spawn_wal_writer(
+    wal: Arc<Mutex<WAL>>,
+    wal_healthy: Arc<AtomicBool>,
+) -> (CrossbeamSender<WALMessage>, JoinHandle<()>) {
+    let (wal_tx, wal_rx) = unbounded::<WALMessage>();
+
+    let wal_worker = thread::Builder::new()
+        .name("wal-writer".to_string())
+        .spawn(move || {
+            // Wrap in catch_unwind to detect panics and mark health status
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut batch = Vec::with_capacity(1000);
+
+                loop {
+                    // Block on first message
+                    let channel_closed = match wal_rx.recv() {
+                        Ok(WALMessage::Record(record)) => {
+                            batch.push(record);
+                            false
+                        }
+                        Ok(WALMessage::Barrier(ack_tx)) => {
+                            // Flush all pending records before acknowledging
+                            if !batch.is_empty() {
+                                if let Err(e) = wal.lock()
+                                    .expect("WAL mutex poisoned")
+                                    .write_batch(&batch) {
+                                    error!(error = %e, "WAL batch write failed during barrier");
+                                }
+                                batch.clear();
+                            }
+                            // Send acknowledgement (flush() is waiting for this)
+                            let _ = ack_tx.send(());
+                            false  // Continue processing
+                        }
+                        Err(_) => {
+                            // Channel closed - need to drain remaining messages
+                            true
+                        }
+                    };
+
+                    // Drain channel (collect all pending messages)
+                    // If channel closed, drain until truly empty
+                    // If channel open, drain up to batch limit
+                    loop {
+                        match wal_rx.try_recv() {
+                            Ok(WALMessage::Record(record)) => {
+                                batch.push(record);
+                                // Keep draining if channel closed, otherwise respect batch limit
+                                if !channel_closed && batch.len() >= 1000 {
+                                    break;
+                                }
+                            }
+                            Ok(WALMessage::Barrier(ack_tx)) => {
+                                // Flush current batch before acknowledging
+                                if !batch.is_empty() {
+                                    if let Err(e) = wal.lock()
+                                        .expect("WAL mutex poisoned")
+                                        .write_batch(&batch) {
+                                        error!(error = %e, "WAL batch write failed during barrier");
+                                    }
+                                    batch.clear();
+                                }
+                                // Send acknowledgement
+                                let _ = ack_tx.send(());
+                                // Continue draining if more messages
+                            }
+                            Err(_) => break,  // Channel empty
+                        }
+                    }
+
+                    // Write batch if not empty
+                    if !batch.is_empty() {
+                        if let Err(e) = wal.lock()
+                            .expect("WAL mutex poisoned")
+                            .write_batch(&batch) {
+                            error!(error = %e, "WAL batch write failed");
+                        }
+                        batch.clear();
+                    }
+
+                    // Exit after writing final batch
+                    if channel_closed {
+                        // Final fsync to ensure all data is on disk before thread exits
+                        if let Err(e) = wal.lock()
+                            .expect("WAL mutex poisoned")
+                            .sync() {
+                            error!(error = %e, "Final WAL sync failed - DATA MAY BE LOST");
+                        }
+                        debug!("WAL writer thread: channel closed, all records flushed and synced");
+                        break;
+                    }
+                }
+
+                info!("WAL writer thread shutting down");
+            }));
+
+            // If panicked, mark as unhealthy - CRITICAL for data safety
+            if result.is_err() {
+                error!("WAL writer thread panicked - DATA LOSS MAY OCCUR");
+                wal_healthy.store(false, Ordering::SeqCst);
+            }
+        })
+        .expect("Failed to spawn WAL writer thread");
+
+    (wal_tx, wal_worker)
 }

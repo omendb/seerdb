@@ -669,234 +669,42 @@ impl DB {
         let pending_deletions = Arc::new(Mutex::new(Vec::new()));
 
         // Start background compaction worker if enabled
-        let (compaction_tx, compaction_worker) = if options.background_compaction {
-            let (tx, rx) = channel::<CompactionTask>();
-
-            // Clone references for worker thread
-            let lsm_clone = Arc::clone(&lsm);
-            let lsm_mutex_clone = Arc::clone(&lsm_mutex);
-            let sstable_counter_clone = Arc::clone(&sstable_counter);
-            let data_dir = options.data_dir.clone();
-            let metrics_clone = Arc::clone(&metrics);
-            let max_flushed_seq_clone = Arc::clone(&max_flushed_seq);
-            let health_clone = Arc::clone(&compaction_healthy);
-            let pending_deletions_clone = Arc::clone(&pending_deletions);
-
-            // Spawn compaction worker thread with panic detection
-            let worker = thread::Builder::new()
-                .name("compaction-worker".to_string())
-                .spawn(move || {
-                    // Wrap in catch_unwind to detect panics and mark health status
-                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        while let Ok(task) = rx.recv() {
-                            match task {
-                                CompactionTask::CompactLevel(level_num) => {
-                                    // Perform compaction
-                                    if let Err(e) = crate::background_workers::run_compaction(
-                                        &lsm_clone,
-                                        &lsm_mutex_clone,
-                                        &sstable_counter_clone,
-                                        &data_dir,
-                                        level_num,
-                                        &metrics_clone,
-                                        &max_flushed_seq_clone,
-                                        &pending_deletions_clone,
-                                    ) {
-                                        error!(error = %e, level = level_num, "Background compaction failed");
-                                    }
-                                }
-                                CompactionTask::Shutdown => {
-                                    // Exit worker thread
-                                    break;
-                                }
-                            }
-                        }
-                    }));
-
-                    // If panicked, mark as unhealthy
-                    if result.is_err() {
-                        error!("Compaction worker thread panicked");
-                        health_clone.store(false, Ordering::SeqCst);
-                    }
-                })
-                .expect("Failed to spawn compaction worker thread");
-
-            (Some(tx), Some(worker))
-        } else {
-            (None, None)
-        };
+        let (compaction_tx, compaction_worker) = crate::background_workers::spawn_compaction_worker(
+            options.background_compaction,
+            Arc::clone(&lsm),
+            Arc::clone(&lsm_mutex),
+            Arc::clone(&sstable_counter),
+            options.data_dir.clone(),
+            Arc::clone(&metrics),
+            Arc::clone(&max_flushed_seq),
+            Arc::clone(&compaction_healthy),
+            Arc::clone(&pending_deletions),
+        );
 
         // Start background flush worker if enabled
-        let (flush_tx, flush_worker) = if options.background_flush {
-            let (tx, rx) = channel::<FlushTask>();
-
-            // Clone Arc reference for worker thread
-            // Background thread gets Arc<[ArcSwap<Memtable>]> and can call .load() to get snapshots
-            let memtables_refs = Arc::clone(&memtables);
-            let immutable_memtables_ref = Arc::clone(&immutable_memtables);
-            let wal_ref = Arc::clone(&wal);
-            let lsm_clone = Arc::clone(&lsm);
-            let vlog_clone = Arc::clone(&vlog);
-            let sstable_counter_clone = Arc::clone(&sstable_counter);
-            let data_dir = options.data_dir.clone();
-            let metrics_clone = Arc::clone(&metrics);
-            let memtable_capacity = options.memtable_capacity;
-            let vlog_threshold = options.vlog_threshold;
-            let flush_mutex_clone = Arc::clone(&flush_mutex);
-            let lsm_mutex_clone = Arc::clone(&lsm_mutex);
-            let max_flushed_seq_clone = Arc::clone(&max_flushed_seq);
-            let health_clone = Arc::clone(&flush_healthy);
-
-            // Spawn flush worker thread with panic detection
-            let worker = thread::Builder::new()
-                .name("flush-worker".to_string())
-                .spawn(move || {
-                    // Wrap in catch_unwind to detect panics and mark health status
-                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        while let Ok(task) = rx.recv() {
-                            match task {
-                                FlushTask::Flush => {
-                                    // Perform background flush (now with partitioned memtables)
-                                    if let Err(e) = crate::background_workers::run_background_flush_partitioned(
-                                        &memtables_refs,
-                                        &immutable_memtables_ref,
-                                        &wal_ref,
-                                        &lsm_clone,
-                                        &lsm_mutex_clone,
-                                        &vlog_clone,
-                                        &sstable_counter_clone,
-                                        &data_dir,
-                                        &metrics_clone,
-                                        memtable_capacity,
-                                        vlog_threshold,
-                                        &flush_mutex_clone,
-                                        &max_flushed_seq_clone,
-                                    ) {
-                                        error!(error = %e, "Background flush failed");
-                                    }
-                                }
-                                FlushTask::Shutdown => {
-                                    // Exit worker thread
-                                    break;
-                                }
-                            }
-                        }
-                    }));
-
-                    // If panicked, mark as unhealthy
-                    if result.is_err() {
-                        error!("Flush worker thread panicked");
-                        health_clone.store(false, Ordering::SeqCst);
-                    }
-                })
-                .expect("Failed to spawn flush worker thread");
-
-            (Some(tx), Some(worker))
-        } else {
-            (None, None)
-        };
+        let (flush_tx, flush_worker) = crate::background_workers::spawn_flush_worker(
+            options.background_flush,
+            Arc::clone(&memtables),
+            Arc::clone(&immutable_memtables),
+            Arc::clone(&wal),
+            Arc::clone(&lsm),
+            Arc::clone(&lsm_mutex),
+            Arc::clone(&vlog),
+            Arc::clone(&sstable_counter),
+            options.data_dir.clone(),
+            Arc::clone(&metrics),
+            options.memtable_capacity,
+            options.vlog_threshold,
+            Arc::clone(&flush_mutex),
+            Arc::clone(&max_flushed_seq),
+            Arc::clone(&flush_healthy),
+        );
 
         // Start background WAL writer (always enabled for lock-free writes)
-        let (wal_tx, wal_rx) = unbounded::<WALMessage>();
-        let wal_ref = Arc::clone(&wal);
-        let health_clone = Arc::clone(&wal_healthy);
-        let wal_worker = thread::Builder::new()
-            .name("wal-writer".to_string())
-            .spawn(move || {
-                // Wrap in catch_unwind to detect panics and mark health status
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let mut batch = Vec::with_capacity(1000);
-
-                    loop {
-                        // Block on first message
-                        let channel_closed = match wal_rx.recv() {
-                            Ok(WALMessage::Record(record)) => {
-                                batch.push(record);
-                                false
-                            }
-                            Ok(WALMessage::Barrier(ack_tx)) => {
-                                // Flush all pending records before acknowledging
-                                if !batch.is_empty() {
-                                    if let Err(e) = wal_ref.lock()
-                                        .expect("WAL mutex poisoned")
-                                        .write_batch(&batch) {
-                                        error!(error = %e, "WAL batch write failed during barrier");
-                                    }
-                                    batch.clear();
-                                }
-                                // Send acknowledgement (flush() is waiting for this)
-                                let _ = ack_tx.send(());
-                                false  // Continue processing
-                            }
-                            Err(_) => {
-                                // Channel closed - need to drain remaining messages
-                                true
-                            }
-                        };
-
-                        // Drain channel (collect all pending messages)
-                        // If channel closed, drain until truly empty
-                        // If channel open, drain up to batch limit
-                        loop {
-                            match wal_rx.try_recv() {
-                                Ok(WALMessage::Record(record)) => {
-                                    batch.push(record);
-                                    // Keep draining if channel closed, otherwise respect batch limit
-                                    if !channel_closed && batch.len() >= 1000 {
-                                        break;
-                                    }
-                                }
-                                Ok(WALMessage::Barrier(ack_tx)) => {
-                                    // Flush current batch before acknowledging
-                                    if !batch.is_empty() {
-                                        if let Err(e) = wal_ref.lock()
-                                            .expect("WAL mutex poisoned")
-                                            .write_batch(&batch) {
-                                            error!(error = %e, "WAL batch write failed during barrier");
-                                        }
-                                        batch.clear();
-                                    }
-                                    // Send acknowledgement
-                                    let _ = ack_tx.send(());
-                                    // Continue draining if more messages
-                                }
-                                Err(_) => break,  // Channel empty
-                            }
-                        }
-
-                        // Write batch if not empty
-                        if !batch.is_empty() {
-                            if let Err(e) = wal_ref.lock()
-                                .expect("WAL mutex poisoned")
-                                .write_batch(&batch) {
-                                error!(error = %e, "WAL batch write failed");
-                            }
-                            batch.clear();
-                        }
-
-                        // Exit after writing final batch
-                        if channel_closed {
-                            // Final fsync to ensure all data is on disk before thread exits
-                            if let Err(e) = wal_ref.lock()
-                                .expect("WAL mutex poisoned")
-                                .sync() {
-                                error!(error = %e, "Final WAL sync failed - DATA MAY BE LOST");
-                            }
-                            debug!("WAL writer thread: channel closed, all records flushed and synced");
-                            break;
-                        }
-                    }
-
-                    info!("WAL writer thread shutting down");
-                }));
-
-                // If panicked, mark as unhealthy - CRITICAL for data safety
-                if result.is_err() {
-                    error!("WAL writer thread panicked - DATA LOSS MAY OCCUR");
-                    health_clone.store(false, Ordering::SeqCst);
-                }
-            })
-            .expect("Failed to spawn WAL writer thread");
+        let (wal_tx, wal_worker) = crate::background_workers::spawn_wal_writer(
+            Arc::clone(&wal),
+            Arc::clone(&wal_healthy),
+        );
 
         let db = Self {
             options: options.clone(),
