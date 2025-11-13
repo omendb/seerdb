@@ -13,9 +13,9 @@
 //   - test_24hour_soak_extreme: 24 hours continuous operation
 //   - test_100gb_dataset_extreme: 100GB dataset
 
-use seerdb::{DBOptions, SyncPolicy, DB};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use seerdb::{DB, DBOptions, SyncPolicy};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
@@ -101,7 +101,7 @@ fn test_2hour_soak() {
         background_compaction: true,
         wal_sync_policy: SyncPolicy::SyncData,
         memtable_capacity: 16 * 1024 * 1024, // 16MB memtable
-        vlog_threshold: Some(512), // Use vLog for values >512 bytes
+        vlog_threshold: Some(512),           // Use vLog for values >512 bytes
         ..Default::default()
     };
 
@@ -128,7 +128,10 @@ fn test_2hour_soak() {
         thread::sleep(Duration::from_secs(300));
 
         let initial_memory = get_memory_usage_bytes();
-        println!("Baseline memory after warmup: {} MB", initial_memory / 1_048_576);
+        println!(
+            "Baseline memory after warmup: {} MB",
+            initial_memory / 1_048_576
+        );
         println!();
 
         let mut last_ops = 0u64;
@@ -173,7 +176,7 @@ fn test_2hour_soak() {
             // Validate memory is not leaking (should stay < 3.5x initial)
             // Write-heavy workloads legitimately need ~3x for LSM metadata + working set
             assert!(
-                current_memory < initial_memory * 7 / 2,  // 3.5x
+                current_memory < initial_memory * 7 / 2, // 3.5x
                 "Memory leak detected: {} MB > 3.5x initial ({} MB)",
                 current_memory / 1_048_576,
                 (initial_memory * 7 / 2) / 1_048_576
@@ -259,7 +262,7 @@ fn test_24hour_soak_extreme() {
         background_compaction: true,
         wal_sync_policy: SyncPolicy::SyncData,
         memtable_capacity: 16 * 1024 * 1024, // 16MB memtable
-        vlog_threshold: Some(512), // Use vLog for values >512 bytes
+        vlog_threshold: Some(512),           // Use vLog for values >512 bytes
         ..Default::default()
     };
 
@@ -286,7 +289,10 @@ fn test_24hour_soak_extreme() {
         thread::sleep(Duration::from_secs(3600));
 
         let initial_memory = get_memory_usage_bytes();
-        println!("Baseline memory after warmup: {} MB", initial_memory / 1_048_576);
+        println!(
+            "Baseline memory after warmup: {} MB",
+            initial_memory / 1_048_576
+        );
         println!();
 
         let mut last_ops = 0u64;
@@ -304,11 +310,18 @@ fn test_24hour_soak_extreme() {
             let ops_delta = current_ops - last_ops;
             let throughput = ops_delta as f64 / REPORT_INTERVAL_SECS as f64;
 
-            println!("--- Report at {}h {}m ---", elapsed.as_secs() / 3600, (elapsed.as_secs() % 3600) / 60);
+            println!(
+                "--- Report at {}h {}m ---",
+                elapsed.as_secs() / 3600,
+                (elapsed.as_secs() % 3600) / 60
+            );
             println!("  Total operations: {}", current_ops);
             println!("  Throughput: {:.0} ops/sec", throughput);
             println!("  Memory usage: {} MB", current_memory / 1_048_576);
-            println!("  Memory growth: {} MB", (current_memory as i64 - initial_memory as i64) / 1_048_576);
+            println!(
+                "  Memory growth: {} MB",
+                (current_memory as i64 - initial_memory as i64) / 1_048_576
+            );
             println!("  Disk usage: {} MB", disk_usage / 1_048_576);
 
             if current_ops > 0 {
@@ -325,7 +338,7 @@ fn test_24hour_soak_extreme() {
             // Write-heavy workloads legitimately need ~3x for LSM metadata + working set
             // Baseline already measured after warmup, so check immediately
             assert!(
-                current_memory < initial_memory * 7 / 2,  // 3.5x
+                current_memory < initial_memory * 7 / 2, // 3.5x
                 "Memory leak detected: {} MB > 3.5x initial ({} MB)",
                 current_memory / 1_048_576,
                 (initial_memory * 7 / 2) / 1_048_576
@@ -429,7 +442,10 @@ fn test_1gb_dataset() {
     let start_write = Instant::now();
     let mut last_report = Instant::now();
     let initial_memory = get_memory_usage_bytes();
-    println!("Baseline memory after warmup: {} MB\n", initial_memory / 1_048_576);
+    println!(
+        "Baseline memory after warmup: {} MB\n",
+        initial_memory / 1_048_576
+    );
 
     println!("Writing {} keys ({} GB)...", NUM_KEYS, TARGET_SIZE_GB);
 
@@ -512,7 +528,7 @@ fn test_1gb_dataset() {
 
     // Final memory check after operations settle
     assert!(
-        final_memory < initial_memory * 7 / 2,  // 3.5x
+        final_memory < initial_memory * 7 / 2, // 3.5x
         "Memory leak detected: {} MB > 3.5x initial ({} MB)",
         final_memory / 1_048_576,
         (initial_memory * 7 / 2) / 1_048_576
@@ -557,7 +573,10 @@ fn test_10gb_dataset() {
     let start_write = Instant::now();
     let mut last_report = Instant::now();
     let initial_memory = get_memory_usage_bytes();
-    println!("Baseline memory after warmup: {} MB\n", initial_memory / 1_048_576);
+    println!(
+        "Baseline memory after warmup: {} MB\n",
+        initial_memory / 1_048_576
+    );
 
     println!("Writing {} keys ({} GB)...", NUM_KEYS, TARGET_SIZE_GB);
 
@@ -643,7 +662,7 @@ fn test_10gb_dataset() {
     // Final memory check after operations settle
     // Write-heavy workloads legitimately need ~3x for LSM metadata + working set
     assert!(
-        final_memory < initial_memory * 7 / 2,  // 3.5x
+        final_memory < initial_memory * 7 / 2, // 3.5x
         "Memory leak detected: {} MB > 3.5x initial ({} MB)",
         final_memory / 1_048_576,
         (initial_memory * 7 / 2) / 1_048_576
@@ -687,7 +706,10 @@ fn test_100gb_dataset_extreme() {
     let start_write = Instant::now();
     let mut last_report = Instant::now();
     let initial_memory = get_memory_usage_bytes();
-    println!("Baseline memory after warmup: {} MB\n", initial_memory / 1_048_576);
+    println!(
+        "Baseline memory after warmup: {} MB\n",
+        initial_memory / 1_048_576
+    );
 
     println!("Writing {} keys ({} GB)...", NUM_KEYS, TARGET_SIZE_GB);
 
@@ -732,7 +754,10 @@ fn test_100gb_dataset_extreme() {
     db.flush().unwrap();
 
     let final_disk = get_disk_usage_bytes(&db_path).unwrap();
-    println!("  Final disk usage: {} GB", final_disk / (1024 * 1024 * 1024));
+    println!(
+        "  Final disk usage: {} GB",
+        final_disk / (1024 * 1024 * 1024)
+    );
 
     // Read phase: Random reads to validate data
     println!("\nValidating data with random reads...");
@@ -757,13 +782,17 @@ fn test_100gb_dataset_extreme() {
     let final_memory = get_memory_usage_bytes();
     println!("\n=== LARGE DATASET TEST COMPLETE ===");
     println!("Data written: {} GB", final_disk / (1024 * 1024 * 1024));
-    println!("Memory usage: {} MB (started at {} MB)", final_memory / 1_048_576, initial_memory / 1_048_576);
+    println!(
+        "Memory usage: {} MB (started at {} MB)",
+        final_memory / 1_048_576,
+        initial_memory / 1_048_576
+    );
     println!("RESULT: PASS - Successfully handled 100GB+ dataset");
 
     // Final memory check after operations settle
     // Write-heavy workloads legitimately need ~3x for LSM metadata + working set
     assert!(
-        final_memory < initial_memory * 7 / 2,  // 3.5x
+        final_memory < initial_memory * 7 / 2, // 3.5x
         "Memory leak detected: {} MB > 3.5x initial ({} MB)",
         final_memory / 1_048_576,
         (initial_memory * 7 / 2) / 1_048_576

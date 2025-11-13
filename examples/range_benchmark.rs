@@ -18,7 +18,7 @@ fn main() {
         let value = "value".repeat(100); // 500 bytes
         db.put(key.as_bytes(), value.as_bytes()).unwrap();
     }
-    
+
     // Flush to SSTables
     db.flush().unwrap();
     println!("Flushed to SSTables");
@@ -26,25 +26,26 @@ fn main() {
     // Benchmark range scans
     let num_scans = 1000;
     println!("\nRunning {} range scans (100 keys each)...", num_scans);
-    
+
     let start = Instant::now();
     for i in 0..num_scans {
         let start_key = format!("key{:06}", i * 10);
         let end_key = format!("key{:06}", i * 10 + 100);
-        
-        let count = db.range(start_key.as_bytes(), Some(end_key.as_bytes()))
+
+        let count = db
+            .range(start_key.as_bytes(), Some(end_key.as_bytes()))
             .unwrap()
             .count();
-        
+
         if i == 0 {
             println!("First scan returned {} keys", count);
         }
     }
     let elapsed = start.elapsed();
-    
+
     let scans_per_sec = num_scans as f64 / elapsed.as_secs_f64();
     let us_per_scan = elapsed.as_micros() as f64 / num_scans as f64;
-    
+
     println!("\nResults:");
     println!("  Total time: {:.2}s", elapsed.as_secs_f64());
     println!("  Scans/sec: {:.0}", scans_per_sec);

@@ -1,7 +1,7 @@
 // Demonstration of seerdb observability features
 // Shows metrics collection, structured logging, and health monitoring
 
-use seerdb::{DBOptions, DB};
+use seerdb::{DB, DBOptions};
 use std::path::PathBuf;
 use tempfile::tempdir;
 

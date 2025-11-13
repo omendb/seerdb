@@ -2,7 +2,7 @@
 // Tests unusual/extreme configuration values
 // Critical for stability: handle all valid configs safely
 
-use seerdb::{DBOptions, SyncPolicy, DB};
+use seerdb::{DB, DBOptions, SyncPolicy};
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -20,12 +20,17 @@ fn test_tiny_memtable_capacity() {
 
     // Should trigger frequent flushes
     for i in 0..100 {
-        db.put(format!("key_{:03}", i).as_bytes(), &vec![b'v'; 100]).unwrap();
+        db.put(format!("key_{:03}", i).as_bytes(), &vec![b'v'; 100])
+            .unwrap();
     }
 
     // Verify all data present
     for i in 0..100 {
-        assert!(db.get(format!("key_{:03}", i).as_bytes()).unwrap().is_some());
+        assert!(
+            db.get(format!("key_{:03}", i).as_bytes())
+                .unwrap()
+                .is_some()
+        );
     }
 }
 
@@ -43,12 +48,17 @@ fn test_large_memtable_capacity() {
 
     // Write data that fits in memtable
     for i in 0..1000 {
-        db.put(format!("key_{:04}", i).as_bytes(), b"value").unwrap();
+        db.put(format!("key_{:04}", i).as_bytes(), b"value")
+            .unwrap();
     }
 
     // Should all be in memtable (no flush)
     for i in 0..1000 {
-        assert!(db.get(format!("key_{:04}", i).as_bytes()).unwrap().is_some());
+        assert!(
+            db.get(format!("key_{:04}", i).as_bytes())
+                .unwrap()
+                .is_some()
+        );
     }
 }
 
@@ -65,14 +75,19 @@ fn test_base_level_size_extreme_values() {
     let db = DB::open(opts).unwrap();
 
     for i in 0..100 {
-        db.put(format!("key_{:03}", i).as_bytes(), b"value").unwrap();
+        db.put(format!("key_{:03}", i).as_bytes(), b"value")
+            .unwrap();
     }
 
     db.flush().unwrap();
 
     // Verify data
     for i in 0..100 {
-        assert!(db.get(format!("key_{:03}", i).as_bytes()).unwrap().is_some());
+        assert!(
+            db.get(format!("key_{:03}", i).as_bytes())
+                .unwrap()
+                .is_some()
+        );
     }
 }
 
@@ -89,13 +104,18 @@ fn test_size_ratio_extreme_values() {
     let db = DB::open(opts).unwrap();
 
     for i in 0..100 {
-        db.put(format!("key_{:03}", i).as_bytes(), b"value").unwrap();
+        db.put(format!("key_{:03}", i).as_bytes(), b"value")
+            .unwrap();
     }
 
     db.flush().unwrap();
 
     for i in 0..100 {
-        assert!(db.get(format!("key_{:03}", i).as_bytes()).unwrap().is_some());
+        assert!(
+            db.get(format!("key_{:03}", i).as_bytes())
+                .unwrap()
+                .is_some()
+        );
     }
 }
 
@@ -112,13 +132,18 @@ fn test_single_level() {
     let db = DB::open(opts).unwrap();
 
     for i in 0..100 {
-        db.put(format!("key_{:03}", i).as_bytes(), b"value").unwrap();
+        db.put(format!("key_{:03}", i).as_bytes(), b"value")
+            .unwrap();
     }
 
     db.flush().unwrap();
 
     for i in 0..100 {
-        assert!(db.get(format!("key_{:03}", i).as_bytes()).unwrap().is_some());
+        assert!(
+            db.get(format!("key_{:03}", i).as_bytes())
+                .unwrap()
+                .is_some()
+        );
     }
 }
 
@@ -135,13 +160,18 @@ fn test_many_levels() {
     let db = DB::open(opts).unwrap();
 
     for i in 0..100 {
-        db.put(format!("key_{:03}", i).as_bytes(), b"value").unwrap();
+        db.put(format!("key_{:03}", i).as_bytes(), b"value")
+            .unwrap();
     }
 
     db.flush().unwrap();
 
     for i in 0..100 {
-        assert!(db.get(format!("key_{:03}", i).as_bytes()).unwrap().is_some());
+        assert!(
+            db.get(format!("key_{:03}", i).as_bytes())
+                .unwrap()
+                .is_some()
+        );
     }
 }
 
@@ -184,11 +214,7 @@ fn test_vlog_threshold_very_large() {
 #[test]
 fn test_all_sync_policies() {
     // Test all sync policies work
-    let policies = vec![
-        SyncPolicy::None,
-        SyncPolicy::SyncData,
-        SyncPolicy::SyncAll,
-    ];
+    let policies = vec![SyncPolicy::None, SyncPolicy::SyncData, SyncPolicy::SyncAll];
 
     for policy in policies {
         let temp_dir = TempDir::new().unwrap();
@@ -217,13 +243,18 @@ fn test_background_compaction_disabled() {
     let db = DB::open(opts).unwrap();
 
     for i in 0..100 {
-        db.put(format!("key_{:03}", i).as_bytes(), b"value").unwrap();
+        db.put(format!("key_{:03}", i).as_bytes(), b"value")
+            .unwrap();
     }
 
     db.flush().unwrap();
 
     for i in 0..100 {
-        assert!(db.get(format!("key_{:03}", i).as_bytes()).unwrap().is_some());
+        assert!(
+            db.get(format!("key_{:03}", i).as_bytes())
+                .unwrap()
+                .is_some()
+        );
     }
 }
 
@@ -239,7 +270,8 @@ fn test_background_compaction_enabled() {
     let db = DB::open(opts).unwrap();
 
     for i in 0..100 {
-        db.put(format!("key_{:03}", i).as_bytes(), b"value").unwrap();
+        db.put(format!("key_{:03}", i).as_bytes(), b"value")
+            .unwrap();
     }
 
     db.flush().unwrap();
@@ -248,7 +280,11 @@ fn test_background_compaction_enabled() {
     std::thread::sleep(std::time::Duration::from_secs(1));
 
     for i in 0..100 {
-        assert!(db.get(format!("key_{:03}", i).as_bytes()).unwrap().is_some());
+        assert!(
+            db.get(format!("key_{:03}", i).as_bytes())
+                .unwrap()
+                .is_some()
+        );
     }
 }
 
@@ -286,7 +322,10 @@ fn test_single_key() {
     db.put(b"only_key", b"only_value").unwrap();
     db.flush().unwrap();
 
-    assert_eq!(db.get(b"only_key").unwrap().unwrap().as_ref(), b"only_value");
+    assert_eq!(
+        db.get(b"only_key").unwrap().unwrap().as_ref(),
+        b"only_value"
+    );
     assert!(db.get(b"other").unwrap().is_none());
 }
 
@@ -310,7 +349,13 @@ fn test_many_small_values() {
 
     // Verify random sample
     for i in (0..10000).step_by(100) {
-        assert_eq!(db.get(format!("k{:05}", i).as_bytes()).unwrap().unwrap().as_ref(), b"v");
+        assert_eq!(
+            db.get(format!("k{:05}", i).as_bytes())
+                .unwrap()
+                .unwrap()
+                .as_ref(),
+            b"v"
+        );
     }
 }
 

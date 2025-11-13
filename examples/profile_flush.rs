@@ -1,7 +1,7 @@
 // Profile flush overhead
 // Measure how much time is spent in flush() calls
 
-use seerdb::{DBOptions, DB};
+use seerdb::{DB, DBOptions};
 use std::time::Instant;
 use tempfile::tempdir;
 
@@ -64,12 +64,18 @@ fn profile_with_flushes(memtable_capacity: usize, num_ops: usize) {
     let flush_overhead = (overall_duration - total_write_time).as_secs_f64();
     let flush_overhead_pct = (flush_overhead / overall_duration.as_secs_f64()) * 100.0;
 
-    println!("  Memtable capacity: {:.1} MB", memtable_capacity as f64 / 1_000_000.0);
+    println!(
+        "  Memtable capacity: {:.1} MB",
+        memtable_capacity as f64 / 1_000_000.0
+    );
     println!("  Operations: {}", num_ops);
     println!("  Total time: {:.3}s", overall_duration.as_secs_f64());
     println!("  Throughput: {:.0} ops/sec", throughput);
     println!("  Avg write latency: {:.2} µs", avg_write_latency);
-    println!("  Flush overhead: {:.3}s ({:.1}%)", flush_overhead, flush_overhead_pct);
+    println!(
+        "  Flush overhead: {:.3}s ({:.1}%)",
+        flush_overhead, flush_overhead_pct
+    );
     println!("  Estimated flushes: ~{}", flush_count);
     println!("  Final flush time: {:.3}s", final_flush_time.as_secs_f64());
 }

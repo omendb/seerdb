@@ -331,7 +331,10 @@ impl GappedNode {
     fn binary_search_exact(&self, start: usize, end: usize, key: i64) -> Option<usize> {
         // TODO: Re-enable SIMD search
         // For now, use simple linear search as fallback
-        self.keys[start..end].iter().position(|&k| k == Some(key)).map(|pos| start + pos)
+        self.keys[start..end]
+            .iter()
+            .position(|&k| k == Some(key))
+            .map(|pos| start + pos)
     }
 
     /// Binary search for gap to insert key
@@ -522,7 +525,9 @@ impl GappedNode {
                             candidate = Some((key, pos));
                         }
                         // If we found exact match or earlier key, we can stop
-                        if key == search_key || (pos > 0 && self.keys[pos - 1].is_some_and(|k| k < search_key)) {
+                        if key == search_key
+                            || (pos > 0 && self.keys[pos - 1].is_some_and(|k| k < search_key))
+                        {
                             break;
                         }
                     }
@@ -544,7 +549,8 @@ impl GappedNode {
                 if let Some(result) = candidate {
                     return Some(result);
                 }
-                return self.keys
+                return self
+                    .keys
                     .iter()
                     .enumerate()
                     .filter_map(|(pos, key_opt)| key_opt.map(|k| (k, pos)))
@@ -593,7 +599,9 @@ impl GappedNode {
     /// **Time complexity**: O(n log n) due to sorting
     pub fn split(&mut self) -> Result<(i64, GappedNode)> {
         if !self.should_split() {
-            return Err(anyhow::anyhow!("Node doesn't need splitting (density < MAX_DENSITY)"));
+            return Err(anyhow::anyhow!(
+                "Node doesn't need splitting (density < MAX_DENSITY)"
+            ));
         }
 
         // Extract and sort all keys
@@ -814,7 +822,11 @@ mod tests {
         // Sample lookups
         for i in (0..1000).step_by(10) {
             let key = i * 7 % 10000;
-            assert!(node.get(key).unwrap().is_some(), "Failed to find key={}", key);
+            assert!(
+                node.get(key).unwrap().is_some(),
+                "Failed to find key={}",
+                key
+            );
         }
     }
 

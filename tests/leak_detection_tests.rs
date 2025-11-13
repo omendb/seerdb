@@ -1,4 +1,4 @@
-use seerdb::{DBOptions, DB};
+use seerdb::{DB, DBOptions};
 use std::path::PathBuf;
 use std::time::Duration;
 use sysinfo::{Pid, ProcessExt, System, SystemExt};
@@ -419,7 +419,9 @@ fn test_no_thread_leak_db_lifecycle() {
     assert!(
         thread_growth.abs() <= 30,
         "Thread leak detected: {} threads before DB, {} threads after ({:+} threads)",
-        before_db_threads, final_threads, thread_growth
+        before_db_threads,
+        final_threads,
+        thread_growth
     );
 }
 

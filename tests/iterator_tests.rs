@@ -2,7 +2,7 @@
 // Tests: basic iteration, range scans, seeking, edge cases, concurrent modifications
 
 use bytes::Bytes;
-use seerdb::{DBOptions, DB};
+use seerdb::{DB, DBOptions};
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -216,7 +216,8 @@ fn test_concurrent_iteration_and_writes() {
 
     // Pre-populate
     for i in 0..100 {
-        db.put(format!("key_{:03}", i).as_bytes(), b"value").unwrap();
+        db.put(format!("key_{:03}", i).as_bytes(), b"value")
+            .unwrap();
     }
 
     // TODO: Uncomment when iterator API is public
@@ -245,7 +246,8 @@ fn test_iteration_during_compaction() {
 
     // Write enough to trigger compaction
     for i in 0..5000 {
-        db.put(format!("key_{:05}", i).as_bytes(), &vec![b'v'; 100]).unwrap();
+        db.put(format!("key_{:05}", i).as_bytes(), &vec![b'v'; 100])
+            .unwrap();
     }
 
     // Iterate while compaction may be running
@@ -305,5 +307,8 @@ fn test_iterator_api_exists() {
     // Current state: Internal iterators exist (SSTableIterator, BlockIterator, MergeIterator)
     // but are not exposed in DB public API
 
-    assert!(!check_iterator_support(), "Iterator API not yet public - tests are placeholders");
+    assert!(
+        !check_iterator_support(),
+        "Iterator API not yet public - tests are placeholders"
+    );
 }

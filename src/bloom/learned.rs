@@ -114,10 +114,11 @@ impl LearnedBloomFilter {
 
         // If not in backup filter, use model for negative predictions
         if let Some((prediction, confidence)) = self.predict_with_confidence(item)
-            && confidence >= self.threshold {
-                // High confidence negative: trust the model
-                return prediction;
-            }
+            && confidence >= self.threshold
+        {
+            // High confidence negative: trust the model
+            return prediction;
+        }
 
         // Low confidence: assume not in set (conservative)
         false

@@ -8,7 +8,7 @@
 
 use bytes::Bytes;
 use rand::Rng;
-use seerdb::{DBOptions, DB};
+use seerdb::{DB, DBOptions};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};

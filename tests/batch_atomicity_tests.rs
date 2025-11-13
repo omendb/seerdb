@@ -2,7 +2,7 @@
 // Tests that batch operations are truly atomic (all-or-nothing)
 // Critical for data integrity - batches must be recoverable as a single unit
 
-use seerdb::{DBOptions, DB};
+use seerdb::{DB, DBOptions};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
@@ -81,11 +81,23 @@ fn test_batch_mixed_put_delete() {
     batch.commit().unwrap();
 
     // Verify results
-    assert_eq!(db.get(b"new_key1").unwrap().as_deref(), Some(&b"new_value1"[..]));
-    assert_eq!(db.get(b"existing1").unwrap().as_deref(), Some(&b"updated_value1"[..]));
+    assert_eq!(
+        db.get(b"new_key1").unwrap().as_deref(),
+        Some(&b"new_value1"[..])
+    );
+    assert_eq!(
+        db.get(b"existing1").unwrap().as_deref(),
+        Some(&b"updated_value1"[..])
+    );
     assert_eq!(db.get(b"existing2").unwrap(), None);
-    assert_eq!(db.get(b"new_key2").unwrap().as_deref(), Some(&b"new_value2"[..]));
-    assert_eq!(db.get(b"existing3").unwrap().as_deref(), Some(&b"old_value3"[..]));
+    assert_eq!(
+        db.get(b"new_key2").unwrap().as_deref(),
+        Some(&b"new_value2"[..])
+    );
+    assert_eq!(
+        db.get(b"existing3").unwrap().as_deref(),
+        Some(&b"old_value3"[..])
+    );
 }
 
 #[test]
@@ -196,9 +208,18 @@ fn test_batch_recovery_after_crash() {
         let db = DB::open(opts).unwrap();
 
         // All batch operations should be present
-        assert_eq!(db.get(b"batch_key1").unwrap().as_deref(), Some(&b"batch_value1"[..]));
-        assert_eq!(db.get(b"batch_key2").unwrap().as_deref(), Some(&b"batch_value2"[..]));
-        assert_eq!(db.get(b"batch_key3").unwrap().as_deref(), Some(&b"batch_value3"[..]));
+        assert_eq!(
+            db.get(b"batch_key1").unwrap().as_deref(),
+            Some(&b"batch_value1"[..])
+        );
+        assert_eq!(
+            db.get(b"batch_key2").unwrap().as_deref(),
+            Some(&b"batch_value2"[..])
+        );
+        assert_eq!(
+            db.get(b"batch_key3").unwrap().as_deref(),
+            Some(&b"batch_value3"[..])
+        );
         assert_eq!(db.get(b"deleted_key").unwrap(), None);
     }
 }
@@ -309,7 +330,11 @@ fn test_batch_interleaved_with_individual_operations() {
     // Verify all writes succeeded
     for i in 0..100 {
         assert!(db.get(format!("batch_{}", i).as_bytes()).unwrap().is_some());
-        assert!(db.get(format!("single_{}", i).as_bytes()).unwrap().is_some());
+        assert!(
+            db.get(format!("single_{}", i).as_bytes())
+                .unwrap()
+                .is_some()
+        );
     }
 }
 
@@ -346,10 +371,11 @@ fn test_batch_during_flush() {
 
     // Verify batch data is present
     for i in 0..100 {
-        assert!(db
-            .get(format!("during_flush_{}", i).as_bytes())
-            .unwrap()
-            .is_some());
+        assert!(
+            db.get(format!("during_flush_{}", i).as_bytes())
+                .unwrap()
+                .is_some()
+        );
     }
 }
 
@@ -390,10 +416,11 @@ fn test_batch_during_compaction() {
 
     // Verify batch data is present
     for i in 0..100 {
-        assert!(db
-            .get(format!("during_compact_{}", i).as_bytes())
-            .unwrap()
-            .is_some());
+        assert!(
+            db.get(format!("during_compact_{}", i).as_bytes())
+                .unwrap()
+                .is_some()
+        );
     }
 }
 

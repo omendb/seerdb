@@ -1,7 +1,7 @@
 // Benchmark comparing traditional vs learned bloom filters
 // Measures: space savings, false positive rate, query time
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use seerdb::bloom::{BloomFilter, LearnedBloomFilter};
 use std::collections::HashSet;
 

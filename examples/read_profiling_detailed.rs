@@ -1,7 +1,7 @@
 // Detailed read profiling to identify bottlenecks
 // Measures bloom filter, cache, I/O, and decoding overhead
 
-use seerdb::{DBOptions, DB};
+use seerdb::{DB, DBOptions};
 use std::time::Instant;
 use tempfile::tempdir;
 

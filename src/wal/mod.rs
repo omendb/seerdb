@@ -124,10 +124,7 @@ impl WAL {
         batch_config: BatchConfig,
     ) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&path)?;
+        let mut file = OpenOptions::new().read(true).write(true).open(&path)?;
 
         // Read and validate header
         let mut header = [0u8; 8];
@@ -165,9 +162,8 @@ impl WAL {
         self.batch_size_bytes += encoded_size;
 
         // Check if we should flush
-        let should_flush =
-            self.batch_size_bytes >= self.batch_config.max_batch_size ||
-            self.last_flush.elapsed() >= self.batch_config.max_batch_timeout;
+        let should_flush = self.batch_size_bytes >= self.batch_config.max_batch_size
+            || self.last_flush.elapsed() >= self.batch_config.max_batch_timeout;
 
         if should_flush {
             self.flush_batch()?;

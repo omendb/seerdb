@@ -2,7 +2,7 @@
 // Tests that reads see consistent point-in-time snapshots
 // Critical for correctness: concurrent writes must not affect in-progress reads
 
-use seerdb::{DBOptions, DB};
+use seerdb::{DB, DBOptions};
 use std::path::PathBuf;
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -52,7 +52,10 @@ fn test_read_isolation_during_writes() {
 
     // All values must be either "v1" or "v2" (no corruption/partial reads)
     for v in &values {
-        assert!(v.as_ref() == b"v1" || v.as_ref() == b"v2", "Invalid value read");
+        assert!(
+            v.as_ref() == b"v1" || v.as_ref() == b"v2",
+            "Invalid value read"
+        );
     }
 
     // Should have seen both values
@@ -74,7 +77,8 @@ fn test_read_isolation_across_flush() {
 
     // Populate memtable
     for i in 0..100 {
-        db.put(format!("key_{:03}", i).as_bytes(), b"value").unwrap();
+        db.put(format!("key_{:03}", i).as_bytes(), b"value")
+            .unwrap();
     }
 
     let barrier = Arc::new(Barrier::new(2));
@@ -87,7 +91,11 @@ fn test_read_isolation_across_flush() {
         let mut read_count = 0;
         for _ in 0..10 {
             for i in 0..100 {
-                if db_read.get(format!("key_{:03}", i).as_bytes()).unwrap().is_some() {
+                if db_read
+                    .get(format!("key_{:03}", i).as_bytes())
+                    .unwrap()
+                    .is_some()
+                {
                     read_count += 1;
                 }
             }
@@ -156,7 +164,9 @@ fn test_snapshot_isolation_multiple_keys() {
     let writer = thread::spawn(move || {
         barrier_write.wait();
         for i in 0..50 {
-            db_write.put(format!("key_{:03}", i).as_bytes(), b"v2").unwrap();
+            db_write
+                .put(format!("key_{:03}", i).as_bytes(), b"v2")
+                .unwrap();
             thread::sleep(Duration::from_micros(100));
         }
     });
@@ -192,7 +202,11 @@ fn test_concurrent_reads_consistent() {
 
     // Write initial data
     for i in 0..100 {
-        db.put(format!("key_{:03}", i).as_bytes(), format!("value_{:03}", i).as_bytes()).unwrap();
+        db.put(
+            format!("key_{:03}", i).as_bytes(),
+            format!("value_{:03}", i).as_bytes(),
+        )
+        .unwrap();
     }
 
     let barrier = Arc::new(Barrier::new(4));
@@ -221,7 +235,9 @@ fn test_concurrent_reads_consistent() {
     let writer = thread::spawn(move || {
         barrier_write.wait();
         for i in 0..50 {
-            db_write.put(format!("key_{:03}", i).as_bytes(), b"updated").unwrap();
+            db_write
+                .put(format!("key_{:03}", i).as_bytes(), b"updated")
+                .unwrap();
         }
     });
 
@@ -231,7 +247,12 @@ fn test_concurrent_reads_consistent() {
 
     // All readers should see valid data (either old or new values)
     for (reader_id, values) in results {
-        assert_eq!(values.len(), 100, "Reader {} should see all keys", reader_id);
+        assert_eq!(
+            values.len(),
+            100,
+            "Reader {} should see all keys",
+            reader_id
+        );
 
         // Each value should be either original or "updated"
         for (i, value) in values {
@@ -257,7 +278,8 @@ fn test_delete_snapshot_consistency() {
 
     // Write keys
     for i in 0..100 {
-        db.put(format!("key_{:03}", i).as_bytes(), b"value").unwrap();
+        db.put(format!("key_{:03}", i).as_bytes(), b"value")
+            .unwrap();
     }
 
     let barrier = Arc::new(Barrier::new(2));
@@ -271,7 +293,11 @@ fn test_delete_snapshot_consistency() {
 
         let mut found_count = 0;
         for i in 0..100 {
-            if db_read.get(format!("key_{:03}", i).as_bytes()).unwrap().is_some() {
+            if db_read
+                .get(format!("key_{:03}", i).as_bytes())
+                .unwrap()
+                .is_some()
+            {
                 found_count += 1;
             }
         }
@@ -284,7 +310,9 @@ fn test_delete_snapshot_consistency() {
     let deleter = thread::spawn(move || {
         barrier_delete.wait();
         for i in 0..50 {
-            db_delete.delete(format!("key_{:03}", i).as_bytes()).unwrap();
+            db_delete
+                .delete(format!("key_{:03}", i).as_bytes())
+                .unwrap();
             thread::sleep(Duration::from_micros(100));
         }
     });
@@ -293,8 +321,11 @@ fn test_delete_snapshot_consistency() {
     deleter.join().unwrap();
 
     // Reader should see consistent snapshot (all keys present or some deleted, but consistent)
-    assert!(found_count >= 50 && found_count <= 100,
-        "Found {} keys, expected 50-100 (snapshot consistency)", found_count);
+    assert!(
+        found_count >= 50 && found_count <= 100,
+        "Found {} keys, expected 50-100 (snapshot consistency)",
+        found_count
+    );
 }
 
 #[test]
@@ -364,7 +395,11 @@ fn test_no_stale_reads_after_flush() {
 
     // Read should see latest value (v2 from memtable, not v1 from SSTable)
     let value = db.get(b"key").unwrap().unwrap();
-    assert_eq!(value.as_ref(), b"v2", "Should see latest memtable value, not stale SSTable value");
+    assert_eq!(
+        value.as_ref(),
+        b"v2",
+        "Should see latest memtable value, not stale SSTable value"
+    );
 }
 
 #[test]
@@ -384,13 +419,19 @@ fn test_no_stale_reads_after_delete() {
     db.delete(b"key").unwrap();
 
     // Read should return None (tombstone masks SSTable value)
-    assert!(db.get(b"key").unwrap().is_none(), "Tombstone should mask flushed value");
+    assert!(
+        db.get(b"key").unwrap().is_none(),
+        "Tombstone should mask flushed value"
+    );
 
     // Flush tombstone
     db.flush().unwrap();
 
     // Read should still return None
-    assert!(db.get(b"key").unwrap().is_none(), "Tombstone should persist after flush");
+    assert!(
+        db.get(b"key").unwrap().is_none(),
+        "Tombstone should persist after flush"
+    );
 }
 
 #[test]
@@ -446,9 +487,13 @@ fn test_point_in_time_consistency() {
                 .parse::<u32>()
                 .unwrap();
 
-            db_write.put(b"account_a", (a - 10).to_string().as_bytes()).unwrap();
+            db_write
+                .put(b"account_a", (a - 10).to_string().as_bytes())
+                .unwrap();
             thread::sleep(Duration::from_micros(50)); // Small delay between updates
-            db_write.put(b"account_b", (b + 10).to_string().as_bytes()).unwrap();
+            db_write
+                .put(b"account_b", (b + 10).to_string().as_bytes())
+                .unwrap();
             thread::sleep(Duration::from_millis(1));
         }
     });
@@ -461,6 +506,10 @@ fn test_point_in_time_consistency() {
     // This is expected behavior for a non-transactional key-value store
     // We just check that values are reasonable (not corrupted)
     for total in totals {
-        assert!(total >= 50 && total <= 150, "Total out of reasonable range: {}", total);
+        assert!(
+            total >= 50 && total <= 150,
+            "Total out of reasonable range: {}",
+            total
+        );
     }
 }

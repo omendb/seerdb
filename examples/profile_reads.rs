@@ -1,7 +1,7 @@
 // Profile read path to identify bottlenecks
 // Tests different scenarios to isolate performance issues
 
-use seerdb::{DBOptions, DB};
+use seerdb::{DB, DBOptions};
 use std::time::Instant;
 use tempfile::tempdir;
 
@@ -51,7 +51,10 @@ fn test_memtable_reads() {
 
     // Verify all in memtable
     let memtable_size = db.memtable_size();
-    println!("  Memtable size: {:.2} MB", memtable_size as f64 / 1_000_000.0);
+    println!(
+        "  Memtable size: {:.2} MB",
+        memtable_size as f64 / 1_000_000.0
+    );
 
     // Random reads
     println!("  Performing {} random reads...", NUM_READS);
@@ -66,7 +69,10 @@ fn test_memtable_reads() {
 
     let throughput = NUM_READS as f64 / duration.as_secs_f64();
     println!("  Throughput: {:.0} ops/sec", throughput);
-    println!("  Latency: {:.2} µs/op", duration.as_micros() as f64 / NUM_READS as f64);
+    println!(
+        "  Latency: {:.2} µs/op",
+        duration.as_micros() as f64 / NUM_READS as f64
+    );
 }
 
 fn test_sstable_reads() {
@@ -92,14 +98,22 @@ fn test_sstable_reads() {
     db.flush().unwrap();
 
     let memtable_size = db.memtable_size();
-    println!("  Memtable size after flush: {:.2} MB", memtable_size as f64 / 1_000_000.0);
+    println!(
+        "  Memtable size after flush: {:.2} MB",
+        memtable_size as f64 / 1_000_000.0
+    );
 
     // Check how many SSTables were created and their sizes
     let data_dir = dir.path();
     let mut sstable_paths = Vec::new();
     for entry in std::fs::read_dir(data_dir).unwrap() {
         let entry = entry.unwrap();
-        if entry.path().extension().map(|s| s == "sst").unwrap_or(false) {
+        if entry
+            .path()
+            .extension()
+            .map(|s| s == "sst")
+            .unwrap_or(false)
+        {
             sstable_paths.push(entry.path());
         }
     }
@@ -142,7 +156,10 @@ fn test_sstable_reads() {
 
     let throughput = NUM_READS as f64 / duration.as_secs_f64();
     println!("  Throughput: {:.0} ops/sec", throughput);
-    println!("  Latency: {:.2} µs/op", duration.as_micros() as f64 / NUM_READS as f64);
+    println!(
+        "  Latency: {:.2} µs/op",
+        duration.as_micros() as f64 / NUM_READS as f64
+    );
 }
 
 fn test_partition_overhead() {
@@ -174,6 +191,12 @@ fn test_partition_overhead() {
     }
     let duration = start.elapsed();
 
-    println!("  Avg lookup time: {:.2} µs", duration.as_micros() as f64 / 10_000.0);
-    println!("  Throughput: {:.0} ops/sec", 10_000.0 / duration.as_secs_f64());
+    println!(
+        "  Avg lookup time: {:.2} µs",
+        duration.as_micros() as f64 / 10_000.0
+    );
+    println!(
+        "  Throughput: {:.0} ops/sec",
+        10_000.0 / duration.as_secs_f64()
+    );
 }

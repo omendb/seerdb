@@ -46,7 +46,10 @@ fn bench_writes(name: &str, background_flush: bool) {
     println!("\nResults:");
     println!("  Total time: {:.2}s", elapsed.as_secs_f64());
     println!("  Throughput: {:.0} ops/sec", ops_per_sec);
-    println!("  Latency: {:.2} µs/op", elapsed.as_micros() as f64 / NUM_OPERATIONS as f64);
+    println!(
+        "  Latency: {:.2} µs/op",
+        elapsed.as_micros() as f64 / NUM_OPERATIONS as f64
+    );
     println!();
 }
 
@@ -102,7 +105,10 @@ fn bench_mixed(name: &str, background_flush: bool) {
     println!("\nResults:");
     println!("  Total time: {:.2}s", elapsed.as_secs_f64());
     println!("  Throughput: {:.0} ops/sec", ops_per_sec);
-    println!("  Latency: {:.2} µs/op", elapsed.as_micros() as f64 / NUM_OPERATIONS as f64);
+    println!(
+        "  Latency: {:.2} µs/op",
+        elapsed.as_micros() as f64 / NUM_OPERATIONS as f64
+    );
     println!();
 }
 

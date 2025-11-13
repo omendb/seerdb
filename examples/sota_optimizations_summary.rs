@@ -45,9 +45,7 @@ fn benchmark_bloom_filters() -> Result<(), Box<dyn std::error::Error>> {
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
     let num_keys = 100_000;
-    let keys: Vec<String> = (0..num_keys)
-        .map(|i| format!("key_{:010}", i))
-        .collect();
+    let keys: Vec<String> = (0..num_keys).map(|i| format!("key_{:010}", i)).collect();
 
     // Standard bloom
     let mut standard = BloomFilter::new(num_keys, 0.01);
@@ -64,10 +62,16 @@ fn benchmark_bloom_filters() -> Result<(), Box<dyn std::error::Error>> {
     let standard_lookup = start.elapsed();
 
     println!("Standard Bloom Filter:");
-    println!("  Insert:  {:?} ({:.0} ns/op)", standard_insert,
-        standard_insert.as_nanos() as f64 / num_keys as f64);
-    println!("  Lookup:  {:?} ({:.0} ns/op)", standard_lookup,
-        standard_lookup.as_nanos() as f64 / num_keys as f64);
+    println!(
+        "  Insert:  {:?} ({:.0} ns/op)",
+        standard_insert,
+        standard_insert.as_nanos() as f64 / num_keys as f64
+    );
+    println!(
+        "  Lookup:  {:?} ({:.0} ns/op)",
+        standard_lookup,
+        standard_lookup.as_nanos() as f64 / num_keys as f64
+    );
     println!("  Memory:  {} bytes\n", standard.size_bytes());
 
     // SIMD bloom
@@ -85,15 +89,24 @@ fn benchmark_bloom_filters() -> Result<(), Box<dyn std::error::Error>> {
     let simd_lookup = start.elapsed();
 
     println!("SIMD Bloom Filter (double hashing):");
-    println!("  Insert:  {:?} ({:.0} ns/op)", simd_insert,
-        simd_insert.as_nanos() as f64 / num_keys as f64);
-    println!("  Lookup:  {:?} ({:.0} ns/op)", simd_lookup,
-        simd_lookup.as_nanos() as f64 / num_keys as f64);
+    println!(
+        "  Insert:  {:?} ({:.0} ns/op)",
+        simd_insert,
+        simd_insert.as_nanos() as f64 / num_keys as f64
+    );
+    println!(
+        "  Lookup:  {:?} ({:.0} ns/op)",
+        simd_lookup,
+        simd_lookup.as_nanos() as f64 / num_keys as f64
+    );
     println!("  Memory:  {} bytes", simd.size_bytes());
 
     let insert_speedup = standard_insert.as_nanos() as f64 / simd_insert.as_nanos() as f64;
     let lookup_speedup = standard_lookup.as_nanos() as f64 / simd_lookup.as_nanos() as f64;
-    println!("  Speedup: {:.2}x inserts, {:.2}x lookups\n", insert_speedup, lookup_speedup);
+    println!(
+        "  Speedup: {:.2}x inserts, {:.2}x lookups\n",
+        insert_speedup, lookup_speedup
+    );
 
     // Learned bloom
     let positive: Vec<String> = (0..10_000).map(|i| format!("key_{:010}", i)).collect();

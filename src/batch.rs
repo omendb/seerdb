@@ -8,7 +8,7 @@
 
 use bytes::Bytes;
 
-use crate::db::{DBError, Result, DB};
+use crate::db::{DB, DBError, Result};
 use crate::wal::{BatchOp, Record};
 
 /// Operation type in a batch
@@ -208,12 +208,15 @@ impl<'db> Batch<'db> {
             operations: wal_ops,
         };
 
-        self.db.wal_tx.send(crate::db::WALMessage::Record(batch_record)).map_err(|_| {
-            DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                "WAL writer thread died",
-            )))
-        })?;
+        self.db
+            .wal_tx
+            .send(crate::db::WALMessage::Record(batch_record))
+            .map_err(|_| {
+                DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "WAL writer thread died",
+                )))
+            })?;
 
         // Apply all operations to memtables atomically
         // This is fast since memtables are lock-free
@@ -237,7 +240,7 @@ impl<'db> Batch<'db> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DBOptions, DB};
+    use crate::{DB, DBOptions};
     use tempfile::tempdir;
 
     #[test]
@@ -301,10 +304,7 @@ mod tests {
         // Verify all keys exist
         for i in 0..100 {
             let key = format!("key_{}", i);
-            assert_eq!(
-                db.get(key.as_bytes()).unwrap(),
-                Some(Bytes::from("value"))
-            );
+            assert_eq!(db.get(key.as_bytes()).unwrap(), Some(Bytes::from("value")));
         }
     }
 }

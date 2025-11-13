@@ -270,11 +270,7 @@ mod tests {
             let simd_result = shared_prefix_len(a, b);
 
             // Scalar implementation for comparison
-            let scalar_result = a
-                .iter()
-                .zip(b.iter())
-                .take_while(|(x, y)| x == y)
-                .count();
+            let scalar_result = a.iter().zip(b.iter()).take_while(|(x, y)| x == y).count();
 
             assert_eq!(
                 simd_result, scalar_result,

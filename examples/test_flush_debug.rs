@@ -1,6 +1,6 @@
 // Debug flush to see what's happening
 
-use seerdb::{DBOptions, DB};
+use seerdb::{DB, DBOptions};
 use tempfile::tempdir;
 
 fn main() {

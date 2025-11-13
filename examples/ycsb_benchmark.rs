@@ -2,7 +2,7 @@
 // Tests common database workload patterns: read-heavy, write-heavy, read-only, read-latest
 
 use rand::Rng;
-use seerdb::{DBOptions, DB};
+use seerdb::{DB, DBOptions};
 use std::path::PathBuf;
 use std::time::Instant;
 

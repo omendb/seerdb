@@ -1,5 +1,5 @@
 // Profile to understand where remaining overhead is
-use seerdb::{DBOptions, DB};
+use seerdb::{DB, DBOptions};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -53,12 +53,17 @@ fn main() {
     for i in 0..10000 {
         let start_key = format!("key_{:08}", i * 10);
         let end_key = format!("key_{:08}", i * 10 + 100);
-        let _ = db.range(start_key.as_bytes(), Some(end_key.as_bytes())).unwrap();
+        let _ = db
+            .range(start_key.as_bytes(), Some(end_key.as_bytes()))
+            .unwrap();
         // Don't iterate, just drop
     }
     let elapsed = start.elapsed();
     println!("   10K iterator creations: {:.3}s", elapsed.as_secs_f64());
-    println!("   Per iterator: {:.2} µs\n", elapsed.as_micros() as f64 / 10000.0);
+    println!(
+        "   Per iterator: {:.2} µs\n",
+        elapsed.as_micros() as f64 / 10000.0
+    );
 
     // Test 2: Create and consume first entry
     println!("2. Create + get first entry:");
@@ -66,12 +71,17 @@ fn main() {
     for i in 0..10000 {
         let start_key = format!("key_{:08}", i * 10);
         let end_key = format!("key_{:08}", i * 10 + 100);
-        let mut iter = db.range(start_key.as_bytes(), Some(end_key.as_bytes())).unwrap();
+        let mut iter = db
+            .range(start_key.as_bytes(), Some(end_key.as_bytes()))
+            .unwrap();
         let _ = iter.next(); // Just first entry
     }
     let elapsed = start.elapsed();
     println!("   10K scans (first entry): {:.3}s", elapsed.as_secs_f64());
-    println!("   Per scan: {:.2} µs\n", elapsed.as_micros() as f64 / 10000.0);
+    println!(
+        "   Per scan: {:.2} µs\n",
+        elapsed.as_micros() as f64 / 10000.0
+    );
 
     // Test 3: Create and consume all entries (10 per scan)
     println!("3. Create + iterate 10 entries:");
@@ -80,16 +90,28 @@ fn main() {
     for i in 0..10000 {
         let start_key = format!("key_{:08}", i * 10);
         let end_key = format!("key_{:08}", i * 10 + 10);
-        for result in db.range(start_key.as_bytes(), Some(end_key.as_bytes())).unwrap() {
+        for result in db
+            .range(start_key.as_bytes(), Some(end_key.as_bytes()))
+            .unwrap()
+        {
             let _ = result.unwrap();
             total += 1;
         }
     }
     let elapsed = start.elapsed();
-    println!("   10K scans (10 entries each): {:.3}s", elapsed.as_secs_f64());
+    println!(
+        "   10K scans (10 entries each): {:.3}s",
+        elapsed.as_secs_f64()
+    );
     println!("   Total entries: {}", total);
-    println!("   Per scan: {:.2} µs", elapsed.as_micros() as f64 / 10000.0);
-    println!("   Per entry: {:.2} µs\n", elapsed.as_micros() as f64 / total as f64);
+    println!(
+        "   Per scan: {:.2} µs",
+        elapsed.as_micros() as f64 / 10000.0
+    );
+    println!(
+        "   Per entry: {:.2} µs\n",
+        elapsed.as_micros() as f64 / total as f64
+    );
 
     // Test 4: Create and consume all entries (100 per scan)
     println!("4. Create + iterate 100 entries:");
@@ -99,19 +121,30 @@ fn main() {
         let start_key = format!("key_{:08}", i * 100);
         let end_key = format!("key_{:08}", i * 100 + 100);
         let mut count = 0;
-        for result in db.range(start_key.as_bytes(), Some(end_key.as_bytes())).unwrap() {
+        for result in db
+            .range(start_key.as_bytes(), Some(end_key.as_bytes()))
+            .unwrap()
+        {
             let _ = result.unwrap();
             count += 1;
-            if count >= 100 { break; }
+            if count >= 100 {
+                break;
+            }
         }
         total += count;
     }
     let elapsed = start.elapsed();
-    println!("   1K scans (100 entries each): {:.3}s", elapsed.as_secs_f64());
+    println!(
+        "   1K scans (100 entries each): {:.3}s",
+        elapsed.as_secs_f64()
+    );
     println!("   Scans/sec: {:.0}", 1000.0 / elapsed.as_secs_f64());
     println!("   Total entries: {}", total);
     println!("   Per scan: {:.2} µs", elapsed.as_micros() as f64 / 1000.0);
-    println!("   Per entry: {:.2} µs\n", elapsed.as_micros() as f64 / total as f64);
+    println!(
+        "   Per entry: {:.2} µs\n",
+        elapsed.as_micros() as f64 / total as f64
+    );
 
     println!("=== Analysis ===");
     println!("If 'per entry' cost is high (>1µs):");

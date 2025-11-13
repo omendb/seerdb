@@ -4,8 +4,8 @@
 use bytes::Bytes;
 use crossbeam_skiplist::SkipMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::sstable::{SSTableBuilder, SSTableError};
 
@@ -118,10 +118,7 @@ impl Memtable {
     }
 
     /// Range scan with optional end key: iterate over keys >= start
-    pub fn range_from<'a>(
-        &'a self,
-        start: &[u8],
-    ) -> impl Iterator<Item = (Bytes, Entry)> + 'a {
+    pub fn range_from<'a>(&'a self, start: &[u8]) -> impl Iterator<Item = (Bytes, Entry)> + 'a {
         let start_key = Bytes::copy_from_slice(start);
 
         self.data

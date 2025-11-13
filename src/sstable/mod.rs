@@ -5,15 +5,15 @@ pub mod block;
 
 use crate::alex::AlexTree;
 use crate::bloom::BloomFilter;
-use block::{BlockBuilder, BlockError, Block, DEFAULT_BLOCK_SIZE};
 use crate::vlog::{VLog, ValuePointer};
+use block::{Block, BlockBuilder, BlockError, DEFAULT_BLOCK_SIZE};
 use bytes::{Bytes, BytesMut};
 use quick_cache::sync::Cache;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -274,7 +274,10 @@ impl SSTableBuilder {
         let last_key = Bytes::copy_from_slice(self.data_block.last_key());
         let block_offset = self.current_offset;
 
-        let old_block = std::mem::replace(&mut self.data_block, BlockBuilder::with_capacity(DEFAULT_BLOCK_SIZE));
+        let old_block = std::mem::replace(
+            &mut self.data_block,
+            BlockBuilder::with_capacity(DEFAULT_BLOCK_SIZE),
+        );
         let block_data = old_block.finish();
         let block_size = block_data.len() as u32;
         self.file.write_all(&block_data)?;
@@ -289,7 +292,7 @@ impl SSTableBuilder {
 
         if !self.index_block.add(&last_key, &index_entry_bytes) {
             self.flush_index_block()?;
-            
+
             let mut index_entry2 = BytesMut::with_capacity(4 + last_key.len() + 8 + 4);
             index_entry2.extend_from_slice(&(last_key.len() as u32).to_le_bytes());
             index_entry2.extend_from_slice(&last_key);
@@ -316,7 +319,10 @@ impl SSTableBuilder {
         let last_key = Bytes::copy_from_slice(self.index_block.last_key());
         let block_offset = self.current_offset;
 
-        let old_block = std::mem::replace(&mut self.index_block, BlockBuilder::with_capacity(DEFAULT_BLOCK_SIZE));
+        let old_block = std::mem::replace(
+            &mut self.index_block,
+            BlockBuilder::with_capacity(DEFAULT_BLOCK_SIZE),
+        );
         let block_data = old_block.finish();
         let block_size = block_data.len() as u32;
         self.file.write_all(&block_data)?;
@@ -340,7 +346,8 @@ impl SSTableBuilder {
 
         let bloom_offset = self.current_offset;
         let bloom_bytes = self.bloom.to_bytes();
-        self.file.write_all(&(bloom_bytes.len() as u64).to_le_bytes())?;
+        self.file
+            .write_all(&(bloom_bytes.len() as u64).to_le_bytes())?;
         self.file.write_all(&bloom_bytes)?;
         self.current_offset += 8 + bloom_bytes.len() as u64;
 
@@ -351,10 +358,10 @@ impl SSTableBuilder {
         // Write num_entries and max_sequence to header BEFORE computing footer checksum
         // This ensures the checksum includes these header fields
         let footer_offset = self.current_offset;
-        self.file.seek(SeekFrom::Start(16))?;  // Skip magic (4) + version (4) + reserved (8)
-        self.file.write_all(&self.num_entries.to_le_bytes())?;  // Offset 16-23
+        self.file.seek(SeekFrom::Start(16))?; // Skip magic (4) + version (4) + reserved (8)
+        self.file.write_all(&self.num_entries.to_le_bytes())?; // Offset 16-23
         self.file.write_all(&self.max_sequence.to_le_bytes())?; // Offset 24-31
-        self.file.seek(SeekFrom::Start(footer_offset))?;  // Return to footer position
+        self.file.seek(SeekFrom::Start(footer_offset))?; // Return to footer position
 
         self.write_footer(top_level_offset, bloom_offset, metadata_offset)?;
 
@@ -404,7 +411,12 @@ impl SSTableBuilder {
         Ok(())
     }
 
-    fn write_footer(&mut self, top_level_offset: u64, bloom_offset: u64, metadata_offset: u64) -> Result<()> {
+    fn write_footer(
+        &mut self,
+        top_level_offset: u64,
+        bloom_offset: u64,
+        metadata_offset: u64,
+    ) -> Result<()> {
         let footer_start = self.current_offset;
 
         self.file.seek(SeekFrom::Start(0))?;
@@ -438,11 +450,11 @@ impl SSTableBuilder {
 
     fn create_header() -> Vec<u8> {
         let mut header = Vec::with_capacity(32);
-        header.extend_from_slice(&MAGIC.to_le_bytes());        // 4 bytes: magic
-        header.extend_from_slice(&VERSION.to_le_bytes());      // 4 bytes: version
-        header.extend_from_slice(&0u64.to_le_bytes());         // 8 bytes: reserved
-        header.extend_from_slice(&0u64.to_le_bytes());         // 8 bytes: num_entries (filled in finish())
-        header.extend_from_slice(&0u64.to_le_bytes());         // 8 bytes: max_sequence (filled in finish())
+        header.extend_from_slice(&MAGIC.to_le_bytes()); // 4 bytes: magic
+        header.extend_from_slice(&VERSION.to_le_bytes()); // 4 bytes: version
+        header.extend_from_slice(&0u64.to_le_bytes()); // 8 bytes: reserved
+        header.extend_from_slice(&0u64.to_le_bytes()); // 8 bytes: num_entries (filled in finish())
+        header.extend_from_slice(&0u64.to_le_bytes()); // 8 bytes: max_sequence (filled in finish())
         header
     }
 }
@@ -457,14 +469,14 @@ impl SSTableBuilder {
 /// repeated open/close overhead. Each SSTable maintains 1 file descriptor, bounded by the
 /// number of SSTables in the LSM tree (typically 70-350 across all levels).
 pub struct SSTable {
-    file: Arc<Mutex<File>>,  // File handle kept open for zero-overhead reads
+    file: Arc<Mutex<File>>, // File handle kept open for zero-overhead reads
     path: PathBuf,
     top_level_index: Vec<TopLevelIndexEntry>,
     alex_index: Option<AlexTree>, // ALEX learned index for faster lookups
     bloom: BloomFilter,
     num_entries: u64,
     vlog: Option<Arc<Mutex<VLog>>>,
-    block_cache: Arc<Cache<u64, Block>>,  // LRU cache with size limits
+    block_cache: Arc<Cache<u64, Block>>, // LRU cache with size limits
     min_key: Option<Bytes>,
     max_key: Option<Bytes>,
     /// Maximum sequence number in this SSTable
@@ -511,7 +523,7 @@ impl SSTable {
         let block_cache = Arc::new(Cache::new(10_000));
 
         Ok(Self {
-            file: Arc::new(Mutex::new(file)),  // Keep file handle for reuse
+            file: Arc::new(Mutex::new(file)), // Keep file handle for reuse
             path,
             top_level_index,
             alex_index,
@@ -601,10 +613,11 @@ impl SSTable {
 
         let index_block = self.load_block(index_block_offset, index_block_size)?;
 
-        let (data_block_offset, data_block_size) = match self.find_in_index_block(&index_block, key)? {
-            Some((offset, size)) => (offset, size),
-            None => return Ok(None),
-        };
+        let (data_block_offset, data_block_size) =
+            match self.find_in_index_block(&index_block, key)? {
+                Some((offset, size)) => (offset, size),
+                None => return Ok(None),
+            };
 
         let data_block = self.load_block(data_block_offset, data_block_size)?;
 
@@ -625,10 +638,11 @@ impl SSTable {
 
         let index_block = self.load_block(index_block_offset, index_block_size)?;
 
-        let (data_block_offset, data_block_size) = match self.find_in_index_block(&index_block, key)? {
-            Some((offset, size)) => (offset, size),
-            None => return Ok(false),
-        };
+        let (data_block_offset, data_block_size) =
+            match self.find_in_index_block(&index_block, key)? {
+                Some((offset, size)) => (offset, size),
+                None => return Ok(false),
+            };
 
         let data_block = self.load_block(data_block_offset, data_block_size)?;
 
@@ -654,10 +668,9 @@ impl SSTable {
                             .partition_point(|entry| entry.last_key.as_ref() < key)
                     }
                 }
-                _ => {
-                    self.top_level_index
-                        .partition_point(|entry| entry.last_key.as_ref() < key)
-                }
+                _ => self
+                    .top_level_index
+                    .partition_point(|entry| entry.last_key.as_ref() < key),
             }
         } else {
             // Use partition_point to find first block where last_key >= key
@@ -667,7 +680,10 @@ impl SSTable {
         };
 
         if idx < self.top_level_index.len() {
-            Some((self.top_level_index[idx].offset, self.top_level_index[idx].size))
+            Some((
+                self.top_level_index[idx].offset,
+                self.top_level_index[idx].size,
+            ))
         } else {
             self.top_level_index.last().map(|e| (e.offset, e.size))
         }
@@ -720,17 +736,15 @@ impl SSTable {
                 }
 
                 let offset = u64::from_le_bytes([
-                    data[0], data[1], data[2], data[3],
-                    data[4], data[5], data[6], data[7],
+                    data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                 ]);
-                let length = u32::from_le_bytes([
-                    data[8], data[9], data[10], data[11],
-                ]);
+                let length = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
 
                 if let Some(ref vlog) = self.vlog {
                     let mut vlog_guard = vlog.lock().unwrap();
                     let pointer = ValuePointer { offset, length };
-                    let value = vlog_guard.read(pointer)
+                    let value = vlog_guard
+                        .read(pointer)
                         .map_err(|e| SSTableError::VLog(e.to_string()))?;
                     Ok(Some(value))
                 } else {
@@ -785,13 +799,13 @@ impl SSTable {
         }
 
         let num_entries = u64::from_le_bytes([
-            header[16], header[17], header[18], header[19],
-            header[20], header[21], header[22], header[23],
+            header[16], header[17], header[18], header[19], header[20], header[21], header[22],
+            header[23],
         ]);
 
         let max_sequence = u64::from_le_bytes([
-            header[24], header[25], header[26], header[27],
-            header[28], header[29], header[30], header[31],
+            header[24], header[25], header[26], header[27], header[28], header[29], header[30],
+            header[31],
         ]);
 
         Ok((num_entries, max_sequence))
@@ -805,20 +819,19 @@ impl SSTable {
         file.read_exact(&mut footer)?;
 
         let _index_blocks_offset = u64::from_le_bytes([
-            footer[0], footer[1], footer[2], footer[3],
-            footer[4], footer[5], footer[6], footer[7],
+            footer[0], footer[1], footer[2], footer[3], footer[4], footer[5], footer[6], footer[7],
         ]);
         let top_level_offset = u64::from_le_bytes([
-            footer[8], footer[9], footer[10], footer[11],
-            footer[12], footer[13], footer[14], footer[15],
+            footer[8], footer[9], footer[10], footer[11], footer[12], footer[13], footer[14],
+            footer[15],
         ]);
         let bloom_offset = u64::from_le_bytes([
-            footer[16], footer[17], footer[18], footer[19],
-            footer[20], footer[21], footer[22], footer[23],
+            footer[16], footer[17], footer[18], footer[19], footer[20], footer[21], footer[22],
+            footer[23],
         ]);
         let metadata_offset = u64::from_le_bytes([
-            footer[24], footer[25], footer[26], footer[27],
-            footer[28], footer[29], footer[30], footer[31],
+            footer[24], footer[25], footer[26], footer[27], footer[28], footer[29], footer[30],
+            footer[31],
         ]);
 
         let stored_checksum = u32::from_le_bytes([footer[32], footer[33], footer[34], footer[35]]);
@@ -951,8 +964,10 @@ impl SSTable {
             if top_entry.offset + (top_entry.size as u64) > file_size {
                 return Err(SSTableError::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("Block extends past end of file: offset={}, size={}, file_size={}",
-                            top_entry.offset, top_entry.size, file_size),
+                    format!(
+                        "Block extends past end of file: offset={}, size={}, file_size={}",
+                        top_entry.offset, top_entry.size, file_size
+                    ),
                 )));
             }
 
@@ -973,14 +988,24 @@ impl SSTable {
                     continue;
                 }
 
-                let offset = u64::from_le_bytes(value_bytes[offset_start..offset_start+8].try_into().unwrap());
-                let size = u32::from_le_bytes(value_bytes[offset_start+8..offset_start+12].try_into().unwrap());
+                let offset = u64::from_le_bytes(
+                    value_bytes[offset_start..offset_start + 8]
+                        .try_into()
+                        .unwrap(),
+                );
+                let size = u32::from_le_bytes(
+                    value_bytes[offset_start + 8..offset_start + 12]
+                        .try_into()
+                        .unwrap(),
+                );
 
                 if offset + (size as u64) > file_size {
                     return Err(SSTableError::Io(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
-                        format!("Data block extends past end of file: offset={}, size={}, file_size={}",
-                                offset, size, file_size),
+                        format!(
+                            "Data block extends past end of file: offset={}, size={}, file_size={}",
+                            offset, size, file_size
+                        ),
                     )));
                 }
 
@@ -1006,7 +1031,7 @@ pub struct SSTableIterator {
 
 /// Lazy iterator that loads blocks on-demand during range scans
 pub struct SSTableRangeIterator {
-    file: Arc<Mutex<File>>,  // Reuse file handle from parent SSTable
+    file: Arc<Mutex<File>>, // Reuse file handle from parent SSTable
     block_cache: Arc<Cache<u64, Block>>,
     vlog: Option<Arc<Mutex<VLog>>>,
     top_level_index: Vec<TopLevelIndexEntry>,
@@ -1028,7 +1053,7 @@ pub struct SSTableRangeIterator {
 
 impl SSTableRangeIterator {
     fn new(
-        file: Arc<Mutex<File>>,  // Reuse file handle from parent SSTable
+        file: Arc<Mutex<File>>, // Reuse file handle from parent SSTable
         block_cache: Arc<Cache<u64, Block>>,
         vlog: Option<Arc<Mutex<VLog>>>,
         top_level_index: Vec<TopLevelIndexEntry>,
@@ -1097,7 +1122,8 @@ impl SSTableRangeIterator {
 
             // Stop if we've gone past end_key
             if let Some(ref end) = self.end_key {
-                if top_entry.last_key.as_ref() >= end.as_ref() && self.current_index_block.is_some() {
+                if top_entry.last_key.as_ref() >= end.as_ref() && self.current_index_block.is_some()
+                {
                     return Ok(false);
                 }
             }
@@ -1201,12 +1227,9 @@ impl Iterator for SSTableRangeIterator {
                         }
 
                         let offset = u64::from_le_bytes([
-                            data[0], data[1], data[2], data[3],
-                            data[4], data[5], data[6], data[7],
+                            data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                         ]);
-                        let length = u32::from_le_bytes([
-                            data[8], data[9], data[10], data[11],
-                        ]);
+                        let length = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
 
                         if let Some(ref vlog) = self.vlog {
                             let mut vlog_guard = vlog.lock().unwrap();
@@ -1287,17 +1310,16 @@ impl SSTable {
                             }
 
                             let offset = u64::from_le_bytes([
-                                data[0], data[1], data[2], data[3],
-                                data[4], data[5], data[6], data[7],
+                                data[0], data[1], data[2], data[3], data[4], data[5], data[6],
+                                data[7],
                             ]);
-                            let length = u32::from_le_bytes([
-                                data[8], data[9], data[10], data[11],
-                            ]);
+                            let length = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
 
                             if let Some(ref vlog) = self.vlog {
                                 let mut vlog_guard = vlog.lock().unwrap();
                                 let pointer = ValuePointer { offset, length };
-                                vlog_guard.read(pointer)
+                                vlog_guard
+                                    .read(pointer)
                                     .map_err(|e| SSTableError::VLog(e.to_string()))?
                             } else {
                                 // No vlog attached (e.g., during compaction)
@@ -1312,7 +1334,7 @@ impl SSTable {
                             // from resurrecting from older levels after compaction completes.
                             if self.vlog.is_some() {
                                 // User-facing read: filter out tombstones (deleted keys)
-                                continue
+                                continue;
                             } else {
                                 // Compaction: preserve tombstones in output SSTable
                                 entry_value
@@ -1335,13 +1357,9 @@ impl SSTable {
     ///
     /// Returns an iterator that yields (key, Option<value>) where None indicates a tombstone.
     /// Blocks are loaded on-demand as the iterator is consumed, avoiding upfront materialization.
-    pub fn scan_range(
-        &self,
-        start_key: &[u8],
-        end_key: Option<&[u8]>,
-    ) -> SSTableRangeIterator {
+    pub fn scan_range(&self, start_key: &[u8], end_key: Option<&[u8]>) -> SSTableRangeIterator {
         SSTableRangeIterator::new(
-            Arc::clone(&self.file),  // Share file handle with iterator
+            Arc::clone(&self.file), // Share file handle with iterator
             Arc::clone(&self.block_cache),
             self.vlog.as_ref().map(Arc::clone),
             self.top_level_index.clone(),

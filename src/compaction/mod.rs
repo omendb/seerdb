@@ -163,7 +163,12 @@ impl CompactionStrategy {
     /// - Write-heavy workload → higher T (less compaction overhead)
     /// - Read-heavy workload → lower T (better read performance)
     pub fn adjust_for_workload(&mut self, writes: u64, reads: u64) {
-        if let Self::Adaptive { current_ratio, min_ratio, max_ratio } = self {
+        if let Self::Adaptive {
+            current_ratio,
+            min_ratio,
+            max_ratio,
+        } = self
+        {
             if reads == 0 || writes == 0 {
                 return; // Not enough data
             }
@@ -513,15 +518,23 @@ mod tests {
         // Build first SSTable
         let path1 = dir.path().join("input1.sst");
         let mut builder1 = SSTableBuilder::create(&path1).unwrap();
-        builder1.add(Bytes::from("key1"), Bytes::from("value1")).unwrap();
-        builder1.add(Bytes::from("key3"), Bytes::from("value3")).unwrap();
+        builder1
+            .add(Bytes::from("key1"), Bytes::from("value1"))
+            .unwrap();
+        builder1
+            .add(Bytes::from("key3"), Bytes::from("value3"))
+            .unwrap();
         builder1.finish().unwrap();
 
         // Build second SSTable
         let path2 = dir.path().join("input2.sst");
         let mut builder2 = SSTableBuilder::create(&path2).unwrap();
-        builder2.add(Bytes::from("key2"), Bytes::from("value2")).unwrap();
-        builder2.add(Bytes::from("key4"), Bytes::from("value4")).unwrap();
+        builder2
+            .add(Bytes::from("key2"), Bytes::from("value2"))
+            .unwrap();
+        builder2
+            .add(Bytes::from("key4"), Bytes::from("value4"))
+            .unwrap();
         builder2.finish().unwrap();
 
         // Compact
@@ -562,14 +575,20 @@ mod tests {
         // Build newer SSTable
         let path1 = dir.path().join("input1.sst");
         let mut builder1 = SSTableBuilder::create(&path1).unwrap();
-        builder1.add(Bytes::from("key1"), Bytes::from("new_value")).unwrap();
+        builder1
+            .add(Bytes::from("key1"), Bytes::from("new_value"))
+            .unwrap();
         builder1.finish().unwrap();
 
         // Build older SSTable
         let path2 = dir.path().join("input2.sst");
         let mut builder2 = SSTableBuilder::create(&path2).unwrap();
-        builder2.add(Bytes::from("key1"), Bytes::from("old_value")).unwrap();
-        builder2.add(Bytes::from("key2"), Bytes::from("value2")).unwrap();
+        builder2
+            .add(Bytes::from("key1"), Bytes::from("old_value"))
+            .unwrap();
+        builder2
+            .add(Bytes::from("key2"), Bytes::from("value2"))
+            .unwrap();
         builder2.finish().unwrap();
 
         // Compact (newer first)
@@ -602,7 +621,11 @@ mod tests {
         // Formula: T = sqrt((1.5 * 100000) / 1000) = sqrt(150) ≈ 12
         strategy.adjust_for_workload(100000, 1000);
         let ratio = strategy.current_ratio();
-        assert!(ratio > 8, "Write-heavy should increase ratio, got {}", ratio);
+        assert!(
+            ratio > 8,
+            "Write-heavy should increase ratio, got {}",
+            ratio
+        );
         assert!(ratio <= 20, "Should respect max ratio");
         assert_eq!(ratio, 12, "Expected ratio ~12 for 100:1 w:r");
 

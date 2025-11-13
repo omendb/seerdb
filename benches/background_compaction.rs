@@ -1,8 +1,8 @@
 // Background compaction benchmark - measure throughput improvement
 // Compares synchronous vs asynchronous compaction
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use seerdb::{DBOptions, SyncPolicy, DB};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use seerdb::{DB, DBOptions, SyncPolicy};
 use std::time::Duration;
 use tempfile::tempdir;
 

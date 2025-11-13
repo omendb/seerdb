@@ -279,9 +279,15 @@ mod tests {
         let storage = LocalStorage::new(dir.path().to_path_buf());
 
         // Write multiple SSTables
-        storage.write_sstable(Path::new("L0_001.sst"), b"data1").unwrap();
-        storage.write_sstable(Path::new("L0_002.sst"), b"data2").unwrap();
-        storage.write_sstable(Path::new("L1_001.sst"), b"data3").unwrap();
+        storage
+            .write_sstable(Path::new("L0_001.sst"), b"data1")
+            .unwrap();
+        storage
+            .write_sstable(Path::new("L0_002.sst"), b"data2")
+            .unwrap();
+        storage
+            .write_sstable(Path::new("L1_001.sst"), b"data3")
+            .unwrap();
 
         // List all
         let sstables = storage.list_sstables(Path::new(".")).unwrap();

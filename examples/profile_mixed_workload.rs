@@ -2,7 +2,7 @@
 //!
 //! Run with: cargo flamegraph --release --example profile_mixed_workload
 
-use seerdb::{DBOptions, DB};
+use seerdb::{DB, DBOptions};
 use std::time::Instant;
 
 fn main() -> anyhow::Result<()> {
@@ -10,7 +10,7 @@ fn main() -> anyhow::Result<()> {
 
     let options = DBOptions {
         data_dir: dir.path().to_path_buf(),
-        memtable_capacity: 64 * 1024 * 1024,  // 64MB
+        memtable_capacity: 64 * 1024 * 1024, // 64MB
         ..Default::default()
     };
 

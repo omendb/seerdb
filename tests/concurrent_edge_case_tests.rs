@@ -1,7 +1,7 @@
 // Concurrent edge case tests
 // Tests complex interactions: flush during read, compact during write, etc.
 
-use seerdb::{DBOptions, SyncPolicy, DB};
+use seerdb::{DB, DBOptions, SyncPolicy};
 use std::path::PathBuf;
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -20,7 +20,8 @@ fn test_reads_during_flush() {
 
     // Pre-populate with data
     for i in 0..1000 {
-        db.put(format!("key_{:04}", i).as_bytes(), b"value").unwrap();
+        db.put(format!("key_{:04}", i).as_bytes(), b"value")
+            .unwrap();
     }
 
     let barrier = Arc::new(Barrier::new(2));
@@ -66,11 +67,8 @@ fn test_writes_during_compaction() {
 
     // Write enough to trigger multiple levels and compactions
     for i in 0..5000 {
-        db.put(
-            format!("key_{:05}", i).as_bytes(),
-            &vec![b'v'; 100],
-        )
-        .unwrap();
+        db.put(format!("key_{:05}", i).as_bytes(), &vec![b'v'; 100])
+            .unwrap();
     }
 
     let barrier = Arc::new(Barrier::new(2));
@@ -82,10 +80,7 @@ fn test_writes_during_compaction() {
         barrier_write.wait();
         for i in 5000..6000 {
             db_write
-                .put(
-                    format!("key_{:05}", i).as_bytes(),
-                    &vec![b'v'; 100],
-                )
+                .put(format!("key_{:05}", i).as_bytes(), &vec![b'v'; 100])
                 .unwrap();
         }
     });
@@ -118,7 +113,8 @@ fn test_concurrent_flushes() {
 
     // Populate data
     for i in 0..100 {
-        db.put(format!("key_{:03}", i).as_bytes(), b"value").unwrap();
+        db.put(format!("key_{:03}", i).as_bytes(), b"value")
+            .unwrap();
     }
 
     // Try to flush from multiple threads simultaneously
@@ -150,7 +146,8 @@ fn test_delete_during_read() {
 
     // Pre-populate
     for i in 0..1000 {
-        db.put(format!("key_{:04}", i).as_bytes(), b"value").unwrap();
+        db.put(format!("key_{:04}", i).as_bytes(), b"value")
+            .unwrap();
     }
 
     let barrier = Arc::new(Barrier::new(2));
@@ -281,7 +278,11 @@ fn test_heavy_concurrent_mixed_operations() {
         b3.wait();
         let mut read_count = 0;
         for i in 0..500 {
-            if db3.get(format!("key_a_{:04}", i).as_bytes()).unwrap().is_some() {
+            if db3
+                .get(format!("key_a_{:04}", i).as_bytes())
+                .unwrap()
+                .is_some()
+            {
                 read_count += 1;
             }
         }
@@ -319,18 +320,29 @@ fn test_heavy_concurrent_mixed_operations() {
         let key = format!("key_a_{:04}", i);
         let result = db.get(key.as_bytes()).unwrap();
         if result.is_some() {
-            eprintln!("ERROR: Key {} should be deleted but got value: {:?}", key, result);
+            eprintln!(
+                "ERROR: Key {} should be deleted but got value: {:?}",
+                key, result
+            );
             eprintln!("This suggests the tombstone is not masking the older value in L0");
         }
         assert!(result.is_none(), "Key {} should be deleted", key);
     }
     // key_a_250..499: should exist
     for i in 250..500 {
-        assert!(db.get(format!("key_a_{:04}", i).as_bytes()).unwrap().is_some());
+        assert!(
+            db.get(format!("key_a_{:04}", i).as_bytes())
+                .unwrap()
+                .is_some()
+        );
     }
     // key_b_0..499: all should exist
     for i in 0..500 {
-        assert!(db.get(format!("key_b_{:04}", i).as_bytes()).unwrap().is_some());
+        assert!(
+            db.get(format!("key_b_{:04}", i).as_bytes())
+                .unwrap()
+                .is_some()
+        );
     }
 }
 
@@ -373,7 +385,11 @@ fn test_flush_during_wal_write() {
 
     // All data should be present
     for i in 0..100 {
-        assert!(db.get(format!("key_{:03}", i).as_bytes()).unwrap().is_some());
+        assert!(
+            db.get(format!("key_{:03}", i).as_bytes())
+                .unwrap()
+                .is_some()
+        );
     }
 }
 

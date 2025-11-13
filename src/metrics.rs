@@ -56,9 +56,9 @@ pub struct DBStats {
     pub total_sstables: usize,
 
     // Write amplification tracking
-    pub logical_bytes_written: u64,      // Bytes written by user (put values)
-    pub physical_bytes_written: u64,     // Bytes written to disk (WAL, SSTable, vLog, compaction)
-    pub write_amplification: f64,        // physical / logical
+    pub logical_bytes_written: u64, // Bytes written by user (put values)
+    pub physical_bytes_written: u64, // Bytes written to disk (WAL, SSTable, vLog, compaction)
+    pub write_amplification: f64,   // physical / logical
 
     // Uptime
     pub uptime_seconds: u64,
@@ -74,8 +74,8 @@ pub(crate) struct MetricsCollector {
     pub(crate) total_compactions: AtomicU64,
 
     // Write amplification tracking
-    pub(crate) logical_bytes_written: AtomicU64,   // User data bytes
-    pub(crate) physical_bytes_written: AtomicU64,  // Disk bytes
+    pub(crate) logical_bytes_written: AtomicU64, // User data bytes
+    pub(crate) physical_bytes_written: AtomicU64, // Disk bytes
 
     // Latency histograms (require locking)
     pub(crate) put_latencies: std::sync::Mutex<Histogram<u64>>,
@@ -164,13 +164,15 @@ impl MetricsCollector {
     /// Record logical bytes written (user data)
     #[inline]
     pub fn record_logical_bytes(&self, bytes: u64) {
-        self.logical_bytes_written.fetch_add(bytes, Ordering::Relaxed);
+        self.logical_bytes_written
+            .fetch_add(bytes, Ordering::Relaxed);
     }
 
     /// Record physical bytes written to disk (WAL, SSTable, vLog, compaction)
     #[inline]
     pub fn record_physical_bytes(&self, bytes: u64) {
-        self.physical_bytes_written.fetch_add(bytes, Ordering::Relaxed);
+        self.physical_bytes_written
+            .fetch_add(bytes, Ordering::Relaxed);
     }
 
     /// Get current operation counts

@@ -36,7 +36,8 @@ fn main() {
     // Compare to baseline (RocksDB: 157,616 ops/sec)
     let rocksdb_baseline = 157_616.0;
     let ratio = ops_per_sec / rocksdb_baseline;
-    println!("  vs RocksDB baseline: {:.2}x ({:.0}% {})",
+    println!(
+        "  vs RocksDB baseline: {:.2}x ({:.0}% {})",
         ratio,
         ((1.0 - ratio).abs() * 100.0),
         if ratio >= 1.0 { "faster" } else { "slower" }

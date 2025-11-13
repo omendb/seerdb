@@ -1,7 +1,7 @@
 // Analyze bloom filter false positive rate
 // This helps understand if bloom filter is the bottleneck
 
-use seerdb::{DBOptions, DB};
+use seerdb::{DB, DBOptions};
 use std::time::Instant;
 use tempfile::tempdir;
 
@@ -23,7 +23,11 @@ fn main() {
     let db = DB::open(opts).unwrap();
     let value = vec![0u8; VALUE_SIZE];
 
-    println!("Writing {} keys with pattern 'key00000000' to 'key{:08}'", NUM_KEYS, NUM_KEYS - 1);
+    println!(
+        "Writing {} keys with pattern 'key00000000' to 'key{:08}'",
+        NUM_KEYS,
+        NUM_KEYS - 1
+    );
     for i in 0..NUM_KEYS {
         let key = format!("key{:08}", i);
         db.put(key.as_bytes(), &value).unwrap();
@@ -48,7 +52,10 @@ fn main() {
     let throughput = NUM_QUERIES as f64 / duration.as_secs_f64();
     println!("  Found: {} (should be 0)", found);
     println!("  Throughput: {:.0} ops/sec", throughput);
-    println!("  Latency: {:.2} µs/op", duration.as_micros() as f64 / NUM_QUERIES as f64);
+    println!(
+        "  Latency: {:.2} µs/op",
+        duration.as_micros() as f64 / NUM_QUERIES as f64
+    );
     println!();
 
     // Test 2: Query keys slightly outside range (similar prefix, might cause false positives)
@@ -66,7 +73,10 @@ fn main() {
     let throughput = NUM_QUERIES as f64 / duration.as_secs_f64();
     println!("  Found: {} (should be 0)", found);
     println!("  Throughput: {:.0} ops/sec", throughput);
-    println!("  Latency: {:.2} µs/op", duration.as_micros() as f64 / NUM_QUERIES as f64);
+    println!(
+        "  Latency: {:.2} µs/op",
+        duration.as_micros() as f64 / NUM_QUERIES as f64
+    );
     println!();
 
     // Test 3: Query keys that exist (baseline)
@@ -85,7 +95,10 @@ fn main() {
     let throughput = NUM_QUERIES as f64 / duration.as_secs_f64();
     println!("  Found: {} (should be ~100000)", found);
     println!("  Throughput: {:.0} ops/sec", throughput);
-    println!("  Latency: {:.2} µs/op", duration.as_micros() as f64 / NUM_QUERIES as f64);
+    println!(
+        "  Latency: {:.2} µs/op",
+        duration.as_micros() as f64 / NUM_QUERIES as f64
+    );
     println!();
 
     // Analysis

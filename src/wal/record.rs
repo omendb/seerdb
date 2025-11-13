@@ -31,11 +31,18 @@ pub enum BatchOp {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Record {
-    Put { key: Bytes, value: Bytes },
-    Delete { key: Bytes },
+    Put {
+        key: Bytes,
+        value: Bytes,
+    },
+    Delete {
+        key: Bytes,
+    },
     /// Atomic batch of operations
     /// All operations in a batch succeed or fail together
-    Batch { operations: Vec<BatchOp> },
+    Batch {
+        operations: Vec<BatchOp>,
+    },
 }
 
 impl Record {

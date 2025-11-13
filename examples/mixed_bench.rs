@@ -23,7 +23,10 @@ fn main() {
     }
 
     // Benchmark mixed workload (50% read, 50% write)
-    println!("\nBenchmarking {} operations (50% read, 50% write)...", num_ops);
+    println!(
+        "\nBenchmarking {} operations (50% read, 50% write)...",
+        num_ops
+    );
 
     let start = Instant::now();
     for i in 0..num_ops {
@@ -50,7 +53,8 @@ fn main() {
     // Compare to baseline (RocksDB: 95,238 ops/sec)
     let rocksdb_baseline = 95_238.0;
     let ratio = ops_per_sec / rocksdb_baseline;
-    println!("  vs RocksDB baseline: {:.2}x ({:.0}% {})",
+    println!(
+        "  vs RocksDB baseline: {:.2}x ({:.0}% {})",
         ratio,
         ((1.0 - ratio).abs() * 100.0),
         if ratio >= 1.0 { "faster" } else { "slower" }

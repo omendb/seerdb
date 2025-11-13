@@ -2,7 +2,7 @@
 // Measures: binary search, bloom filter, key comparison
 
 use bytes::Bytes;
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use seerdb::{BitPackedBloomFilter, BloomFilter, SSTableBuilder};
 use std::time::Duration;
 use tempfile::tempdir;

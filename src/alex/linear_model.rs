@@ -97,10 +97,7 @@ impl LinearModel {
         let n = data.len() as f64;
         let sum_x = data.iter().map(|(k, _)| *k as f64).sum::<f64>();
         let sum_y = data.iter().map(|(_, p)| *p as f64).sum::<f64>();
-        let sum_xy = data
-            .iter()
-            .map(|(k, p)| *k as f64 * *p as f64)
-            .sum::<f64>();
+        let sum_xy = data.iter().map(|(k, p)| *k as f64 * *p as f64).sum::<f64>();
         let sum_x2 = data.iter().map(|(k, _)| (*k as f64).powi(2)).sum::<f64>();
 
         // Compute slope and intercept
@@ -406,9 +403,7 @@ mod tests {
     #[test]
     fn test_large_scale() {
         // 1M data points
-        let data: Vec<(i64, usize)> = (0..1_000_000)
-            .map(|i| (i as i64, i as usize))
-            .collect();
+        let data: Vec<(i64, usize)> = (0..1_000_000).map(|i| (i as i64, i as usize)).collect();
         let mut model = LinearModel::new();
         model.train(&data);
 
@@ -425,9 +420,7 @@ mod tests {
     #[test]
     fn test_cdfshop_sampling() {
         // Test CDFShop adaptive sampling
-        let data: Vec<(i64, usize)> = (0..100_000)
-            .map(|i| (i as i64, i as usize))
-            .collect();
+        let data: Vec<(i64, usize)> = (0..100_000).map(|i| (i as i64, i as usize)).collect();
 
         // Train with sampling (√n = 316 samples from 100K)
         let mut sampled_model = LinearModel::new();
@@ -454,9 +447,7 @@ mod tests {
     #[test]
     fn test_sampling_threshold() {
         // Data below threshold (10K) - should use full training
-        let small_data: Vec<(i64, usize)> = (0..5_000)
-            .map(|i| (i as i64, i as usize))
-            .collect();
+        let small_data: Vec<(i64, usize)> = (0..5_000).map(|i| (i as i64, i as usize)).collect();
 
         let mut model = LinearModel::new();
         model.train(&small_data);
@@ -466,9 +457,7 @@ mod tests {
         assert!(model.intercept().abs() < 0.01);
 
         // Data above threshold (10K) - should use sampling
-        let large_data: Vec<(i64, usize)> = (0..50_000)
-            .map(|i| (i as i64, i as usize))
-            .collect();
+        let large_data: Vec<(i64, usize)> = (0..50_000).map(|i| (i as i64, i as usize)).collect();
 
         let mut model2 = LinearModel::new();
         model2.train(&large_data);

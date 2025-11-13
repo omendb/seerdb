@@ -1,7 +1,7 @@
 // Write amplification benchmark
 // Measures how much data is written to disk vs logical data written by user
 
-use seerdb::{DBOptions, SyncPolicy, DB};
+use seerdb::{DB, DBOptions, SyncPolicy};
 use std::path::PathBuf;
 use std::time::Instant;
 use tempfile::TempDir;
@@ -39,8 +39,8 @@ fn main() {
     let opts = DBOptions {
         data_dir: data_dir.clone(),
         memtable_capacity: 64 * 1024 * 1024, // 64MB memtable
-        background_compaction: true, // Enable compaction
-        wal_sync_policy: SyncPolicy::None, // Fast mode for benchmarking
+        background_compaction: true,         // Enable compaction
+        wal_sync_policy: SyncPolicy::None,   // Fast mode for benchmarking
         ..Default::default()
     };
 
@@ -76,11 +76,17 @@ fn main() {
     println!("Results:");
     println!("  Logical data:  {} MB", logical_bytes / 1024 / 1024);
     println!("  Physical data: {} MB", physical_bytes / 1024 / 1024);
-    println!("  Write amplification: {:.2}x", physical_bytes as f64 / logical_bytes as f64);
+    println!(
+        "  Write amplification: {:.2}x",
+        physical_bytes as f64 / logical_bytes as f64
+    );
     println!();
 
     println!("Comparison:");
     println!("  RocksDB typical:  10-30x write amplification");
     println!("  WiscKey target:   <5x write amplification");
-    println!("  seerdb (current): {:.2}x", physical_bytes as f64 / logical_bytes as f64);
+    println!(
+        "  seerdb (current): {:.2}x",
+        physical_bytes as f64 / logical_bytes as f64
+    );
 }

@@ -1,5 +1,5 @@
 // Measure time spent in iteration vs creation
-use seerdb::{DBOptions, DB};
+use seerdb::{DB, DBOptions};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -58,7 +58,9 @@ fn main() {
 
         // Measure creation
         let create_start = Instant::now();
-        let iter = db.range(start_key.as_bytes(), Some(end_key.as_bytes())).unwrap();
+        let iter = db
+            .range(start_key.as_bytes(), Some(end_key.as_bytes()))
+            .unwrap();
         let create_time = create_start.elapsed();
         total_create_time += create_time;
 
@@ -86,7 +88,12 @@ fn main() {
     println!("  Avg create time: {} µs", avg_create_us);
     println!("  Avg iterate time: {} µs", avg_iterate_us);
     println!("  Total per scan: {} µs", total_per_scan_us);
-    println!("  Iterate/create ratio: {:.1}x", avg_iterate_us as f64 / avg_create_us as f64);
-    println!("\nTime per entry during iteration: {:.2} µs",
-        total_iterate_time.as_micros() as f64 / total_entries as f64);
+    println!(
+        "  Iterate/create ratio: {:.1}x",
+        avg_iterate_us as f64 / avg_create_us as f64
+    );
+    println!(
+        "\nTime per entry during iteration: {:.2} µs",
+        total_iterate_time.as_micros() as f64 / total_entries as f64
+    );
 }

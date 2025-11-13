@@ -2,7 +2,7 @@
 // Tests checksum validation and corruption handling
 // Critical for data integrity: detect and reject corrupted data
 
-use seerdb::{DBOptions, DB};
+use seerdb::{DB, DBOptions};
 use std::fs::{self, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;
@@ -10,7 +10,8 @@ use tempfile::TempDir;
 
 // Helper to find first SSTable file (handles dynamic sequence numbers)
 fn find_sstable(data_dir: &PathBuf) -> Option<PathBuf> {
-    fs::read_dir(data_dir).ok()?
+    fs::read_dir(data_dir)
+        .ok()?
         .filter_map(|e| e.ok())
         .find(|e| e.file_name().to_string_lossy().ends_with(".sst"))
         .map(|e| e.path())
@@ -30,7 +31,8 @@ fn test_detect_corrupted_sstable() {
         let db = DB::open(opts).unwrap();
 
         for i in 0..100 {
-            db.put(format!("key_{:03}", i).as_bytes(), b"value").unwrap();
+            db.put(format!("key_{:03}", i).as_bytes(), b"value")
+                .unwrap();
         }
 
         db.flush().unwrap();
@@ -39,10 +41,7 @@ fn test_detect_corrupted_sstable() {
     // Corrupt the SSTable file
     let sstable_path = find_sstable(&data_dir).expect("No SSTable found");
     {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .open(&sstable_path)
-            .unwrap();
+        let mut file = OpenOptions::new().write(true).open(&sstable_path).unwrap();
 
         // Corrupt data at offset 1000
         file.seek(SeekFrom::Start(1000)).unwrap();
@@ -94,7 +93,8 @@ fn test_sstable_validate_method() {
         let db = DB::open(opts).unwrap();
 
         for i in 0..100 {
-            db.put(format!("key_{:03}", i).as_bytes(), &vec![b'v'; 100]).unwrap();
+            db.put(format!("key_{:03}", i).as_bytes(), &vec![b'v'; 100])
+                .unwrap();
         }
 
         db.flush().unwrap();
@@ -109,16 +109,16 @@ fn test_sstable_validate_method() {
 
         // Should succeed for valid SSTable
         let result = sstable.validate();
-        assert!(result.is_ok(), "Validate should succeed for uncorrupted SSTable");
+        assert!(
+            result.is_ok(),
+            "Validate should succeed for uncorrupted SSTable"
+        );
     }
 
     // Corrupt the file
     let sstable_path = find_sstable(&data_dir).expect("No SSTable found");
     {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .open(&sstable_path)
-            .unwrap();
+        let mut file = OpenOptions::new().write(true).open(&sstable_path).unwrap();
 
         file.seek(SeekFrom::Start(500)).unwrap();
         file.write_all(b"CORRUPTION").unwrap();
@@ -166,7 +166,8 @@ fn test_corrupted_wal_detection() {
         let db = DB::open(opts).unwrap();
 
         for i in 0..50 {
-            db.put(format!("key_{:03}", i).as_bytes(), b"value").unwrap();
+            db.put(format!("key_{:03}", i).as_bytes(), b"value")
+                .unwrap();
         }
 
         // Don't flush - data only in WAL
@@ -175,10 +176,7 @@ fn test_corrupted_wal_detection() {
     // Corrupt WAL file
     let wal_path = data_dir.join("wal.log");
     {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .open(&wal_path)
-            .unwrap();
+        let mut file = OpenOptions::new().write(true).open(&wal_path).unwrap();
 
         // Corrupt WAL at offset 100
         file.seek(SeekFrom::Start(100)).unwrap();
@@ -200,12 +198,18 @@ fn test_corrupted_wal_detection() {
                 // May indicate corrupted record was skipped
                 // Check if any data recovered
                 let recovered_count = (0..50)
-                    .filter(|i| db.get(format!("key_{:03}", i).as_bytes()).unwrap().is_some())
+                    .filter(|i| {
+                        db.get(format!("key_{:03}", i).as_bytes())
+                            .unwrap()
+                            .is_some()
+                    })
                     .count();
 
                 // Some data may be recovered before corruption point
-                assert!(recovered_count < 50,
-                    "Should not recover all data if WAL corrupted");
+                assert!(
+                    recovered_count < 50,
+                    "Should not recover all data if WAL corrupted"
+                );
             }
             Err(_) => {
                 // WAL corruption detected - this is acceptable behavior
@@ -229,7 +233,8 @@ fn test_truncated_sstable() {
         let db = DB::open(opts).unwrap();
 
         for i in 0..100 {
-            db.put(format!("key_{:03}", i).as_bytes(), &vec![b'v'; 100]).unwrap();
+            db.put(format!("key_{:03}", i).as_bytes(), &vec![b'v'; 100])
+                .unwrap();
         }
 
         db.flush().unwrap();
@@ -242,10 +247,7 @@ fn test_truncated_sstable() {
         let metadata = fs::metadata(&sstable_path).unwrap();
         let original_size = metadata.len();
 
-        let file = OpenOptions::new()
-            .write(true)
-            .open(&sstable_path)
-            .unwrap();
+        let file = OpenOptions::new().write(true).open(&sstable_path).unwrap();
 
         // Truncate to half size
         file.set_len(original_size / 2).unwrap();
@@ -264,17 +266,17 @@ fn test_truncated_sstable() {
                 // Opened despite truncation
                 // Try to read data - should fail or return partial data
                 let readable_count = (0..100)
-                    .filter(|i| {
-                        match db.get(format!("key_{:03}", i).as_bytes()) {
-                            Ok(Some(_)) => true,
-                            _ => false,
-                        }
+                    .filter(|i| match db.get(format!("key_{:03}", i).as_bytes()) {
+                        Ok(Some(_)) => true,
+                        _ => false,
                     })
                     .count();
 
                 // Should not be able to read all keys from truncated file
-                assert!(readable_count < 100,
-                    "Should not read all keys from truncated SSTable");
+                assert!(
+                    readable_count < 100,
+                    "Should not read all keys from truncated SSTable"
+                );
             }
             Err(_) => {
                 // Failed to open - acceptable if truncation detected during load
@@ -307,10 +309,7 @@ fn test_missing_footer() {
         let metadata = fs::metadata(&sstable_path).unwrap();
         let size = metadata.len();
 
-        let file = OpenOptions::new()
-            .write(true)
-            .open(&sstable_path)
-            .unwrap();
+        let file = OpenOptions::new().write(true).open(&sstable_path).unwrap();
 
         // Remove footer
         file.set_len(size - 40).unwrap();
@@ -351,7 +350,8 @@ fn test_corrupted_block_header() {
         let db = DB::open(opts).unwrap();
 
         for i in 0..100 {
-            db.put(format!("key_{:03}", i).as_bytes(), b"value").unwrap();
+            db.put(format!("key_{:03}", i).as_bytes(), b"value")
+                .unwrap();
         }
 
         db.flush().unwrap();
@@ -360,10 +360,7 @@ fn test_corrupted_block_header() {
     // Corrupt block header (early in file)
     let sstable_path = find_sstable(&data_dir).expect("No SSTable found");
     {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .open(&sstable_path)
-            .unwrap();
+        let mut file = OpenOptions::new().write(true).open(&sstable_path).unwrap();
 
         // Corrupt header area (after file header)
         file.seek(SeekFrom::Start(50)).unwrap();
@@ -414,10 +411,7 @@ fn test_wrong_magic_number() {
     // Corrupt magic number in header
     let sstable_path = find_sstable(&data_dir).expect("No SSTable found");
     {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .open(&sstable_path)
-            .unwrap();
+        let mut file = OpenOptions::new().write(true).open(&sstable_path).unwrap();
 
         // Overwrite magic number (first 4 bytes)
         file.seek(SeekFrom::Start(0)).unwrap();

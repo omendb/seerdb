@@ -4,7 +4,7 @@
 //! performance at 50M+ rows by using a tree of inner nodes for routing, keeping
 //! the hot routing data in CPU cache.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 use super::gapped_node::GappedNode;
 use super::linear_model::LinearModel;
@@ -46,9 +46,9 @@ pub enum InnerNodeChildren {
 // Configuration constants
 // Constants for future multi-level optimization
 #[allow(dead_code)]
-const MIN_FANOUT: usize = 16;      // Minimum children per inner node
+const MIN_FANOUT: usize = 16; // Minimum children per inner node
 #[allow(dead_code)]
-const MAX_FANOUT: usize = 256;     // Maximum children per inner node
+const MAX_FANOUT: usize = 256; // Maximum children per inner node
 #[allow(dead_code)]
 const BULK_BUILD_FANOUT: usize = 64; // Default fanout for bulk building
 
@@ -87,7 +87,10 @@ impl MultiLevelAlexTree {
         // Verify all keys were inserted
         let total_leaf_keys: usize = leaves.iter().map(|l| l.num_keys()).sum();
         if total_leaf_keys != num_keys {
-            eprintln!("WARNING: Only {} of {} keys inserted into leaves", total_leaf_keys, num_keys);
+            eprintln!(
+                "WARNING: Only {} of {} keys inserted into leaves",
+                total_leaf_keys, num_keys
+            );
         }
 
         // If only one leaf, no inner nodes needed
@@ -154,9 +157,7 @@ impl MultiLevelAlexTree {
         let leaf_keys: Vec<(i64, usize)> = leaves
             .iter()
             .enumerate()
-            .filter_map(|(idx, leaf)| {
-                leaf.min_key().map(|key| (key, idx))
-            })
+            .filter_map(|(idx, leaf)| leaf.min_key().map(|key| (key, idx)))
             .collect();
 
         if leaf_keys.is_empty() {
@@ -219,9 +220,10 @@ impl MultiLevelAlexTree {
             // Binary search on leaf boundaries
             for (i, leaf) in self.leaves.iter().enumerate() {
                 if let Some(max_key) = leaf.max_key()
-                    && key <= max_key {
-                        return Ok(i);
-                    }
+                    && key <= max_key
+                {
+                    return Ok(i);
+                }
             }
 
             // Key goes in last leaf
@@ -414,7 +416,7 @@ impl InnerNode {
     fn find_child(&self, key: i64, _predicted: usize) -> usize {
         // Binary search on split keys for correction
         match self.split_keys.binary_search(&key) {
-            Ok(idx) | Err(idx) => idx.min(self.num_children() - 1)
+            Ok(idx) | Err(idx) => idx.min(self.num_children() - 1),
         }
     }
 
@@ -427,13 +429,20 @@ impl InnerNode {
     }
 
     /// Handle a leaf split by updating the routing structure
-    fn handle_leaf_split(&mut self, old_leaf: usize, split_key: i64, new_leaf: usize) -> Result<()> {
+    fn handle_leaf_split(
+        &mut self,
+        old_leaf: usize,
+        split_key: i64,
+        new_leaf: usize,
+    ) -> Result<()> {
         // This is simplified - full implementation would update routing
         // and potentially trigger inner node splits
         match &mut self.children {
             InnerNodeChildren::Leaves(indices) => {
                 // Add new leaf to appropriate position
-                let insert_pos = indices.iter().position(|&idx| idx == old_leaf)
+                let insert_pos = indices
+                    .iter()
+                    .position(|&idx| idx == old_leaf)
                     .unwrap_or(indices.len());
 
                 indices.insert(insert_pos + 1, new_leaf);

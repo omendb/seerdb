@@ -1,7 +1,7 @@
 // Profile write path to identify bottlenecks
 // Focused on pure sequential writes with timing breakdown
 
-use seerdb::{DBOptions, DB};
+use seerdb::{DB, DBOptions};
 use std::time::Instant;
 use tempfile::tempdir;
 
@@ -63,8 +63,14 @@ fn profile_writes(sync_policy: seerdb::SyncPolicy, large_memtable: bool) {
 
     // Get stats
     let stats = db.stats();
-    println!("  Logical bytes: {:.2} MB", stats.logical_bytes_written as f64 / 1_000_000.0);
-    println!("  Physical bytes: {:.2} MB", stats.physical_bytes_written as f64 / 1_000_000.0);
+    println!(
+        "  Logical bytes: {:.2} MB",
+        stats.logical_bytes_written as f64 / 1_000_000.0
+    );
+    println!(
+        "  Physical bytes: {:.2} MB",
+        stats.physical_bytes_written as f64 / 1_000_000.0
+    );
     if stats.logical_bytes_written > 0 {
         let write_amp = stats.physical_bytes_written as f64 / stats.logical_bytes_written as f64;
         println!("  Write amplification: {:.2}x", write_amp);

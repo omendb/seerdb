@@ -2,7 +2,7 @@
 // Tests performance with large values (key-value separation)
 // Compares performance with vlog enabled vs disabled
 
-use seerdb::{DBOptions, SyncPolicy, DB};
+use seerdb::{DB, DBOptions, SyncPolicy};
 use std::path::PathBuf;
 use std::time::Instant;
 use tempfile::TempDir;
@@ -23,7 +23,11 @@ fn benchmark_large_values(vlog_enabled: bool, value_size: usize, operations: usi
     let db = DB::open(opts).unwrap();
 
     // Workload 1: Sequential Writes
-    println!("  Sequential Writes ({} ops, {} KB values)", operations, value_size / 1024);
+    println!(
+        "  Sequential Writes ({} ops, {} KB values)",
+        operations,
+        value_size / 1024
+    );
     let start = Instant::now();
 
     for i in 0..operations {

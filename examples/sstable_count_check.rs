@@ -1,6 +1,6 @@
 // Check how many SSTables are created and their structure
 
-use seerdb::{DBOptions, DB};
+use seerdb::{DB, DBOptions};
 use std::fs;
 use tempfile::tempdir;
 
@@ -44,7 +44,11 @@ fn main() {
                     if let Ok(metadata) = fs::metadata(&path) {
                         let size_mb = metadata.len() as f64 / 1_000_000.0;
                         total_size += metadata.len();
-                        println!("  {}: {:.2} MB", path.file_name().unwrap().to_string_lossy(), size_mb);
+                        println!(
+                            "  {}: {:.2} MB",
+                            path.file_name().unwrap().to_string_lossy(),
+                            size_mb
+                        );
                     }
                 }
             }
@@ -53,8 +57,14 @@ fn main() {
 
     println!();
     println!("Total SSTables: {}", sstable_count);
-    println!("Total SSTable size: {:.2} MB", total_size as f64 / 1_000_000.0);
-    println!("Average SSTable size: {:.2} MB", (total_size as f64 / sstable_count as f64) / 1_000_000.0);
+    println!(
+        "Total SSTable size: {:.2} MB",
+        total_size as f64 / 1_000_000.0
+    );
+    println!(
+        "Average SSTable size: {:.2} MB",
+        (total_size as f64 / sstable_count as f64) / 1_000_000.0
+    );
 
     println!("\n=== Analysis ===");
     println!("If there's only 1 SSTable, read overhead is minimal.");

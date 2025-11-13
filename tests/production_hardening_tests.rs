@@ -2,7 +2,7 @@
 // Tests for memory budget, disk space, background panic detection, etc.
 // These validate the production-readiness features added in Nov 2025
 
-use seerdb::{DBError, DBOptions, DB};
+use seerdb::{DB, DBError, DBOptions};
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
@@ -22,7 +22,7 @@ fn test_memory_budget_early_flush() {
     let opts = DBOptions {
         data_dir,
         max_memory_bytes: Some(50 * 1024 * 1024), // 50MB limit
-        memtable_capacity: 10 * 1024 * 1024,       // 10MB per memtable
+        memtable_capacity: 10 * 1024 * 1024,      // 10MB per memtable
         background_flush: true,
         ..Default::default()
     };
@@ -71,8 +71,8 @@ fn test_memory_budget_write_blocking() {
     let opts = DBOptions {
         data_dir,
         max_memory_bytes: Some(30 * 1024 * 1024), // 30MB limit (smaller for faster test)
-        memtable_capacity: 20 * 1024 * 1024,       // 20MB per memtable
-        background_flush: false,                    // Disable auto flush to test blocking
+        memtable_capacity: 20 * 1024 * 1024,      // 20MB per memtable
+        background_flush: false,                  // Disable auto flush to test blocking
         ..Default::default()
     };
 
@@ -159,7 +159,10 @@ fn test_disk_space_validation_on_write() {
     // Write should fail with DiskSpaceFull error
     let result = db.put(b"key", b"value");
 
-    assert!(result.is_err(), "Write should fail when disk space insufficient");
+    assert!(
+        result.is_err(),
+        "Write should fail when disk space insufficient"
+    );
 
     let err = result.unwrap_err();
     assert!(
@@ -370,7 +373,8 @@ fn test_fd_usage_reasonable() {
 
     // Write some data
     for i in 0..1000 {
-        db.put(format!("key_{:04}", i).as_bytes(), b"value").unwrap();
+        db.put(format!("key_{:04}", i).as_bytes(), b"value")
+            .unwrap();
     }
 
     // FD usage should be minimal (WAL + a few SSTables)
@@ -421,7 +425,8 @@ fn test_sstable_fsync_on_flush() {
 
     // Write data
     for i in 0..1000 {
-        db.put(format!("key_{:04}", i).as_bytes(), b"value").unwrap();
+        db.put(format!("key_{:04}", i).as_bytes(), b"value")
+            .unwrap();
     }
 
     // Flush to create SSTable
@@ -439,7 +444,9 @@ fn test_sstable_fsync_on_flush() {
 
     for i in 0..1000 {
         assert!(
-            db.get(format!("key_{:04}", i).as_bytes()).unwrap().is_some(),
+            db.get(format!("key_{:04}", i).as_bytes())
+                .unwrap()
+                .is_some(),
             "Fsync ensures data durability after flush"
         );
     }
@@ -461,7 +468,8 @@ fn test_sstable_durability_after_crash() {
         let db = DB::open(opts).unwrap();
 
         for i in 0..500 {
-            db.put(format!("key_{:04}", i).as_bytes(), b"durable").unwrap();
+            db.put(format!("key_{:04}", i).as_bytes(), b"durable")
+                .unwrap();
         }
 
         db.flush().unwrap();

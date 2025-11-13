@@ -1,6 +1,6 @@
 use seerdb::{DB, DBOptions};
-use tempfile::TempDir;
 use std::path::PathBuf;
+use tempfile::TempDir;
 
 fn main() {
     let temp_dir = TempDir::new().unwrap();
@@ -27,7 +27,8 @@ fn main() {
     println!("\nFiles in {:?}:", data_dir);
     for entry in std::fs::read_dir(&data_dir).unwrap() {
         let entry = entry.unwrap();
-        println!("  {} ({} bytes)",
+        println!(
+            "  {} ({} bytes)",
             entry.file_name().to_string_lossy(),
             entry.metadata().unwrap().len()
         );

@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use proptest::prelude::*;
-use seerdb::{DBOptions, DB};
+use seerdb::{DB, DBOptions};
 use std::path::PathBuf;
 use tempfile::TempDir;
 

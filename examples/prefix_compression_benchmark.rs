@@ -49,7 +49,10 @@ fn benchmark_sequential_keys() {
     println!("  Original size (no compression): {} bytes", original_size);
     println!("  Compressed size: {} bytes", compressed_size);
     println!("  Space savings: {:.1}%", compression_ratio);
-    println!("  Throughput: {:.0} entries/sec", count as f64 / elapsed.as_secs_f64());
+    println!(
+        "  Throughput: {:.0} entries/sec",
+        count as f64 / elapsed.as_secs_f64()
+    );
     println!();
 }
 
@@ -85,7 +88,10 @@ fn benchmark_random_keys() {
     println!("  Original size (no compression): {} bytes", original_size);
     println!("  Compressed size: {} bytes", compressed_size);
     println!("  Space savings: {:.1}%", compression_ratio);
-    println!("  Throughput: {:.0} entries/sec", count as f64 / elapsed.as_secs_f64());
+    println!(
+        "  Throughput: {:.0} entries/sec",
+        count as f64 / elapsed.as_secs_f64()
+    );
     println!();
 }
 
@@ -99,7 +105,10 @@ fn benchmark_realistic_keys() {
 
     // Simulate user:id:field pattern (10 users, 10 fields each)
     for user_id in 0..100 {
-        for field in &["name", "email", "age", "city", "country", "phone", "address", "zip", "company", "title"] {
+        for field in &[
+            "name", "email", "age", "city", "country", "phone", "address", "zip", "company",
+            "title",
+        ] {
             let key = format!("user:{}:{}", user_id, field);
             let value = format!("value_{}", count);
             if !builder.add(key.as_bytes(), value.as_bytes()) {
@@ -123,6 +132,9 @@ fn benchmark_realistic_keys() {
     println!("  Original size (no compression): {} bytes", original_size);
     println!("  Compressed size: {} bytes", compressed_size);
     println!("  Space savings: {:.1}%", compression_ratio);
-    println!("  Throughput: {:.0} entries/sec", count as f64 / elapsed.as_secs_f64());
+    println!(
+        "  Throughput: {:.0} entries/sec",
+        count as f64 / elapsed.as_secs_f64()
+    );
     println!();
 }

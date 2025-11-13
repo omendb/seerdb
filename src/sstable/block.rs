@@ -23,11 +23,11 @@
 // - Decompressed block cache: 2x cache efficiency
 
 use bytes::{Bytes, BytesMut};
+use lz4_flex::{compress_prepend_size, decompress_size_prepended};
 use std::io::{self, Cursor};
 use std::sync::{Arc, OnceLock};
 use thiserror::Error;
-use varint_rs::{VarintWriter, VarintReader};
-use lz4_flex::{compress_prepend_size, decompress_size_prepended};
+use varint_rs::{VarintReader, VarintWriter};
 
 /// Helper to write varint to BytesMut
 fn write_varint(buf: &mut BytesMut, value: u64) {
@@ -263,8 +263,7 @@ impl Block {
         let uncompressed_data = if compressed {
             // Compressed data is everything before metadata (13 bytes)
             let compressed_slice = &data[..data.len() - 13];
-            decompress_size_prepended(compressed_slice)
-                .map_err(|_| BlockError::InvalidFormat)?
+            decompress_size_prepended(compressed_slice).map_err(|_| BlockError::InvalidFormat)?
         } else {
             // Uncompressed data (legacy format)
             data[..data.len() - 13].to_vec()
@@ -323,9 +322,9 @@ impl Block {
     /// Iterate over all entries in the block
     pub fn iter(&self) -> BlockIterator<'_> {
         // Populate decompressed cache on first access (lazy, thread-safe)
-        let entries = self.decompressed_cache.get_or_init(|| {
-            self.decompress_all_entries()
-        });
+        let entries = self
+            .decompressed_cache
+            .get_or_init(|| self.decompress_all_entries());
 
         BlockIterator::new_cached(entries)
     }
@@ -333,9 +332,9 @@ impl Block {
     /// Find exact key match using binary search (for data blocks)
     /// Returns Some((key, value)) if found, None otherwise
     pub fn find_exact(&self, key: &[u8]) -> Option<(Bytes, Bytes)> {
-        let entries = self.decompressed_cache.get_or_init(|| {
-            self.decompress_all_entries()
-        });
+        let entries = self
+            .decompressed_cache
+            .get_or_init(|| self.decompress_all_entries());
 
         // Binary search for exact match
         match entries.binary_search_by(|(k, _)| k.as_ref().cmp(key)) {
@@ -347,9 +346,9 @@ impl Block {
     /// Find first key >= target using binary search (for index blocks)
     /// Returns Some((key, value)) if found, None otherwise
     pub fn find_lower_bound(&self, key: &[u8]) -> Option<(Bytes, Bytes)> {
-        let entries = self.decompressed_cache.get_or_init(|| {
-            self.decompress_all_entries()
-        });
+        let entries = self
+            .decompressed_cache
+            .get_or_init(|| self.decompress_all_entries());
 
         // Binary search for first entry where entry_key >= key
         let idx = entries.partition_point(|(k, _)| k.as_ref() < key);
@@ -441,10 +440,7 @@ pub struct BlockIterator<'a> {
 
 impl<'a> BlockIterator<'a> {
     fn new_cached(entries: &'a [(Bytes, Bytes)]) -> Self {
-        Self {
-            entries,
-            index: 0,
-        }
+        Self { entries, index: 0 }
     }
 }
 
@@ -517,7 +513,10 @@ mod tests {
             count += 1;
         }
 
-        assert!(count > 0 && count < 100, "Block should fill before 100 entries");
+        assert!(
+            count > 0 && count < 100,
+            "Block should fill before 100 entries"
+        );
 
         let block_data = builder.finish();
         let block = Block::new(block_data).unwrap();

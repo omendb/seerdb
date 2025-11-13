@@ -1,7 +1,7 @@
 // ALEX vs partition_point benchmark
 // Debug why ALEX lower_bound is slower than partition_point
 
-use seerdb::{DBOptions, DB};
+use seerdb::{DB, DBOptions};
 use std::time::Instant;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -47,7 +47,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Results:");
     println!("  Total: {:.2}s", elapsed.as_secs_f64());
     println!("  Throughput: {:.0} ops/sec", ops_per_sec);
-    println!("  Latency: {:.2} µs/op", elapsed.as_micros() as f64 / 100_000.0);
+    println!(
+        "  Latency: {:.2} µs/op",
+        elapsed.as_micros() as f64 / 100_000.0
+    );
 
     // Cleanup
     drop(db);

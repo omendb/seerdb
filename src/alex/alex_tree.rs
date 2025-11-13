@@ -184,8 +184,8 @@ impl AlexTree {
     fn find_leaf_index(&self, key: i64) -> usize {
         // Binary search for first split_key > key
         match self.split_keys.binary_search(&key) {
-            Ok(idx) => idx + 1,  // key == split_keys[idx] → in leaf[idx+1]
-            Err(idx) => idx,     // key should be inserted at idx → in leaf[idx]
+            Ok(idx) => idx + 1, // key == split_keys[idx] → in leaf[idx+1]
+            Err(idx) => idx,    // key should be inserted at idx → in leaf[idx]
         }
     }
 

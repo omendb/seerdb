@@ -1,7 +1,7 @@
 // Benchmark to measure block cache hit rate
 // This helps understand if low cache hits are the bottleneck
 
-use seerdb::{DBOptions, DB};
+use seerdb::{DB, DBOptions};
 use std::time::Instant;
 use tempfile::tempdir;
 
@@ -122,7 +122,10 @@ fn main() {
     println!("Total operations: {}", total_reads + 2 * NUM_KEYS);
     println!("Total cache hits: {}", stats.cache_hits);
     println!("Total cache misses: {}", stats.cache_misses);
-    println!("Overall cache hit rate: {:.2}%", stats.cache_hit_rate * 100.0);
+    println!(
+        "Overall cache hit rate: {:.2}%",
+        stats.cache_hit_rate * 100.0
+    );
     println!();
     println!("Expected behavior:");
     println!("- Sequential reads: Moderate hit rate (blocks loaded sequentially)");

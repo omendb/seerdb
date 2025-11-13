@@ -1,7 +1,7 @@
 // Storage abstraction overhead benchmark
 // Verifies that file handle reuse has zero overhead compared to direct file I/O
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
@@ -37,7 +37,9 @@ fn bench_direct_file_io(c: &mut Criterion) {
             let mut buf = vec![0u8; 4096];
 
             // Read 10 random blocks
-            for offset in [0u64, 16384, 32768, 65536, 131072, 262144, 524288, 786432, 917504, 1044480] {
+            for offset in [
+                0u64, 16384, 32768, 65536, 131072, 262144, 524288, 786432, 917504, 1044480,
+            ] {
                 file.seek(SeekFrom::Start(offset)).unwrap();
                 file.read_exact(&mut buf).unwrap();
                 black_box(&buf);
@@ -59,7 +61,9 @@ fn bench_file_handle_reuse(c: &mut Criterion) {
     c.bench_function("file_handle_reuse_4kb", |b| {
         b.iter(|| {
             // Read 10 random blocks using shared handle
-            for offset in [0u64, 16384, 32768, 65536, 131072, 262144, 524288, 786432, 917504, 1044480] {
+            for offset in [
+                0u64, 16384, 32768, 65536, 131072, 262144, 524288, 786432, 917504, 1044480,
+            ] {
                 let mut f = file_handle.lock().unwrap();
                 f.seek(SeekFrom::Start(offset)).unwrap();
                 let mut buf = vec![0u8; 4096];
@@ -122,8 +126,8 @@ fn bench_random_reads(c: &mut Criterion) {
 
     // Generate random offsets (aligned to 4KB blocks)
     let random_offsets: Vec<u64> = vec![
-        0, 16384, 8192, 32768, 4096, 49152, 24576, 65536,
-        12288, 40960, 20480, 57344, 28672, 73728, 36864, 81920,
+        0, 16384, 8192, 32768, 4096, 49152, 24576, 65536, 12288, 40960, 20480, 57344, 28672, 73728,
+        36864, 81920,
     ];
 
     // Direct file I/O
@@ -185,17 +189,21 @@ fn bench_small_reads(c: &mut Criterion) {
         // File handle reuse (optimized SSTable approach)
         let file = File::open(&file_path).unwrap();
         let file_handle = Arc::new(Mutex::new(file));
-        group.bench_with_input(BenchmarkId::new("file_handle_reuse", size), size, |b, &size| {
-            b.iter(|| {
-                for offset in [0u64, 8192, 16384, 32768, 65536] {
-                    let mut f = file_handle.lock().unwrap();
-                    f.seek(SeekFrom::Start(offset)).unwrap();
-                    let mut buf = vec![0u8; size];
-                    f.read_exact(&mut buf).unwrap();
-                    black_box(&buf);
-                }
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("file_handle_reuse", size),
+            size,
+            |b, &size| {
+                b.iter(|| {
+                    for offset in [0u64, 8192, 16384, 32768, 65536] {
+                        let mut f = file_handle.lock().unwrap();
+                        f.seek(SeekFrom::Start(offset)).unwrap();
+                        let mut buf = vec![0u8; size];
+                        f.read_exact(&mut buf).unwrap();
+                        black_box(&buf);
+                    }
+                });
+            },
+        );
     }
 
     group.finish();

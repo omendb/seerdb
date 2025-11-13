@@ -2,7 +2,7 @@
 // Tests error handling when I/O operations fail
 // Critical for reliability: must handle I/O errors gracefully without data loss
 
-use seerdb::{DBOptions, DB};
+use seerdb::{DB, DBOptions};
 use std::fs::{self, OpenOptions};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -22,7 +22,8 @@ fn test_flush_failure_readonly_directory() {
 
     // Write data
     for i in 0..100 {
-        db.put(format!("key_{:03}", i).as_bytes(), b"value").unwrap();
+        db.put(format!("key_{:03}", i).as_bytes(), b"value")
+            .unwrap();
     }
 
     // Make directory read-only to simulate I/O failure
@@ -39,12 +40,17 @@ fn test_flush_failure_readonly_directory() {
     fs::set_permissions(&data_dir, perms).unwrap();
 
     // Flush should have failed
-    assert!(result.is_err(), "Flush should fail with read-only directory");
+    assert!(
+        result.is_err(),
+        "Flush should fail with read-only directory"
+    );
 
     // Verify data is still in memtable (not lost)
     for i in 0..100 {
         assert!(
-            db.get(format!("key_{:03}", i).as_bytes()).unwrap().is_some(),
+            db.get(format!("key_{:03}", i).as_bytes())
+                .unwrap()
+                .is_some(),
             "Data should remain in memtable after flush failure"
         );
     }
@@ -65,7 +71,8 @@ fn test_recovery_after_flush_failure() {
         let db = DB::open(opts).unwrap();
 
         for i in 0..50 {
-            db.put(format!("key_{:03}", i).as_bytes(), b"value").unwrap();
+            db.put(format!("key_{:03}", i).as_bytes(), b"value")
+                .unwrap();
         }
 
         // Make directory read-only
@@ -94,7 +101,9 @@ fn test_recovery_after_flush_failure() {
 
         for i in 0..50 {
             assert!(
-                db.get(format!("key_{:03}", i).as_bytes()).unwrap().is_some(),
+                db.get(format!("key_{:03}", i).as_bytes())
+                    .unwrap()
+                    .is_some(),
                 "Data should be recovered from WAL after flush failure"
             );
         }
@@ -160,10 +169,7 @@ fn test_corrupted_sstable_skipped() {
                     .count();
 
                 // Should be able to read uncorrupted data
-                assert!(
-                    readable > 0,
-                    "Should read data from uncorrupted SSTables"
-                );
+                assert!(readable > 0, "Should read data from uncorrupted SSTables");
             }
             Err(_) => {
                 // Also acceptable - strict corruption detection
@@ -187,7 +193,8 @@ fn test_partial_wal_recovery() {
         let db = DB::open(opts).unwrap();
 
         for i in 0..100 {
-            db.put(format!("key_{:03}", i).as_bytes(), b"value").unwrap();
+            db.put(format!("key_{:03}", i).as_bytes(), b"value")
+                .unwrap();
         }
 
         // Don't flush - data only in WAL
@@ -251,12 +258,17 @@ fn test_write_data_despite_wal_issues() {
 
     // Normal writes should work
     for i in 0..50 {
-        db.put(format!("key_{:03}", i).as_bytes(), b"value").unwrap();
+        db.put(format!("key_{:03}", i).as_bytes(), b"value")
+            .unwrap();
     }
 
     // Verify data is readable
     for i in 0..50 {
-        assert!(db.get(format!("key_{:03}", i).as_bytes()).unwrap().is_some());
+        assert!(
+            db.get(format!("key_{:03}", i).as_bytes())
+                .unwrap()
+                .is_some()
+        );
     }
 }
 
@@ -274,7 +286,8 @@ fn test_operations_after_failed_flush() {
 
     // Write initial data
     for i in 0..50 {
-        db.put(format!("key_{:03}", i).as_bytes(), b"value").unwrap();
+        db.put(format!("key_{:03}", i).as_bytes(), b"value")
+            .unwrap();
     }
 
     // Make directory read-only to cause flush failure
@@ -284,7 +297,10 @@ fn test_operations_after_failed_flush() {
 
     // Try flush (will fail)
     let flush_result = db.flush();
-    assert!(flush_result.is_err(), "Flush should fail with read-only dir");
+    assert!(
+        flush_result.is_err(),
+        "Flush should fail with read-only dir"
+    );
 
     // Restore permissions IMMEDIATELY for subsequent operations
     let mut perms = fs::metadata(&data_dir).unwrap().permissions();
@@ -307,7 +323,8 @@ fn test_operations_after_failed_flush() {
 
     // DB should accept new writes
     for i in 50..100 {
-        db.put(format!("key_{:03}", i).as_bytes(), b"value").unwrap();
+        db.put(format!("key_{:03}", i).as_bytes(), b"value")
+            .unwrap();
     }
 
     // New data should be readable
@@ -330,7 +347,9 @@ fn test_operations_after_failed_flush() {
     // All data should be readable after successful flush
     for i in 0..100 {
         assert!(
-            db.get(format!("key_{:03}", i).as_bytes()).unwrap().is_some(),
+            db.get(format!("key_{:03}", i).as_bytes())
+                .unwrap()
+                .is_some(),
             "All data should be readable after successful flush"
         );
     }
@@ -351,7 +370,8 @@ fn test_missing_sstable_file() {
         let db = DB::open(opts).unwrap();
 
         for i in 0..100 {
-            db.put(format!("key_{:03}", i).as_bytes(), b"value").unwrap();
+            db.put(format!("key_{:03}", i).as_bytes(), b"value")
+                .unwrap();
         }
 
         db.flush().unwrap();
@@ -398,10 +418,7 @@ fn test_missing_sstable_file() {
 
                 // DB should still be usable for new writes
                 db.put(b"new_key", b"new_value").unwrap();
-                assert_eq!(
-                    db.get(b"new_key").unwrap().unwrap().as_ref(),
-                    b"new_value"
-                );
+                assert_eq!(db.get(b"new_key").unwrap().unwrap().as_ref(), b"new_value");
             }
             Err(_) => {
                 // Also acceptable - strict file integrity check

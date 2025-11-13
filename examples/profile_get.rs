@@ -18,7 +18,7 @@ fn main() {
         let value = "x".repeat(100);
         db.put(key.as_bytes(), value.as_bytes()).unwrap();
     }
-    
+
     db.flush().unwrap();
     println!("Flushed to SSTables");
 
@@ -31,17 +31,17 @@ fn main() {
     // Benchmark point queries
     let num_ops = 100_000;
     println!("\nBenchmarking {} point queries...", num_ops);
-    
+
     let start = Instant::now();
     for i in 0..num_ops {
         let key = format!("key{:08}", i);
         let _ = db.get(key.as_bytes()).unwrap();
     }
     let elapsed = start.elapsed();
-    
+
     let ops_per_sec = num_ops as f64 / elapsed.as_secs_f64();
     let us_per_op = elapsed.as_micros() as f64 / num_ops as f64;
-    
+
     println!("\nResults:");
     println!("  Total time: {:.2}s", elapsed.as_secs_f64());
     println!("  Ops/sec: {:.0}", ops_per_sec);

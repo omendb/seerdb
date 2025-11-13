@@ -1,7 +1,7 @@
 // Write Amplification: Inline vs vlog (WiscKey)
 // Tests if vlog achieves 5-10x write amp reduction for large values
 
-use seerdb::{DBOptions, SyncPolicy, DB};
+use seerdb::{DB, DBOptions, SyncPolicy};
 use std::path::PathBuf;
 use std::time::Instant;
 use tempfile::TempDir;
@@ -22,7 +22,12 @@ fn get_dir_size(path: &std::path::Path) -> u64 {
     size
 }
 
-fn run_benchmark(name: &str, vlog_threshold: Option<usize>, value_size: usize, operations: usize) -> (f64, f64) {
+fn run_benchmark(
+    name: &str,
+    vlog_threshold: Option<usize>,
+    value_size: usize,
+    operations: usize,
+) -> (f64, f64) {
     println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("{}", name);
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
@@ -80,7 +85,10 @@ fn run_benchmark(name: &str, vlog_threshold: Option<usize>, value_size: usize, o
     println!("  Physical data:      {} MB", physical_bytes / 1024 / 1024);
     println!("  Write amplification: {:.2}x", write_amp);
     println!("  Write time:         {:.2}s", write_time.as_secs_f64());
-    println!("  Throughput:         {:.0} ops/sec", operations as f64 / write_time.as_secs_f64());
+    println!(
+        "  Throughput:         {:.0} ops/sec",
+        operations as f64 / write_time.as_secs_f64()
+    );
 
     (write_amp, write_time.as_secs_f64())
 }
@@ -195,10 +203,16 @@ fn main() {
         println!("✅ vlog achieves 5-10x write amp reduction for large values!");
         println!("   SOTA claim VALIDATED");
     } else if large_reduction >= 2.0 {
-        println!("⚠️  vlog achieves {:.1}x reduction (better than baseline, but below 5-10x claim)", large_reduction);
+        println!(
+            "⚠️  vlog achieves {:.1}x reduction (better than baseline, but below 5-10x claim)",
+            large_reduction
+        );
         println!("   Partial validation");
     } else {
-        println!("❌ vlog only achieves {:.1}x reduction (below expectations)", large_reduction);
+        println!(
+            "❌ vlog only achieves {:.1}x reduction (below expectations)",
+            large_reduction
+        );
         println!("   Need investigation");
     }
 }

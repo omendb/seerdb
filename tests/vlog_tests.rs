@@ -146,10 +146,7 @@ fn test_truncated_record_detected() {
     drop(vlog);
 
     // Truncate file to cut off CRC bytes
-    let file = OpenOptions::new()
-        .write(true)
-        .open(&vlog_path)
-        .unwrap();
+    let file = OpenOptions::new().write(true).open(&vlog_path).unwrap();
 
     // Truncate to remove last 2 bytes (incomplete CRC)
     let current_size = file.metadata().unwrap().len();
@@ -175,10 +172,7 @@ fn test_truncated_value_detected() {
     drop(vlog);
 
     // Truncate file to cut off half the value
-    let file = OpenOptions::new()
-        .write(true)
-        .open(&vlog_path)
-        .unwrap();
+    let file = OpenOptions::new().write(true).open(&vlog_path).unwrap();
 
     // Truncate to remove last 5 bytes of value + CRC
     let current_size = file.metadata().unwrap().len();
@@ -211,10 +205,7 @@ fn test_partial_write_recovery() {
     drop(vlog);
 
     // Truncate file to simulate partial write
-    let file = OpenOptions::new()
-        .write(true)
-        .open(&vlog_path)
-        .unwrap();
+    let file = OpenOptions::new().write(true).open(&vlog_path).unwrap();
 
     // Truncate to remove last few bytes (incomplete second record)
     let current_size = file.metadata().unwrap().len();

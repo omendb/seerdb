@@ -13,9 +13,7 @@ fn main() {
     println!("Dataset: {} keys, {} target FPR\n", num_keys, fpr);
 
     // Generate test keys
-    let keys: Vec<String> = (0..num_keys)
-        .map(|i| format!("key_{:010}", i))
-        .collect();
+    let keys: Vec<String> = (0..num_keys).map(|i| format!("key_{:010}", i)).collect();
 
     let negative_keys: Vec<String> = (num_keys..num_keys + 100_000)
         .map(|i| format!("key_{:010}", i))
@@ -33,8 +31,11 @@ fn main() {
         standard_bloom.insert(key);
     }
     let insert_time = start.elapsed();
-    println!("   Insert time:      {:?} ({:.0} ops/sec)",
-        insert_time, num_keys as f64 / insert_time.as_secs_f64());
+    println!(
+        "   Insert time:      {:?} ({:.0} ops/sec)",
+        insert_time,
+        num_keys as f64 / insert_time.as_secs_f64()
+    );
 
     // Positive lookups
     let start = Instant::now();
@@ -43,7 +44,10 @@ fn main() {
     }
     let positive_time = start.elapsed();
     let ns_per_lookup_pos = positive_time.as_nanos() as f64 / num_keys as f64;
-    println!("   Positive lookup:  {:?} ({:.1} ns/op)", positive_time, ns_per_lookup_pos);
+    println!(
+        "   Positive lookup:  {:?} ({:.1} ns/op)",
+        positive_time, ns_per_lookup_pos
+    );
 
     // Negative lookups
     let start = Instant::now();
@@ -52,9 +56,15 @@ fn main() {
     }
     let negative_time = start.elapsed();
     let ns_per_lookup_neg = negative_time.as_nanos() as f64 / negative_keys.len() as f64;
-    println!("   Negative lookup:  {:?} ({:.1} ns/op)", negative_time, ns_per_lookup_neg);
+    println!(
+        "   Negative lookup:  {:?} ({:.1} ns/op)",
+        negative_time, ns_per_lookup_neg
+    );
 
-    println!("   Memory:           {} bytes\n", standard_bloom.size_bytes());
+    println!(
+        "   Memory:           {} bytes\n",
+        standard_bloom.size_bytes()
+    );
 
     // ========================================
     // SIMD Bloom Filter
@@ -68,8 +78,11 @@ fn main() {
         simd_bloom.insert(key);
     }
     let simd_insert_time = start.elapsed();
-    println!("   Insert time:      {:?} ({:.0} ops/sec)",
-        simd_insert_time, num_keys as f64 / simd_insert_time.as_secs_f64());
+    println!(
+        "   Insert time:      {:?} ({:.0} ops/sec)",
+        simd_insert_time,
+        num_keys as f64 / simd_insert_time.as_secs_f64()
+    );
 
     // Positive lookups
     let start = Instant::now();
@@ -78,7 +91,10 @@ fn main() {
     }
     let simd_positive_time = start.elapsed();
     let simd_ns_per_lookup_pos = simd_positive_time.as_nanos() as f64 / num_keys as f64;
-    println!("   Positive lookup:  {:?} ({:.1} ns/op)", simd_positive_time, simd_ns_per_lookup_pos);
+    println!(
+        "   Positive lookup:  {:?} ({:.1} ns/op)",
+        simd_positive_time, simd_ns_per_lookup_pos
+    );
 
     // Negative lookups
     let start = Instant::now();
@@ -87,7 +103,10 @@ fn main() {
     }
     let simd_negative_time = start.elapsed();
     let simd_ns_per_lookup_neg = simd_negative_time.as_nanos() as f64 / negative_keys.len() as f64;
-    println!("   Negative lookup:  {:?} ({:.1} ns/op)", simd_negative_time, simd_ns_per_lookup_neg);
+    println!(
+        "   Negative lookup:  {:?} ({:.1} ns/op)",
+        simd_negative_time, simd_ns_per_lookup_neg
+    );
 
     println!("   Memory:           {} bytes\n", simd_bloom.size_bytes());
 
@@ -96,7 +115,10 @@ fn main() {
     // ========================================
     println!("=== Results ===");
     println!("Standard positive lookups: {:.1} ns/op", ns_per_lookup_pos);
-    println!("SIMD positive lookups:     {:.1} ns/op", simd_ns_per_lookup_pos);
+    println!(
+        "SIMD positive lookups:     {:.1} ns/op",
+        simd_ns_per_lookup_pos
+    );
 
     if simd_positive_time < positive_time {
         let speedup = positive_time.as_nanos() as f64 / simd_positive_time.as_nanos() as f64;
@@ -106,8 +128,14 @@ fn main() {
         println!("SIMD slowdown (positive):  {:.2}x slower", slowdown);
     }
 
-    println!("\nStandard negative lookups: {:.1} ns/op", ns_per_lookup_neg);
-    println!("SIMD negative lookups:     {:.1} ns/op", simd_ns_per_lookup_neg);
+    println!(
+        "\nStandard negative lookups: {:.1} ns/op",
+        ns_per_lookup_neg
+    );
+    println!(
+        "SIMD negative lookups:     {:.1} ns/op",
+        simd_ns_per_lookup_neg
+    );
 
     if simd_negative_time < negative_time {
         let speedup = negative_time.as_nanos() as f64 / simd_negative_time.as_nanos() as f64;
@@ -127,5 +155,9 @@ fn main() {
         }
     }
     let actual_fpr = false_positives as f64 / negative_keys.len() as f64;
-    println!("\nFalse positive rate: {:.3}% (target: {:.1}%)", actual_fpr * 100.0, fpr * 100.0);
+    println!(
+        "\nFalse positive rate: {:.3}% (target: {:.1}%)",
+        actual_fpr * 100.0,
+        fpr * 100.0
+    );
 }

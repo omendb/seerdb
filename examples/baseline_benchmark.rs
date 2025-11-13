@@ -51,7 +51,7 @@ fn main() {
 }
 
 fn benchmark_rocksdb() {
-    use rocksdb::{Options, DB};
+    use rocksdb::{DB, Options};
 
     let path = "/tmp/bench_rocksdb";
     let mut opts = Options::default();
@@ -341,7 +341,7 @@ fn benchmark_fjall() {
 
 #[cfg(feature = "baseline-benchmarks")]
 fn benchmark_seerdb() {
-    use seerdb::{DBOptions, DB};
+    use seerdb::{DB, DBOptions};
     use std::path::PathBuf;
 
     let path = PathBuf::from("/tmp/bench_seerdb");
@@ -426,7 +426,10 @@ fn benchmark_seerdb() {
         let start_key = format!("key_{:08}", i * 100);
         let end_key = format!("key_{:08}", i * 100 + 100);
         let mut count = 0;
-        for result in db.range(start_key.as_bytes(), Some(end_key.as_bytes())).unwrap() {
+        for result in db
+            .range(start_key.as_bytes(), Some(end_key.as_bytes()))
+            .unwrap()
+        {
             let (_key, _value) = result.unwrap();
             count += 1;
             if count >= 100 {

@@ -2,7 +2,7 @@
 // Tests WAL replay after simulated crashes
 // Critical for durability: data must survive crashes
 
-use seerdb::{DBOptions, SyncPolicy, DB};
+use seerdb::{DB, DBOptions, SyncPolicy};
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -20,7 +20,8 @@ fn test_recovery_after_clean_shutdown() {
         let db = DB::open(opts).unwrap();
 
         for i in 0..100 {
-            db.put(format!("key_{:03}", i).as_bytes(), b"value").unwrap();
+            db.put(format!("key_{:03}", i).as_bytes(), b"value")
+                .unwrap();
         }
 
         // Clean shutdown (drop DB)
@@ -35,8 +36,13 @@ fn test_recovery_after_clean_shutdown() {
         let db = DB::open(opts).unwrap();
 
         for i in 0..100 {
-            assert!(db.get(format!("key_{:03}", i).as_bytes()).unwrap().is_some(),
-                "Key {} should exist after recovery", i);
+            assert!(
+                db.get(format!("key_{:03}", i).as_bytes())
+                    .unwrap()
+                    .is_some(),
+                "Key {} should exist after recovery",
+                i
+            );
         }
     }
 }
@@ -55,7 +61,11 @@ fn test_wal_replay_unflushed_writes() {
         let db = DB::open(opts).unwrap();
 
         for i in 0..50 {
-            db.put(format!("key_{:03}", i).as_bytes(), format!("value_{:03}", i).as_bytes()).unwrap();
+            db.put(
+                format!("key_{:03}", i).as_bytes(),
+                format!("value_{:03}", i).as_bytes(),
+            )
+            .unwrap();
         }
 
         // Simulate crash (drop without flush)
@@ -70,10 +80,16 @@ fn test_wal_replay_unflushed_writes() {
         let db = DB::open(opts).unwrap();
 
         for i in 0..50 {
-            let value = db.get(format!("key_{:03}", i).as_bytes()).unwrap()
+            let value = db
+                .get(format!("key_{:03}", i).as_bytes())
+                .unwrap()
                 .expect(&format!("Key {} should exist after WAL replay", i));
-            assert_eq!(value.as_ref(), format!("value_{:03}", i).as_bytes(),
-                "Value for key {} incorrect after recovery", i);
+            assert_eq!(
+                value.as_ref(),
+                format!("value_{:03}", i).as_bytes(),
+                "Value for key {} incorrect after recovery",
+                i
+            );
         }
     }
 }
@@ -93,7 +109,8 @@ fn test_wal_replay_with_deletes() {
 
         // Write 100 keys
         for i in 0..100 {
-            db.put(format!("key_{:03}", i).as_bytes(), b"value").unwrap();
+            db.put(format!("key_{:03}", i).as_bytes(), b"value")
+                .unwrap();
         }
 
         // Delete first 50
@@ -114,14 +131,24 @@ fn test_wal_replay_with_deletes() {
 
         // First 50 should be deleted
         for i in 0..50 {
-            assert!(db.get(format!("key_{:03}", i).as_bytes()).unwrap().is_none(),
-                "Key {} should be deleted after recovery", i);
+            assert!(
+                db.get(format!("key_{:03}", i).as_bytes())
+                    .unwrap()
+                    .is_none(),
+                "Key {} should be deleted after recovery",
+                i
+            );
         }
 
         // Last 50 should exist
         for i in 50..100 {
-            assert!(db.get(format!("key_{:03}", i).as_bytes()).unwrap().is_some(),
-                "Key {} should exist after recovery", i);
+            assert!(
+                db.get(format!("key_{:03}", i).as_bytes())
+                    .unwrap()
+                    .is_some(),
+                "Key {} should exist after recovery",
+                i
+            );
         }
     }
 }
@@ -162,7 +189,11 @@ fn test_wal_replay_with_overwrites() {
 
         for i in 0..50 {
             let value = db.get(format!("key_{:03}", i).as_bytes()).unwrap().unwrap();
-            assert_eq!(value.as_ref(), b"v2", "Should see latest value after recovery");
+            assert_eq!(
+                value.as_ref(),
+                b"v2",
+                "Should see latest value after recovery"
+            );
         }
     }
 }
@@ -182,13 +213,15 @@ fn test_recovery_after_flush() {
 
         // Write and flush
         for i in 0..50 {
-            db.put(format!("flushed_{:03}", i).as_bytes(), b"value").unwrap();
+            db.put(format!("flushed_{:03}", i).as_bytes(), b"value")
+                .unwrap();
         }
         db.flush().unwrap();
 
         // Write more without flushing
         for i in 0..50 {
-            db.put(format!("unflushed_{:03}", i).as_bytes(), b"value").unwrap();
+            db.put(format!("unflushed_{:03}", i).as_bytes(), b"value")
+                .unwrap();
         }
 
         // Crash
@@ -204,12 +237,20 @@ fn test_recovery_after_flush() {
 
         // Flushed data should be in SSTables
         for i in 0..50 {
-            assert!(db.get(format!("flushed_{:03}", i).as_bytes()).unwrap().is_some());
+            assert!(
+                db.get(format!("flushed_{:03}", i).as_bytes())
+                    .unwrap()
+                    .is_some()
+            );
         }
 
         // Unflushed data should be recovered from WAL
         for i in 0..50 {
-            assert!(db.get(format!("unflushed_{:03}", i).as_bytes()).unwrap().is_some());
+            assert!(
+                db.get(format!("unflushed_{:03}", i).as_bytes())
+                    .unwrap()
+                    .is_some()
+            );
         }
     }
 }
@@ -275,7 +316,10 @@ fn test_sync_policy_sync_data_guarantees() {
         };
         let db = DB::open(opts).unwrap();
 
-        assert!(db.get(b"key").unwrap().is_some(), "SyncData must guarantee durability");
+        assert!(
+            db.get(b"key").unwrap().is_some(),
+            "SyncData must guarantee durability"
+        );
     }
 }
 
@@ -294,7 +338,8 @@ fn test_multiple_open_close_cycles() {
 
         // Write data specific to this cycle
         for i in 0..10 {
-            db.put(format!("cycle_{}_{:02}", cycle, i).as_bytes(), b"value").unwrap();
+            db.put(format!("cycle_{}_{:02}", cycle, i).as_bytes(), b"value")
+                .unwrap();
         }
 
         // Sometimes flush, sometimes don't
@@ -315,8 +360,13 @@ fn test_multiple_open_close_cycles() {
 
         for cycle in 0..10 {
             for i in 0..10 {
-                assert!(db.get(format!("cycle_{}_{:02}", cycle, i).as_bytes()).unwrap().is_some(),
-                    "Data from cycle {} should persist", cycle);
+                assert!(
+                    db.get(format!("cycle_{}_{:02}", cycle, i).as_bytes())
+                        .unwrap()
+                        .is_some(),
+                    "Data from cycle {} should persist",
+                    cycle
+                );
             }
         }
     }
@@ -352,7 +402,11 @@ fn test_recovery_preserves_ordering() {
         let db = DB::open(opts).unwrap();
 
         let value = db.get(b"key").unwrap().unwrap();
-        assert_eq!(value.as_ref(), b"v3", "Should see final value after WAL replay");
+        assert_eq!(
+            value.as_ref(),
+            b"v3",
+            "Should see final value after WAL replay"
+        );
     }
 }
 
@@ -372,7 +426,8 @@ fn test_large_wal_replay() {
         let db = DB::open(opts).unwrap();
 
         for i in 0..10000 {
-            db.put(format!("key_{:05}", i).as_bytes(), &vec![b'v'; 100]).unwrap();
+            db.put(format!("key_{:05}", i).as_bytes(), &vec![b'v'; 100])
+                .unwrap();
         }
 
         // Crash without flush (large WAL)
@@ -387,8 +442,13 @@ fn test_large_wal_replay() {
         let db = DB::open(opts).unwrap();
 
         for i in 0..10000 {
-            assert!(db.get(format!("key_{:05}", i).as_bytes()).unwrap().is_some(),
-                "Key {} should be recovered from large WAL", i);
+            assert!(
+                db.get(format!("key_{:05}", i).as_bytes())
+                    .unwrap()
+                    .is_some(),
+                "Key {} should be recovered from large WAL",
+                i
+            );
         }
     }
 }

@@ -1,8 +1,8 @@
 // Block parsing micro-benchmark
 // Tests varint decoding and prefix reconstruction hot paths
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
 use bytes::{Bytes, BytesMut};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use std::io::Cursor;
 
 // Trait for varint decoding abstraction
@@ -147,7 +147,8 @@ fn bench_block_parsing_simulation(c: &mut Criterion) {
 
             for _ in 0..num_entries {
                 // Decode varints
-                let prefix_len = VarintRs::decode_u64(&mut cursor).unwrap() as usize % last_key.len();
+                let prefix_len =
+                    VarintRs::decode_u64(&mut cursor).unwrap() as usize % last_key.len();
                 let suffix_len = VarintRs::decode_u64(&mut cursor).unwrap() as usize;
                 let value_len = VarintRs::decode_u64(&mut cursor).unwrap() as usize;
 
@@ -176,7 +177,8 @@ fn bench_block_parsing_simulation(c: &mut Criterion) {
 
             for _ in 0..num_entries {
                 // Decode varints (same)
-                let prefix_len = VarintRs::decode_u64(&mut cursor).unwrap() as usize % last_key.len();
+                let prefix_len =
+                    VarintRs::decode_u64(&mut cursor).unwrap() as usize % last_key.len();
                 let suffix_len = VarintRs::decode_u64(&mut cursor).unwrap() as usize;
                 let value_len = VarintRs::decode_u64(&mut cursor).unwrap() as usize;
 

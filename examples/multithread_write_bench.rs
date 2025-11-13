@@ -1,7 +1,7 @@
 // Multi-threaded write benchmark to measure partitioned memtable benefits
 // Expected: +25-40% throughput due to reduced lock contention
 
-use seerdb::{DBOptions, DB};
+use seerdb::{DB, DBOptions};
 use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
@@ -61,12 +61,18 @@ fn main() {
     println!("=== Results ===");
     println!("Time: {:.2}s", duration.as_secs_f64());
     println!("Throughput: {:.0} ops/sec", throughput);
-    println!("Latency: {:.2} us/op", duration.as_micros() as f64 / total_ops as f64);
+    println!(
+        "Latency: {:.2} us/op",
+        duration.as_micros() as f64 / total_ops as f64
+    );
     println!();
 
     println!("Theoretical improvement vs single-threaded:");
     println!("- Single-threaded baseline: ~218K ops/sec");
-    println!("- Multi-threaded with {} threads: {:.0} ops/sec", NUM_THREADS, throughput);
+    println!(
+        "- Multi-threaded with {} threads: {:.0} ops/sec",
+        NUM_THREADS, throughput
+    );
     println!("- Speedup: {:.2}x", throughput / 218_000.0);
     println!();
 

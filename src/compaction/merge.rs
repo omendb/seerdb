@@ -41,9 +41,10 @@ impl MergeIterator {
 
         for (key, value, _source_id) in all_entries {
             if let Some(ref last) = last_key
-                && key == last {
-                    continue; // Duplicate, skip
-                }
+                && key == last
+            {
+                continue; // Duplicate, skip
+            }
 
             deduplicated.push((key.clone(), value));
             last_key = Some(key);
@@ -76,9 +77,15 @@ mod tests {
 
         // Build single SSTable
         let mut builder = SSTableBuilder::create(&path).unwrap();
-        builder.add(Bytes::from("key1"), Bytes::from("value1")).unwrap();
-        builder.add(Bytes::from("key2"), Bytes::from("value2")).unwrap();
-        builder.add(Bytes::from("key3"), Bytes::from("value3")).unwrap();
+        builder
+            .add(Bytes::from("key1"), Bytes::from("value1"))
+            .unwrap();
+        builder
+            .add(Bytes::from("key2"), Bytes::from("value2"))
+            .unwrap();
+        builder
+            .add(Bytes::from("key3"), Bytes::from("value3"))
+            .unwrap();
         builder.finish().unwrap();
         let sstable = SSTable::open(&path).unwrap();
 
@@ -111,16 +118,24 @@ mod tests {
         // Build first SSTable
         let path1 = dir.path().join("test1.sst");
         let mut builder1 = SSTableBuilder::create(&path1).unwrap();
-        builder1.add(Bytes::from("key1"), Bytes::from("value1")).unwrap();
-        builder1.add(Bytes::from("key3"), Bytes::from("value3")).unwrap();
+        builder1
+            .add(Bytes::from("key1"), Bytes::from("value1"))
+            .unwrap();
+        builder1
+            .add(Bytes::from("key3"), Bytes::from("value3"))
+            .unwrap();
         builder1.finish().unwrap();
         let sstable1 = SSTable::open(&path1).unwrap();
 
         // Build second SSTable
         let path2 = dir.path().join("test2.sst");
         let mut builder2 = SSTableBuilder::create(&path2).unwrap();
-        builder2.add(Bytes::from("key2"), Bytes::from("value2")).unwrap();
-        builder2.add(Bytes::from("key4"), Bytes::from("value4")).unwrap();
+        builder2
+            .add(Bytes::from("key2"), Bytes::from("value2"))
+            .unwrap();
+        builder2
+            .add(Bytes::from("key4"), Bytes::from("value4"))
+            .unwrap();
         builder2.finish().unwrap();
         let sstable2 = SSTable::open(&path2).unwrap();
 
@@ -145,16 +160,24 @@ mod tests {
         // Build first SSTable (newer)
         let path1 = dir.path().join("test1.sst");
         let mut builder1 = SSTableBuilder::create(&path1).unwrap();
-        builder1.add(Bytes::from("key1"), Bytes::from("new_value1")).unwrap();
-        builder1.add(Bytes::from("key2"), Bytes::from("new_value2")).unwrap();
+        builder1
+            .add(Bytes::from("key1"), Bytes::from("new_value1"))
+            .unwrap();
+        builder1
+            .add(Bytes::from("key2"), Bytes::from("new_value2"))
+            .unwrap();
         builder1.finish().unwrap();
         let sstable1 = SSTable::open(&path1).unwrap();
 
         // Build second SSTable (older)
         let path2 = dir.path().join("test2.sst");
         let mut builder2 = SSTableBuilder::create(&path2).unwrap();
-        builder2.add(Bytes::from("key1"), Bytes::from("old_value1")).unwrap();
-        builder2.add(Bytes::from("key3"), Bytes::from("value3")).unwrap();
+        builder2
+            .add(Bytes::from("key1"), Bytes::from("old_value1"))
+            .unwrap();
+        builder2
+            .add(Bytes::from("key3"), Bytes::from("value3"))
+            .unwrap();
         builder2.finish().unwrap();
         let sstable2 = SSTable::open(&path2).unwrap();
 

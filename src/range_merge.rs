@@ -2,9 +2,9 @@
 // Merges sorted iterators from memtable + multiple SSTable levels using a min-heap
 
 use crate::simd;
+use bytes::Bytes;
 use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
-use bytes::Bytes;
 
 /// Entry in the min-heap for k-way merge
 struct HeapEntry<I>
@@ -13,7 +13,7 @@ where
 {
     key: Bytes,
     value: Option<Bytes>,
-    level: usize,  // Lower = newer (for LSM semantics)
+    level: usize, // Lower = newer (for LSM semantics)
     iter: I,
 }
 
@@ -41,9 +41,8 @@ where
     }
 }
 
-impl<I> Eq for HeapEntry<I>
-where
-    I: Iterator<Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>>,
+impl<I> Eq for HeapEntry<I> where
+    I: Iterator<Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>>
 {
 }
 
@@ -129,7 +128,7 @@ where
             // Deduplicate: skip if same key as last (LSM: first = newest)
             if let Some(ref last) = self.last_key {
                 if &entry.key == last {
-                    continue;  // Duplicate, get next
+                    continue; // Duplicate, get next
                 }
             }
 
@@ -149,7 +148,10 @@ where
 mod tests {
     use super::*;
 
-    fn ok_iter(items: Vec<(Bytes, Option<Bytes>)>) -> impl Iterator<Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>> {
+    fn ok_iter(
+        items: Vec<(Bytes, Option<Bytes>)>,
+    ) -> impl Iterator<Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>>
+    {
         items.into_iter().map(Ok)
     }
 
@@ -163,9 +165,18 @@ mod tests {
 
         let mut merge = KWayMergeIterator::new(vec![iter1]).unwrap();
 
-        assert_eq!(merge.next().unwrap().unwrap(), (Bytes::from("a"), Some(Bytes::from("1"))));
-        assert_eq!(merge.next().unwrap().unwrap(), (Bytes::from("b"), Some(Bytes::from("2"))));
-        assert_eq!(merge.next().unwrap().unwrap(), (Bytes::from("c"), Some(Bytes::from("3"))));
+        assert_eq!(
+            merge.next().unwrap().unwrap(),
+            (Bytes::from("a"), Some(Bytes::from("1")))
+        );
+        assert_eq!(
+            merge.next().unwrap().unwrap(),
+            (Bytes::from("b"), Some(Bytes::from("2")))
+        );
+        assert_eq!(
+            merge.next().unwrap().unwrap(),
+            (Bytes::from("c"), Some(Bytes::from("3")))
+        );
         assert!(merge.next().is_none());
     }
 
@@ -183,10 +194,22 @@ mod tests {
 
         let mut merge = KWayMergeIterator::new(vec![iter1, iter2]).unwrap();
 
-        assert_eq!(merge.next().unwrap().unwrap(), (Bytes::from("a"), Some(Bytes::from("1"))));
-        assert_eq!(merge.next().unwrap().unwrap(), (Bytes::from("b"), Some(Bytes::from("2"))));
-        assert_eq!(merge.next().unwrap().unwrap(), (Bytes::from("c"), Some(Bytes::from("3"))));
-        assert_eq!(merge.next().unwrap().unwrap(), (Bytes::from("d"), Some(Bytes::from("4"))));
+        assert_eq!(
+            merge.next().unwrap().unwrap(),
+            (Bytes::from("a"), Some(Bytes::from("1")))
+        );
+        assert_eq!(
+            merge.next().unwrap().unwrap(),
+            (Bytes::from("b"), Some(Bytes::from("2")))
+        );
+        assert_eq!(
+            merge.next().unwrap().unwrap(),
+            (Bytes::from("c"), Some(Bytes::from("3")))
+        );
+        assert_eq!(
+            merge.next().unwrap().unwrap(),
+            (Bytes::from("d"), Some(Bytes::from("4")))
+        );
         assert!(merge.next().is_none());
     }
 
@@ -207,9 +230,18 @@ mod tests {
         let mut merge = KWayMergeIterator::new(vec![iter1, iter2]).unwrap();
 
         // Should keep newer version (from iter1)
-        assert_eq!(merge.next().unwrap().unwrap(), (Bytes::from("a"), Some(Bytes::from("new_a"))));
-        assert_eq!(merge.next().unwrap().unwrap(), (Bytes::from("b"), Some(Bytes::from("new_b"))));
-        assert_eq!(merge.next().unwrap().unwrap(), (Bytes::from("c"), Some(Bytes::from("c"))));
+        assert_eq!(
+            merge.next().unwrap().unwrap(),
+            (Bytes::from("a"), Some(Bytes::from("new_a")))
+        );
+        assert_eq!(
+            merge.next().unwrap().unwrap(),
+            (Bytes::from("b"), Some(Bytes::from("new_b")))
+        );
+        assert_eq!(
+            merge.next().unwrap().unwrap(),
+            (Bytes::from("c"), Some(Bytes::from("c")))
+        );
         assert!(merge.next().is_none());
     }
 
@@ -217,7 +249,7 @@ mod tests {
     fn test_kway_with_tombstones() {
         // Level 0 (newest) - key "a" deleted
         let iter1 = ok_iter(vec![
-            (Bytes::from("a"), None),  // Tombstone
+            (Bytes::from("a"), None), // Tombstone
             (Bytes::from("b"), Some(Bytes::from("b"))),
         ]);
 
@@ -230,8 +262,14 @@ mod tests {
         let mut merge = KWayMergeIterator::new(vec![iter1, iter2]).unwrap();
 
         // Should skip tombstone (deleted key)
-        assert_eq!(merge.next().unwrap().unwrap(), (Bytes::from("b"), Some(Bytes::from("b"))));
-        assert_eq!(merge.next().unwrap().unwrap(), (Bytes::from("c"), Some(Bytes::from("c"))));
+        assert_eq!(
+            merge.next().unwrap().unwrap(),
+            (Bytes::from("b"), Some(Bytes::from("b")))
+        );
+        assert_eq!(
+            merge.next().unwrap().unwrap(),
+            (Bytes::from("c"), Some(Bytes::from("c")))
+        );
         assert!(merge.next().is_none());
     }
 
@@ -244,10 +282,22 @@ mod tests {
 
         let mut merge = KWayMergeIterator::new(vec![iter1, iter2, iter3, iter4]).unwrap();
 
-        assert_eq!(merge.next().unwrap().unwrap(), (Bytes::from("a"), Some(Bytes::from("1"))));
-        assert_eq!(merge.next().unwrap().unwrap(), (Bytes::from("b"), Some(Bytes::from("2"))));
-        assert_eq!(merge.next().unwrap().unwrap(), (Bytes::from("c"), Some(Bytes::from("3"))));
-        assert_eq!(merge.next().unwrap().unwrap(), (Bytes::from("d"), Some(Bytes::from("4"))));
+        assert_eq!(
+            merge.next().unwrap().unwrap(),
+            (Bytes::from("a"), Some(Bytes::from("1")))
+        );
+        assert_eq!(
+            merge.next().unwrap().unwrap(),
+            (Bytes::from("b"), Some(Bytes::from("2")))
+        );
+        assert_eq!(
+            merge.next().unwrap().unwrap(),
+            (Bytes::from("c"), Some(Bytes::from("3")))
+        );
+        assert_eq!(
+            merge.next().unwrap().unwrap(),
+            (Bytes::from("d"), Some(Bytes::from("4")))
+        );
         assert!(merge.next().is_none());
     }
 

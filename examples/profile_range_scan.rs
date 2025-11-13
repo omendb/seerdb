@@ -33,13 +33,17 @@ fn main() {
     let start = Instant::now();
     let start_key = format!("key_{:08}", 0);
     let end_key = format!("key_{:08}", 100_000);
-    let count = db.range(start_key.as_bytes(), Some(end_key.as_bytes()))
+    let count = db
+        .range(start_key.as_bytes(), Some(end_key.as_bytes()))
         .unwrap()
         .count();
     let elapsed = start.elapsed();
     println!("   Returned {} entries", count);
     println!("   Time: {:.3}s", elapsed.as_secs_f64());
-    println!("   Time per entry: {:.2} µs", elapsed.as_micros() as f64 / count as f64);
+    println!(
+        "   Time per entry: {:.2} µs",
+        elapsed.as_micros() as f64 / count as f64
+    );
 
     // Profile 2: Many small scans (1000 scans, 100 keys each) - like baseline_benchmark
     println!("\n2. Many small scans (1000 scans, 100 keys each):");
@@ -48,7 +52,10 @@ fn main() {
         let start_key = format!("key_{:08}", i * 100);
         let end_key = format!("key_{:08}", i * 100 + 100);
         let mut count = 0;
-        for result in db.range(start_key.as_bytes(), Some(end_key.as_bytes())).unwrap() {
+        for result in db
+            .range(start_key.as_bytes(), Some(end_key.as_bytes()))
+            .unwrap()
+        {
             let _ = result.unwrap();
             count += 1;
             if count >= 100 {
@@ -59,14 +66,18 @@ fn main() {
     let elapsed = start.elapsed();
     println!("   Time: {:.3}s", elapsed.as_secs_f64());
     println!("   Scans/sec: {:.0}", 1000.0 / elapsed.as_secs_f64());
-    println!("   Time per scan: {:.2} ms", elapsed.as_millis() as f64 / 1000.0);
+    println!(
+        "   Time per scan: {:.2} ms",
+        elapsed.as_millis() as f64 / 1000.0
+    );
 
     // Profile 3: Check memtable size by looking at first few entries
     println!("\n3. Quick memtable iteration test (first 1000 keys):");
     let start = Instant::now();
     let start_key = format!("key_{:08}", 0);
     let end_key = format!("key_{:08}", 1000);
-    let count = db.range(start_key.as_bytes(), Some(end_key.as_bytes()))
+    let count = db
+        .range(start_key.as_bytes(), Some(end_key.as_bytes()))
         .unwrap()
         .count();
     let elapsed = start.elapsed();
@@ -83,7 +94,10 @@ fn main() {
         let start_key = format!("key_{:08}", i * 100);
         let end_key = format!("key_{:08}", i * 100 + 100);
         let mut count = 0;
-        for result in db.range(start_key.as_bytes(), Some(end_key.as_bytes())).unwrap() {
+        for result in db
+            .range(start_key.as_bytes(), Some(end_key.as_bytes()))
+            .unwrap()
+        {
             let _ = result.unwrap();
             count += 1;
             if count >= 100 {
@@ -94,7 +108,10 @@ fn main() {
     let elapsed = start.elapsed();
     println!("   Time: {:.3}s", elapsed.as_secs_f64());
     println!("   Scans/sec: {:.0}", 1000.0 / elapsed.as_secs_f64());
-    println!("   Time per scan: {:.2} ms", elapsed.as_millis() as f64 / 1000.0);
+    println!(
+        "   Time per scan: {:.2} ms",
+        elapsed.as_millis() as f64 / 1000.0
+    );
 
     println!("\n=== Summary ===");
     println!("If scans are slow both before and after flush:");

@@ -39,7 +39,13 @@ where
 /// Truly lazy iteration: Loads blocks on-demand, no upfront materialization
 pub struct RangeIterator {
     // K-way merge iterator (O(k log k) per entry, O(k) memory)
-    inner: KWayMergeIterator<Box<dyn Iterator<Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>>>>,
+    inner: KWayMergeIterator<
+        Box<
+            dyn Iterator<
+                Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>,
+            >,
+        >,
+    >,
 }
 
 impl RangeIterator {
@@ -56,20 +62,28 @@ impl RangeIterator {
         memtables: &[&crate::memtable::Memtable],
         sstable_iters: Vec<SSTableRangeIterator>,
     ) -> crate::db::Result<Self> {
-        let mut iterators: Vec<Box<dyn Iterator<Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>>>> = Vec::new();
+        let mut iterators: Vec<
+            Box<
+                dyn Iterator<
+                    Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>,
+                >,
+            >,
+        > = Vec::new();
 
         // Level 0: Each memtable partition as a SEPARATE iterator (for proper deduplication)
         // K-way merge will deduplicate by picking the first (newest) occurrence of each key
         for memtable in memtables {
             let partition_entries: Vec<(Bytes, Option<Bytes>)> = if let Some(end_key) = end_key {
-                memtable.range(start_key, end_key)
+                memtable
+                    .range(start_key, end_key)
                     .map(|(key, entry)| match entry {
                         Entry::Value(value) => (key, Some(value)),
                         Entry::Tombstone => (key, None),
                     })
                     .collect()
             } else {
-                memtable.range_from(start_key)
+                memtable
+                    .range_from(start_key)
                     .map(|(key, entry)| match entry {
                         Entry::Value(value) => (key, Some(value)),
                         Entry::Tombstone => (key, None),
@@ -78,15 +92,21 @@ impl RangeIterator {
             };
 
             // Each partition gets its own iterator for k-way merge
-            let partition_iter: Box<dyn Iterator<Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>>> =
-                Box::new(partition_entries.into_iter().map(Ok));
+            let partition_iter: Box<
+                dyn Iterator<
+                    Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>,
+                >,
+            > = Box::new(partition_entries.into_iter().map(Ok));
             iterators.push(partition_iter);
         }
 
         // Level 1+: SSTable iterators (already created, just adapt them)
         for sst_iter in sstable_iters {
-            let adapted: Box<dyn Iterator<Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>>> =
-                Box::new(SSTableRangeAdapter::new(sst_iter));
+            let adapted: Box<
+                dyn Iterator<
+                    Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>,
+                >,
+            > = Box::new(SSTableRangeAdapter::new(sst_iter));
             iterators.push(adapted);
         }
 
@@ -145,14 +165,8 @@ mod tests {
         }
 
         assert_eq!(results.len(), 2);
-        assert_eq!(
-            results[0],
-            (Bytes::from("key1"), Bytes::from("value1"))
-        );
-        assert_eq!(
-            results[1],
-            (Bytes::from("key2"), Bytes::from("value2"))
-        );
+        assert_eq!(results[0], (Bytes::from("key1"), Bytes::from("value1")));
+        assert_eq!(results[1], (Bytes::from("key2"), Bytes::from("value2")));
     }
 
     #[test]
@@ -174,13 +188,7 @@ mod tests {
 
         // Should only return key1 and key3, key2 is deleted
         assert_eq!(results.len(), 2);
-        assert_eq!(
-            results[0],
-            (Bytes::from("key1"), Bytes::from("value1"))
-        );
-        assert_eq!(
-            results[1],
-            (Bytes::from("key3"), Bytes::from("value3"))
-        );
+        assert_eq!(results[0], (Bytes::from("key1"), Bytes::from("value1")));
+        assert_eq!(results[1], (Bytes::from("key3"), Bytes::from("value3")));
     }
 }

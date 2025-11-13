@@ -2,7 +2,7 @@
 // Tests that compaction doesn't lose, duplicate, or corrupt data
 // Critical for data integrity - compaction is the most complex operation
 
-use seerdb::{DBOptions, DB};
+use seerdb::{DB, DBOptions};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -479,7 +479,11 @@ fn test_compaction_with_single_key_per_level() {
             for j in 0..10 {
                 let k = format!("key_{}", j);
                 let r = db.get(k.as_bytes()).unwrap();
-                eprintln!("  key_{}: {}", j, if r.is_some() { "PRESENT" } else { "MISSING" });
+                eprintln!(
+                    "  key_{}: {}",
+                    j,
+                    if r.is_some() { "PRESENT" } else { "MISSING" }
+                );
             }
         }
         assert!(result.is_some(), "key_{} should be present", i);

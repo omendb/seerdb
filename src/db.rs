@@ -1,29 +1,29 @@
 // Main database interface
 // Integrates WAL, Memtable, SSTable, Compaction, and VLog
 
-use crate::compaction::{compact_sstables, LSMTree};
+use crate::compaction::{LSMTree, compact_sstables};
 use crate::health::{HealthCheck, HealthStatus};
 use crate::memtable::Memtable;
 use crate::metrics::{DBStats, MetricsCollector};
 use crate::range::RangeIterator;
 use crate::sstable::SSTable;
 use crate::vlog::VLog;
-use crate::wal::{Record, SyncPolicy, WALReader, WAL};
+use crate::wal::{Record, SyncPolicy, WAL, WALReader};
 use arc_swap::ArcSwap;
 use bytes::Bytes;
-use crossbeam_channel::{Sender as CrossbeamSender, unbounded, bounded};
+use crossbeam_channel::{Sender as CrossbeamSender, bounded, unbounded};
+use foldhash::fast::FixedState;
 use quick_cache::sync::Cache;
+use std::hash::BuildHasher;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
-use foldhash::fast::FixedState;
-use std::hash::BuildHasher;
-use std::sync::LazyLock;
 
 /// Number of memtable partitions for reduced lock contention
 ///
@@ -333,12 +333,12 @@ impl Default for DBOptions {
             base_level_size: 10 * 1024 * 1024, // 10MB
             size_ratio: 10,
             num_levels: 7,
-            vlog_threshold: Some(4096),   // WiscKey: 4KB threshold for KV separation (FIXED!)
+            vlog_threshold: Some(4096), // WiscKey: 4KB threshold for KV separation (FIXED!)
             background_compaction: false, // Disabled by default for compatibility
-            background_flush: false,      // Disabled by default - enable for large workloads
-            adaptive_compaction: false,   // Disabled by default - enable for mixed workloads
-            max_memory_bytes: None,       // No global memory limit by default
-            min_disk_space_bytes: None,   // No disk space check by default
+            background_flush: false,    // Disabled by default - enable for large workloads
+            adaptive_compaction: false, // Disabled by default - enable for mixed workloads
+            max_memory_bytes: None,     // No global memory limit by default
+            min_disk_space_bytes: None, // No disk space check by default
         }
     }
 }
@@ -938,7 +938,7 @@ impl DB {
             wal_worker: Some(wal_worker),
             flush_mutex,
             lsm_mutex,
-            sstable_cache: Arc::new(Cache::new(1000)),  // Cache up to 1000 SSTables
+            sstable_cache: Arc::new(Cache::new(1000)), // Cache up to 1000 SSTables
             has_vlog: std::sync::atomic::AtomicBool::new(has_vlog),
             write_count: std::sync::atomic::AtomicU64::new(0),
             read_count: std::sync::atomic::AtomicU64::new(0),
@@ -951,9 +951,7 @@ impl DB {
         };
 
         // Flush memtables if any partition filled up during recovery
-        let should_flush = db.memtables.iter().any(|mt| {
-            mt.load().should_flush()
-        });
+        let should_flush = db.memtables.iter().any(|mt| mt.load().should_flush());
         if should_flush {
             info!("One or more memtable partitions full after recovery, flushing");
             db.flush()?;
@@ -1142,18 +1140,20 @@ impl DB {
             value: value.clone(),
         };
         let wal_bytes = record.encode().len() as u64;
-        self.wal_tx.send(WALMessage::Record(record))
-            .map_err(|_| DBError::Wal(crate::wal::WALError::Io(
-                std::io::Error::new(std::io::ErrorKind::BrokenPipe, "WAL writer thread died")
-            )))?;
+        self.wal_tx.send(WALMessage::Record(record)).map_err(|_| {
+            DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "WAL writer thread died",
+            )))
+        })?;
 
         // Track physical bytes written to WAL
         self.metrics.record_physical_bytes(wal_bytes);
 
         // Write to correct partition (lock-free with ArcSwap)
         let partition = partition_for_key(&key);
-        let mt = self.memtables[partition].load();  // Lock-free Arc load
-        mt.put(key, value);  // SkipMap is already lock-free
+        let mt = self.memtables[partition].load(); // Lock-free Arc load
+        mt.put(key, value); // SkipMap is already lock-free
         // Arc automatically dropped, no lock to release!
 
         // Track write operation for Dostoevsky adaptive compaction
@@ -1161,9 +1161,7 @@ impl DB {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         // Check if ANY partition should be flushed (lock-free check)
-        let should_flush = self.memtables.iter().any(|mt| {
-            mt.load().should_flush()
-        });
+        let should_flush = self.memtables.iter().any(|mt| mt.load().should_flush());
         if should_flush {
             if let Some(ref tx) = self.flush_tx {
                 // Background flush: swap memtable immediately (fast), then signal background thread
@@ -1251,7 +1249,7 @@ impl DB {
 
         // Check correct partition first (most recent data, lock-free with ArcSwap)
         let partition = partition_for_key(key);
-        let mt = self.memtables[partition].load();  // Lock-free Arc load
+        let mt = self.memtables[partition].load(); // Lock-free Arc load
         let result = mt.get(key);
         let contains = mt.contains(key);
         // Arc automatically dropped, no lock to release!
@@ -1325,16 +1323,19 @@ impl DB {
                 for sstable_path in sstables {
                     // Use cached SSTable reader (avoids expensive re-opening and index deserialization)
                     // quick_cache provides lock-free get_or_insert with automatic LRU eviction
-                    let cached_sstable = self.sstable_cache.get_or_insert_with(sstable_path, || -> Result<Arc<Mutex<SSTable>>> {
-                        // Cache miss: open SSTable (called only once per unique path)
-                        let sstable = if has_vlog {
-                            let vlog = VLog::open(&vlog_path)?;
-                            SSTable::open(sstable_path)?.with_vlog(vlog)
-                        } else {
-                            SSTable::open(sstable_path)?
-                        };
-                        Ok(Arc::new(Mutex::new(sstable)))
-                    })?;
+                    let cached_sstable = self.sstable_cache.get_or_insert_with(
+                        sstable_path,
+                        || -> Result<Arc<Mutex<SSTable>>> {
+                            // Cache miss: open SSTable (called only once per unique path)
+                            let sstable = if has_vlog {
+                                let vlog = VLog::open(&vlog_path)?;
+                                SSTable::open(sstable_path)?.with_vlog(vlog)
+                            } else {
+                                SSTable::open(sstable_path)?
+                            };
+                            Ok(Arc::new(Mutex::new(sstable)))
+                        },
+                    )?;
 
                     let mut sstable = cached_sstable.lock().expect("SSTable lock poisoned");
 
@@ -1427,14 +1428,16 @@ impl DB {
 
         // Write to WAL (durability) - lock-free via channel
         let record = Record::Delete { key: key.clone() };
-        self.wal_tx.send(WALMessage::Record(record))
-            .map_err(|_| DBError::Wal(crate::wal::WALError::Io(
-                std::io::Error::new(std::io::ErrorKind::BrokenPipe, "WAL writer thread died")
-            )))?;
+        self.wal_tx.send(WALMessage::Record(record)).map_err(|_| {
+            DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "WAL writer thread died",
+            )))
+        })?;
 
         // Write tombstone to correct partition (lock-free with ArcSwap)
         let partition = partition_for_key(&key);
-        let mt = self.memtables[partition].load();  // Lock-free Arc load
+        let mt = self.memtables[partition].load(); // Lock-free Arc load
         mt.delete(key);
         // Arc automatically dropped, no lock to release!
 
@@ -1443,9 +1446,7 @@ impl DB {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         // Check if ANY partition should be flushed (lock-free check)
-        let should_flush = self.memtables.iter().any(|mt| {
-            mt.load().should_flush()
-        });
+        let should_flush = self.memtables.iter().any(|mt| mt.load().should_flush());
         if should_flush {
             if let Some(ref tx) = self.flush_tx {
                 // Background flush: swap memtable immediately (fast), then signal background thread
@@ -1530,8 +1531,8 @@ impl DB {
 
         // Write to correct partition (lock-free with ArcSwap)
         let partition = partition_for_key(&key);
-        let mt = self.memtables[partition].load();  // Lock-free Arc load
-        mt.put(key, value);  // SkipMap is already lock-free
+        let mt = self.memtables[partition].load(); // Lock-free Arc load
+        mt.put(key, value); // SkipMap is already lock-free
         // Arc automatically dropped, no lock to release!
 
         // Track write operation for Dostoevsky adaptive compaction
@@ -1539,9 +1540,7 @@ impl DB {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         // Check if ANY partition should be flushed (lock-free check)
-        let should_flush = self.memtables.iter().any(|mt| {
-            mt.load().should_flush()
-        });
+        let should_flush = self.memtables.iter().any(|mt| mt.load().should_flush());
         if should_flush {
             if let Some(ref tx) = self.flush_tx {
                 // Background flush: swap memtable immediately (fast), then signal background thread
@@ -1567,7 +1566,7 @@ impl DB {
     pub(crate) fn delete_internal(&self, key: Bytes) -> Result<()> {
         // Write tombstone to correct partition (lock-free with ArcSwap)
         let partition = partition_for_key(&key);
-        let mt = self.memtables[partition].load();  // Lock-free Arc load
+        let mt = self.memtables[partition].load(); // Lock-free Arc load
         mt.delete(key);
         // Arc automatically dropped, no lock to release!
 
@@ -1576,9 +1575,7 @@ impl DB {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         // Check if ANY partition should be flushed (lock-free check)
-        let should_flush = self.memtables.iter().any(|mt| {
-            mt.load().should_flush()
-        });
+        let should_flush = self.memtables.iter().any(|mt| mt.load().should_flush());
         if should_flush {
             if let Some(ref tx) = self.flush_tx {
                 // Background flush: swap memtable immediately (fast), then signal background thread
@@ -1663,9 +1660,7 @@ impl DB {
         let flush_start = Instant::now();
 
         // Check total size across all partitions (lock-free with ArcSwap)
-        let total_size: usize = self.memtables.iter()
-            .map(|mt| mt.load().size())
-            .sum();
+        let total_size: usize = self.memtables.iter().map(|mt| mt.load().size()).sum();
 
         // Early return if all partitions are empty
         if total_size == 0 {
@@ -1681,17 +1676,26 @@ impl DB {
         // **CRITICAL**: Check if there's a previous failed flush
         // If immutable_memtables is occupied, flush it first to avoid data loss (LOCK-FREE!)
         let pending_immutable_arc = self.immutable_memtables.swap(Arc::new(None));
-        let pending_immutable = Arc::try_unwrap(pending_immutable_arc)
-            .unwrap_or_else(|arc| (*arc).clone());
+        let pending_immutable =
+            Arc::try_unwrap(pending_immutable_arc).unwrap_or_else(|arc| (*arc).clone());
 
         if let Some(pending_partitions_arc) = pending_immutable {
             // Previous flush failed - retry flushing the existing immutable partitions
-            warn!(partitions = pending_partitions_arc.len(), "Retrying flush of previously failed immutable partitions");
+            warn!(
+                partitions = pending_partitions_arc.len(),
+                "Retrying flush of previously failed immutable partitions"
+            );
 
             // Generate filename for pending flush
-            let mut counter = self.sstable_counter.lock().expect("SSTable counter mutex poisoned");
+            let mut counter = self
+                .sstable_counter
+                .lock()
+                .expect("SSTable counter mutex poisoned");
             let pending_flush_sequence = *counter; // Capture sequence for retry flush
-            let pending_sstable_path = self.options.data_dir.join(format!("L0_{:06}.sst", *counter));
+            let pending_sstable_path = self
+                .options
+                .data_dir
+                .join(format!("L0_{:06}.sst", *counter));
             *counter += 1;
             drop(counter);
 
@@ -1707,7 +1711,11 @@ impl DB {
             all_entries.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
 
             // Build SSTable from sorted entries
-            self.build_sstable_from_entries(&pending_sstable_path, all_entries.iter(), pending_flush_sequence)?;
+            self.build_sstable_from_entries(
+                &pending_sstable_path,
+                all_entries.iter(),
+                pending_flush_sequence,
+            )?;
             let pending_size = std::fs::metadata(&pending_sstable_path)?.len();
 
             // Track physical bytes written to SSTable (retry case)
@@ -1725,15 +1733,20 @@ impl DB {
 
             // CRITICAL FIX (Bug #8): Barrier synchronization before clearing WAL
             // Send barrier message and wait for background thread to flush all pending records
-            let (ack_tx, ack_rx) = bounded(1);  // Oneshot channel
-            self.wal_tx.send(WALMessage::Barrier(ack_tx))
-                .map_err(|_| DBError::Wal(crate::wal::WALError::Io(
-                    std::io::Error::new(std::io::ErrorKind::BrokenPipe, "WAL writer thread died")
-                )))?;
+            let (ack_tx, ack_rx) = bounded(1); // Oneshot channel
+            self.wal_tx.send(WALMessage::Barrier(ack_tx)).map_err(|_| {
+                DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "WAL writer thread died",
+                )))
+            })?;
             // Wait for acknowledgement (blocks until all pending records written)
-            ack_rx.recv().map_err(|_| DBError::Wal(crate::wal::WALError::Io(
-                std::io::Error::new(std::io::ErrorKind::BrokenPipe, "WAL writer thread died during barrier")
-            )))?;
+            ack_rx.recv().map_err(|_| {
+                DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "WAL writer thread died during barrier",
+                )))
+            })?;
 
             // Now safe to clear WAL (all records written to disk)
             let mut wal = self.wal.lock().expect("WAL mutex poisoned");
@@ -1742,24 +1755,29 @@ impl DB {
 
             // Update max_flushed_seq for retry flush
             // Use fetch_max to handle out-of-order flush completions (only update if new value is greater)
-            self.max_flushed_seq.fetch_max(pending_flush_sequence, Ordering::SeqCst);
+            self.max_flushed_seq
+                .fetch_max(pending_flush_sequence, Ordering::SeqCst);
 
             info!("Successfully flushed previously failed immutable partitions");
         }
 
         // Now check if active partitions need flushing (lock-free with ArcSwap)
-        let total_size: usize = self.memtables.iter()
-            .map(|mt| mt.load().size())
-            .sum();
+        let total_size: usize = self.memtables.iter().map(|mt| mt.load().size()).sum();
 
         if total_size == 0 {
             return Ok(()); // Nothing to flush
         }
 
         // Generate SSTable filename for main flush
-        let mut counter = self.sstable_counter.lock().expect("SSTable counter mutex poisoned");
+        let mut counter = self
+            .sstable_counter
+            .lock()
+            .expect("SSTable counter mutex poisoned");
         let flush_sequence = *counter; // Capture sequence for this flush
-        let sstable_path = self.options.data_dir.join(format!("L0_{:06}.sst", *counter));
+        let sstable_path = self
+            .options
+            .data_dir
+            .join(format!("L0_{:06}.sst", *counter));
         *counter += 1;
         drop(counter);
 
@@ -1775,7 +1793,8 @@ impl DB {
         for partition_mt in self.memtables.iter() {
             // Atomic swap: returns Arc<Memtable> of old partition
             // Keep it as Arc<Memtable> - no need to unwrap since immutable_memtables stores Arc
-            let old_arc: Arc<Memtable> = partition_mt.swap(Arc::new(Memtable::new(capacity_per_partition)));
+            let old_arc: Arc<Memtable> =
+                partition_mt.swap(Arc::new(Memtable::new(capacity_per_partition)));
             flushing_partitions.push(old_arc);
         }
 
@@ -1788,7 +1807,8 @@ impl DB {
         }
 
         // Store in immutable_memtables so readers can access during flush (LOCK-FREE!)
-        self.immutable_memtables.store(Arc::new(Some(Arc::new(flushing_partitions))));
+        self.immutable_memtables
+            .store(Arc::new(Some(Arc::new(flushing_partitions))));
 
         // Sort by key to build sorted SSTable
         // If there are duplicates (same key in multiple partitions due to race), keep last one
@@ -1818,15 +1838,20 @@ impl DB {
 
         // CRITICAL FIX (Bug #8): Barrier synchronization before clearing WAL
         // Send barrier message and wait for background thread to flush all pending records
-        let (ack_tx, ack_rx) = bounded(1);  // Oneshot channel
-        self.wal_tx.send(WALMessage::Barrier(ack_tx))
-            .map_err(|_| DBError::Wal(crate::wal::WALError::Io(
-                std::io::Error::new(std::io::ErrorKind::BrokenPipe, "WAL writer thread died")
-            )))?;
+        let (ack_tx, ack_rx) = bounded(1); // Oneshot channel
+        self.wal_tx.send(WALMessage::Barrier(ack_tx)).map_err(|_| {
+            DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "WAL writer thread died",
+            )))
+        })?;
         // Wait for acknowledgement (blocks until all pending records written)
-        ack_rx.recv().map_err(|_| DBError::Wal(crate::wal::WALError::Io(
-            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "WAL writer thread died during barrier")
-        )))?;
+        ack_rx.recv().map_err(|_| {
+            DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "WAL writer thread died during barrier",
+            )))
+        })?;
 
         // Now safe to clear WAL (all records written to disk)
         let mut wal = self.wal.lock().expect("WAL mutex poisoned");
@@ -1836,7 +1861,8 @@ impl DB {
         // Update max_flushed_seq to allow compaction of this SSTable
         // This MUST happen after immutable_memtables is cleared to prevent data loss
         // Use fetch_max to handle out-of-order flush completions (only update if new value is greater)
-        self.max_flushed_seq.fetch_max(flush_sequence, Ordering::SeqCst);
+        self.max_flushed_seq
+            .fetch_max(flush_sequence, Ordering::SeqCst);
 
         let flush_duration_ms = flush_start.elapsed().as_millis();
         info!(
@@ -1891,7 +1917,12 @@ impl DB {
 
     /// Helper: Build SSTable from iterator of (key, entry) pairs
     /// Handles both normal values and vLog separation
-    fn build_sstable_from_entries<'a, I>(&self, sstable_path: &Path, entries: I, sequence: u64) -> Result<()>
+    fn build_sstable_from_entries<'a, I>(
+        &self,
+        sstable_path: &Path,
+        entries: I,
+        sequence: u64,
+    ) -> Result<()>
     where
         I: Iterator<Item = &'a (Bytes, crate::memtable::Entry)>,
     {
@@ -1900,7 +1931,9 @@ impl DB {
 
         let mut vlog_guard = self.vlog.lock().expect("vLog mutex poisoned");
 
-        if let (Some(threshold), Some(ref mut vlog)) = (self.options.vlog_threshold, vlog_guard.as_mut()) {
+        if let (Some(threshold), Some(ref mut vlog)) =
+            (self.options.vlog_threshold, vlog_guard.as_mut())
+        {
             // KV separation enabled - use vLog for large values
             let mut builder = SSTableBuilder::create(sstable_path)?
                 .with_vlog_threshold(threshold)
@@ -1925,8 +1958,7 @@ impl DB {
             // No KV separation - traditional flush
             drop(vlog_guard);
 
-            let mut builder = SSTableBuilder::create(sstable_path)?
-                .with_max_sequence(sequence);
+            let mut builder = SSTableBuilder::create(sstable_path)?.with_max_sequence(sequence);
 
             for (key, entry) in entries {
                 match entry {
@@ -1944,7 +1976,6 @@ impl DB {
 
         Ok(())
     }
-
 
     /// Try to atomically swap all partitions for background flush
     ///
@@ -1977,12 +2008,14 @@ impl DB {
         for partition_mt in self.memtables.iter() {
             // Atomic swap: returns Arc<Memtable> of old partition
             // Keep it as Arc<Memtable> - no need to unwrap since immutable_memtables stores Arc
-            let old_arc: Arc<Memtable> = partition_mt.swap(Arc::new(Memtable::new(capacity_per_partition)));
+            let old_arc: Arc<Memtable> =
+                partition_mt.swap(Arc::new(Memtable::new(capacity_per_partition)));
             flushing_partitions.push(old_arc);
         }
 
         // Store in immutable_memtables (LOCK-FREE!)
-        self.immutable_memtables.store(Arc::new(Some(Arc::new(flushing_partitions))));
+        self.immutable_memtables
+            .store(Arc::new(Some(Arc::new(flushing_partitions))));
 
         Ok(true) // Successfully swapped
     }
@@ -2136,7 +2169,16 @@ impl DB {
         max_flushed_seq: &Arc<AtomicU64>,
         pending_deletions: &Arc<Mutex<Vec<(PathBuf, std::time::Instant)>>>,
     ) -> Result<()> {
-        Self::do_compact_level(lsm, lsm_mutex, sstable_counter, data_dir, level_num, metrics, max_flushed_seq, pending_deletions)
+        Self::do_compact_level(
+            lsm,
+            lsm_mutex,
+            sstable_counter,
+            data_dir,
+            level_num,
+            metrics,
+            max_flushed_seq,
+            pending_deletions,
+        )
     }
 
     /// Static flush method for background worker thread
@@ -2177,7 +2219,9 @@ impl DB {
         }
 
         // Generate SSTable filename
-        let mut counter = sstable_counter.lock().expect("SSTable counter mutex poisoned");
+        let mut counter = sstable_counter
+            .lock()
+            .expect("SSTable counter mutex poisoned");
         let flush_sequence = *counter; // Capture sequence for this background flush
         let sstable_path = data_dir.join(format!("L0_{:06}.sst", *counter));
         *counter += 1;
@@ -2227,8 +2271,8 @@ impl DB {
             // No KV separation - traditional flush
             drop(vlog_guard);
 
-            let mut builder = SSTableBuilder::create(&sstable_path)?
-                .with_max_sequence(flush_sequence);
+            let mut builder =
+                SSTableBuilder::create(&sstable_path)?.with_max_sequence(flush_sequence);
             for (key, entry) in &all_entries {
                 match entry {
                     Entry::Value(value) => {
@@ -2292,16 +2336,12 @@ impl DB {
 
     /// Get current memtable size across all partitions (lock-free)
     pub fn memtable_size(&self) -> usize {
-        self.memtables.iter()
-            .map(|mt| mt.load().size())
-            .sum()
+        self.memtables.iter().map(|mt| mt.load().size()).sum()
     }
 
     /// Get number of entries in memtable across all partitions (lock-free)
     pub fn memtable_len(&self) -> usize {
-        self.memtables.iter()
-            .map(|mt| mt.load().len())
-            .sum()
+        self.memtables.iter().map(|mt| mt.load().len()).sum()
     }
 
     /// Get real-time database statistics
@@ -2371,9 +2411,7 @@ impl DB {
     /// - SSTable cache (~1KB per cached SSTable)
     pub fn estimate_memory_usage(&self) -> usize {
         // Active memtables
-        let active_memtable_bytes: usize = self.memtables.iter()
-            .map(|mt| mt.load().size())
-            .sum();
+        let active_memtable_bytes: usize = self.memtables.iter().map(|mt| mt.load().size()).sum();
 
         // Immutable memtables (if flush in progress)
         let immutable_memtable_bytes: usize = {
@@ -2417,7 +2455,7 @@ impl DB {
 
         // Keep files that aren't old enough yet
         *pending = still_pending;
-        drop(pending);  // Release lock before doing I/O
+        drop(pending); // Release lock before doing I/O
 
         // Delete old files (outside the lock to avoid blocking)
         for path in ready_to_delete {
@@ -2432,7 +2470,7 @@ impl DB {
 
     fn check_disk_space(&self) -> Result<()> {
         if let Some(min_space) = self.options.min_disk_space_bytes {
-            use sysinfo::{System, SystemExt, DiskExt};
+            use sysinfo::{DiskExt, System, SystemExt};
 
             // Get disk information (only refresh disks, not all system info)
             let mut sys = System::new();
@@ -2440,9 +2478,11 @@ impl DB {
 
             // Find the disk containing our data directory
             let data_dir = &self.options.data_dir;
-            if let Some(disk) = sys.disks().iter().find(|d| {
-                data_dir.starts_with(d.mount_point())
-            }) {
+            if let Some(disk) = sys
+                .disks()
+                .iter()
+                .find(|d| data_dir.starts_with(d.mount_point()))
+            {
                 let available = disk.available_space();
                 if available < min_space {
                     return Err(DBError::DiskSpaceFull {
@@ -2466,9 +2506,7 @@ impl DB {
             self.metrics.get_latency_percentiles();
 
         // Get memtable stats (sum across all partitions, lock-free)
-        let memtable_size_bytes: usize = self.memtables.iter()
-            .map(|mt| mt.load().size())
-            .sum();
+        let memtable_size_bytes: usize = self.memtables.iter().map(|mt| mt.load().size()).sum();
         let memtable_capacity_bytes = self.options.memtable_capacity;
         let memtable_utilization_pct =
             (memtable_size_bytes as f64 / memtable_capacity_bytes as f64) * 100.0;
@@ -2748,9 +2786,7 @@ impl DB {
         }
 
         // Check 3: Memtable utilization (sum across all partitions, lock-free)
-        let memtable_size: usize = self.memtables.iter()
-            .map(|mt| mt.load().size())
-            .sum();
+        let memtable_size: usize = self.memtables.iter().map(|mt| mt.load().size()).sum();
         let memtable_capacity = self.options.memtable_capacity;
         let utilization_pct = (memtable_size as f64 / memtable_capacity as f64) * 100.0;
 
@@ -2874,11 +2910,7 @@ impl DB {
     ///
     /// - [`DBError::SSTable`]: SSTable corruption or I/O error
     /// - [`DBError::VLog`]: vLog read error for large values
-    pub fn range(
-        &self,
-        start_key: &[u8],
-        end_key: Option<&[u8]>,
-    ) -> Result<RangeIterator> {
+    pub fn range(&self, start_key: &[u8], end_key: Option<&[u8]>) -> Result<RangeIterator> {
         // Track read operation for Dostoevsky adaptive compaction
         self.read_count
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -2900,17 +2932,22 @@ impl DB {
 
         // Collect Arc references to ALL active memtable partitions (lock-free)
         // load() returns Guard<Arc<Memtable>>, we need to clone the Arc out
-        let partition_arcs: Vec<Arc<Memtable>> = self.memtables.iter()
+        let partition_arcs: Vec<Arc<Memtable>> = self
+            .memtables
+            .iter()
             .map(|mt| (*mt.load()).clone())
             .collect();
-        let mut partition_refs: Vec<&Memtable> = partition_arcs.iter()
-            .map(|arc| arc.as_ref())
-            .collect();
+        let mut partition_refs: Vec<&Memtable> =
+            partition_arcs.iter().map(|arc| arc.as_ref()).collect();
 
         // Also include immutable partitions if they exist (LOCK-FREE!)
         let immutable_arc = self.immutable_memtables.load();
-        let immutable_refs: Vec<&Memtable> = if let Some(ref immutable_partitions) = **immutable_arc {
-            immutable_partitions.iter().map(|arc| arc.as_ref()).collect()
+        let immutable_refs: Vec<&Memtable> = if let Some(ref immutable_partitions) = **immutable_arc
+        {
+            immutable_partitions
+                .iter()
+                .map(|arc| arc.as_ref())
+                .collect()
         } else {
             Vec::new()
         };
@@ -2926,10 +2963,13 @@ impl DB {
             if let Some(level) = lsm_arc.level(level_idx) {
                 for sstable_path in level.sstables() {
                     // Use quick_cache for lock-free SSTable access
-                    let sstable_arc = self.sstable_cache.get_or_insert_with(sstable_path, || -> Result<Arc<Mutex<SSTable>>> {
-                        let sstable = SSTable::open(sstable_path.clone())?;
-                        Ok(Arc::new(Mutex::new(sstable)))
-                    })?;
+                    let sstable_arc = self.sstable_cache.get_or_insert_with(
+                        sstable_path,
+                        || -> Result<Arc<Mutex<SSTable>>> {
+                            let sstable = SSTable::open(sstable_path.clone())?;
+                            Ok(Arc::new(Mutex::new(sstable)))
+                        },
+                    )?;
 
                     // Check if SSTable range overlaps with query range (CRITICAL OPTIMIZATION)
                     // Skip SSTables whose key range doesn't overlap with [start_key, end_key)
@@ -2994,14 +3034,17 @@ impl Drop for DB {
         // Replace our sender with a dummy one, dropping the original
         let (dummy_tx, _dummy_rx) = crossbeam_channel::unbounded::<WALMessage>();
         let _old_tx = std::mem::replace(&mut self.wal_tx, dummy_tx);
-        drop(_old_tx);  // Explicitly drop to close channel
+        drop(_old_tx); // Explicitly drop to close channel
 
         // Wait for WAL worker thread to finish
         // join() provides proper synchronization - thread won't exit until all records are written
         if let Some(worker) = self.wal_worker.take() {
             debug!("Waiting for background WAL writer thread to finish");
             if let Err(e) = worker.join() {
-                error!("WAL writer thread panicked during shutdown: {:?} - DATA LOSS MAY HAVE OCCURRED", e);
+                error!(
+                    "WAL writer thread panicked during shutdown: {:?} - DATA LOSS MAY HAVE OCCURRED",
+                    e
+                );
             }
         }
 
@@ -3542,7 +3585,11 @@ mod tests {
 
         // Should get key005-key009 and key020-key024 (5 + 5 = 10 keys)
         assert_eq!(results.len(), 10);
-        assert!(!results.iter().any(|k| k.as_str() >= "key010" && k.as_str() < "key020"));
+        assert!(
+            !results
+                .iter()
+                .any(|k| k.as_str() >= "key010" && k.as_str() < "key020")
+        );
     }
 
     #[test]

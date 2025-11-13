@@ -1,7 +1,7 @@
 // Varint decoding comparison: varint-rs vs varint-simd
 // Tests whether SIMD varint provides meaningful speedup for block parsing
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use std::io::Cursor;
 
 // Generate test data: varint-encoded values
@@ -13,8 +13,8 @@ fn generate_varint_data(count: usize) -> Vec<u8> {
     // Matches typical SSTable block entry metadata
     for i in 0..count {
         match i % 3 {
-            0 => buf.write_u64_varint(127).unwrap(),     // 1 byte: prefix_len
-            1 => buf.write_u64_varint(16383).unwrap(),   // 2 bytes: suffix_len
+            0 => buf.write_u64_varint(127).unwrap(), // 1 byte: prefix_len
+            1 => buf.write_u64_varint(16383).unwrap(), // 2 bytes: suffix_len
             _ => buf.write_u64_varint(2097151).unwrap(), // 3 bytes: value_len
         }
     }
@@ -53,7 +53,7 @@ fn bench_varint_rs(c: &mut Criterion) {
 // Benchmark: varint-simd (SIMD-accelerated)
 #[cfg(feature = "varint-simd")]
 fn bench_varint_simd(c: &mut Criterion) {
-    use varint_simd::{decode, VarIntTarget};
+    use varint_simd::{VarIntTarget, decode};
 
     let mut group = c.benchmark_group("varint_simd");
 
@@ -117,7 +117,7 @@ fn bench_full_block_simulation(c: &mut Criterion) {
     // SIMD version
     #[cfg(feature = "varint-simd")]
     {
-        use varint_simd::{decode, VarIntTarget};
+        use varint_simd::{VarIntTarget, decode};
 
         c.bench_function("full_block_50_entries_varint_simd", |b| {
             b.iter(|| {

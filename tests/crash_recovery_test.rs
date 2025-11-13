@@ -5,7 +5,7 @@
 // instead of spawning processes (which is complex and flaky)
 
 use bytes::Bytes;
-use seerdb::{DBOptions, SyncPolicy, DB};
+use seerdb::{DB, DBOptions, SyncPolicy};
 use std::fs::{self, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;

@@ -10,7 +10,7 @@ fn bytes_to_i64(bytes: &[u8]) -> i64 {
     let mut buf = [0u8; 8];
     let len = bytes.len().min(8);
     buf[..len].copy_from_slice(&bytes[..len]);
-    i64::from_be_bytes(buf)  // Big-endian preserves lexicographic ordering
+    i64::from_be_bytes(buf) // Big-endian preserves lexicographic ordering
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -22,7 +22,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for &num_index_blocks in &test_sizes {
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!("Dataset: {} index blocks, {} lookups", num_index_blocks, lookups);
+        println!(
+            "Dataset: {} index blocks, {} lookups",
+            num_index_blocks, lookups
+        );
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
         run_benchmark(num_index_blocks, lookups)?;
@@ -32,7 +35,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn run_benchmark(num_index_blocks: usize, lookups: usize) -> Result<(), Box<dyn std::error::Error>> {
+fn run_benchmark(
+    num_index_blocks: usize,
+    lookups: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
     // Generate sorted keys (simulating SSTable index block last_keys)
     let keys: Vec<Vec<u8>> = (0..num_index_blocks)
         .map(|i| format!("key_{:010}", i * 100).into_bytes())
@@ -53,7 +59,10 @@ fn run_benchmark(num_index_blocks: usize, lookups: usize) -> Result<(), Box<dyn 
     let ns_per_lookup_binary = binary_search_time.as_nanos() as f64 / lookups as f64;
     println!("   Total time:       {:?}", binary_search_time);
     println!("   Time per lookup:  {:.1} ns", ns_per_lookup_binary);
-    println!("   Throughput:       {:.0} ops/sec\n", 1_000_000_000.0 / ns_per_lookup_binary);
+    println!(
+        "   Throughput:       {:.0} ops/sec\n",
+        1_000_000_000.0 / ns_per_lookup_binary
+    );
 
     // ========================================
     // ALEX learned index
@@ -65,7 +74,7 @@ fn run_benchmark(num_index_blocks: usize, lookups: usize) -> Result<(), Box<dyn 
     let mut alex = AlexTree::new();
     for (i, key) in keys.iter().enumerate() {
         let key_i64 = bytes_to_i64(key);
-        let value = i.to_le_bytes().to_vec();  // Store index as value
+        let value = i.to_le_bytes().to_vec(); // Store index as value
         alex.insert(key_i64, value)?;
     }
     let build_time = build_start.elapsed();
@@ -83,7 +92,10 @@ fn run_benchmark(num_index_blocks: usize, lookups: usize) -> Result<(), Box<dyn 
     let ns_per_lookup_alex = alex_time.as_nanos() as f64 / lookups as f64;
     println!("   Total time:       {:?}", alex_time);
     println!("   Time per lookup:  {:.1} ns", ns_per_lookup_alex);
-    println!("   Throughput:       {:.0} ops/sec\n", 1_000_000_000.0 / ns_per_lookup_alex);
+    println!(
+        "   Throughput:       {:.0} ops/sec\n",
+        1_000_000_000.0 / ns_per_lookup_alex
+    );
 
     // ========================================
     // Comparison

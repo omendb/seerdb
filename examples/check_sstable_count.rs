@@ -1,7 +1,7 @@
 // Check how many SSTables exist during baseline_benchmark sequence
-use seerdb::{DBOptions, DB};
-use std::path::PathBuf;
+use seerdb::{DB, DBOptions};
 use std::fs;
+use std::path::PathBuf;
 
 const NUM_OPERATIONS: usize = 100_000;
 const VALUE_SIZE: usize = 1024;
@@ -73,13 +73,21 @@ fn main() {
         let start_key = format!("key_{:08}", i * 100);
         let end_key = format!("key_{:08}", i * 100 + 100);
         let mut count = 0;
-        for result in db.range(start_key.as_bytes(), Some(end_key.as_bytes())).unwrap() {
+        for result in db
+            .range(start_key.as_bytes(), Some(end_key.as_bytes()))
+            .unwrap()
+        {
             let _ = result.unwrap();
             count += 1;
-            if count >= 100 { break; }
+            if count >= 100 {
+                break;
+            }
         }
     }
     let elapsed = start.elapsed();
-    println!("\nRange scans: {:.0} scans/sec", 1000.0 / elapsed.as_secs_f64());
+    println!(
+        "\nRange scans: {:.0} scans/sec",
+        1000.0 / elapsed.as_secs_f64()
+    );
     println!("Final SSTable count: {}", count_sstables(&path));
 }

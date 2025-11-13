@@ -26,12 +26,20 @@ fn test_node_split_on_capacity() {
     }
 
     // Should have created multiple leaf nodes
-    assert!(tree.num_leaves() >= 10, "Expected multiple splits, got {} leaves", tree.num_leaves());
+    assert!(
+        tree.num_leaves() >= 10,
+        "Expected multiple splits, got {} leaves",
+        tree.num_leaves()
+    );
     assert_eq!(tree.len(), 1000, "All keys should be present after splits");
 
     // Verify all keys are still accessible after splits
     for i in (0..1000).step_by(50) {
-        assert!(tree.get(i).unwrap().is_some(), "Key {} missing after split", i);
+        assert!(
+            tree.get(i).unwrap().is_some(),
+            "Key {} missing after split",
+            i
+        );
     }
 }
 
@@ -50,8 +58,12 @@ fn test_split_maintains_sort_order() {
 
     // Verify strict ascending order
     for i in 0..results.len() - 1 {
-        assert!(results[i].0 < results[i + 1].0,
-            "Keys not in order: {} >= {}", results[i].0, results[i + 1].0);
+        assert!(
+            results[i].0 < results[i + 1].0,
+            "Keys not in order: {} >= {}",
+            results[i].0,
+            results[i + 1].0
+        );
     }
 }
 
@@ -109,7 +121,10 @@ fn test_batch_insert_performance() {
 
     // Sample verification
     let key_sample = (100 * 7919) % 50000;
-    assert!(tree.get(key_sample).unwrap().is_some(), "Batch-inserted key missing");
+    assert!(
+        tree.get(key_sample).unwrap().is_some(),
+        "Batch-inserted key missing"
+    );
 }
 
 #[test]
@@ -281,7 +296,10 @@ fn test_duplicate_keys_allowed() {
 
     // get() returns ONE of the values (implementation-defined which one)
     let value = tree.get(100).unwrap();
-    assert!(value.is_some(), "Should find at least one value for key 100");
+    assert!(
+        value.is_some(),
+        "Should find at least one value for key 100"
+    );
 
     // Range query returns all occurrences
     let results = tree.range(100, 100).unwrap();
@@ -417,7 +435,12 @@ fn test_concurrent_range_queries() {
                 let end = start + 200;
 
                 let results = tree_clone.range(start, end).unwrap();
-                assert_eq!(results.len(), 201, "Thread {} got wrong range size", thread_id);
+                assert_eq!(
+                    results.len(),
+                    201,
+                    "Thread {} got wrong range size",
+                    thread_id
+                );
 
                 // Verify sorted
                 for i in 0..results.len() - 1 {
@@ -447,8 +470,11 @@ fn test_sequential_keys_low_error() {
     // With good model, shouldn't need many splits
     // Sequential keys = perfect linear model = low error
     // Should use expansion factor efficiently
-    assert!(tree.num_leaves() < 20,
-        "Sequential keys should need few splits, got {} leaves", tree.num_leaves());
+    assert!(
+        tree.num_leaves() < 20,
+        "Sequential keys should need few splits, got {} leaves",
+        tree.num_leaves()
+    );
 }
 
 #[test]
@@ -463,10 +489,14 @@ fn test_random_keys_higher_error() {
 
     // Random keys = worse model = more splits
     // Still should be reasonable (not excessive splitting)
-    assert!(tree.num_leaves() >= 10,
-        "Random keys should cause more splits than sequential");
-    assert!(tree.num_leaves() < 100,
-        "Too many splits - model may be over-fitting");
+    assert!(
+        tree.num_leaves() >= 10,
+        "Random keys should cause more splits than sequential"
+    );
+    assert!(
+        tree.num_leaves() < 100,
+        "Too many splits - model may be over-fitting"
+    );
 }
 
 #[test]
