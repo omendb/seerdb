@@ -1,8 +1,8 @@
 // Main database interface
 // Integrates WAL, Memtable, SSTable, Compaction, and VLog
 
-use crate::background_workers::{CompactionTask, FlushTask};
 pub(crate) use crate::background_workers::WALMessage;
+use crate::background_workers::{CompactionTask, FlushTask};
 use crate::compaction::{LSMTree, compact_sstables};
 use crate::health::{HealthCheck, HealthStatus};
 use crate::memtable::Memtable;
@@ -701,10 +701,8 @@ impl DB {
         );
 
         // Start background WAL writer (always enabled for lock-free writes)
-        let (wal_tx, wal_worker) = crate::background_workers::spawn_wal_writer(
-            Arc::clone(&wal),
-            Arc::clone(&wal_healthy),
-        );
+        let (wal_tx, wal_worker) =
+            crate::background_workers::spawn_wal_writer(Arc::clone(&wal), Arc::clone(&wal_healthy));
 
         let db = Self {
             options: options.clone(),

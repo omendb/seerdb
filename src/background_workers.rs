@@ -168,8 +168,7 @@ pub(crate) fn run_background_flush_partitioned(
         // No KV separation - traditional flush
         drop(vlog_guard);
 
-        let mut builder =
-            SSTableBuilder::create(&sstable_path)?.with_max_sequence(flush_sequence);
+        let mut builder = SSTableBuilder::create(&sstable_path)?.with_max_sequence(flush_sequence);
         for (key, entry) in &all_entries {
             match entry {
                 Entry::Value(value) => {
@@ -392,16 +391,16 @@ pub(crate) fn spawn_wal_writer(
                         Ok(WALMessage::Barrier(ack_tx)) => {
                             // Flush all pending records before acknowledging
                             if !batch.is_empty() {
-                                if let Err(e) = wal.lock()
-                                    .expect("WAL mutex poisoned")
-                                    .write_batch(&batch) {
+                                if let Err(e) =
+                                    wal.lock().expect("WAL mutex poisoned").write_batch(&batch)
+                                {
                                     error!(error = %e, "WAL batch write failed during barrier");
                                 }
                                 batch.clear();
                             }
                             // Send acknowledgement (flush() is waiting for this)
                             let _ = ack_tx.send(());
-                            false  // Continue processing
+                            false // Continue processing
                         }
                         Err(_) => {
                             // Channel closed - need to drain remaining messages
@@ -424,9 +423,9 @@ pub(crate) fn spawn_wal_writer(
                             Ok(WALMessage::Barrier(ack_tx)) => {
                                 // Flush current batch before acknowledging
                                 if !batch.is_empty() {
-                                    if let Err(e) = wal.lock()
-                                        .expect("WAL mutex poisoned")
-                                        .write_batch(&batch) {
+                                    if let Err(e) =
+                                        wal.lock().expect("WAL mutex poisoned").write_batch(&batch)
+                                    {
                                         error!(error = %e, "WAL batch write failed during barrier");
                                     }
                                     batch.clear();
@@ -435,15 +434,14 @@ pub(crate) fn spawn_wal_writer(
                                 let _ = ack_tx.send(());
                                 // Continue draining if more messages
                             }
-                            Err(_) => break,  // Channel empty
+                            Err(_) => break, // Channel empty
                         }
                     }
 
                     // Write batch if not empty
                     if !batch.is_empty() {
-                        if let Err(e) = wal.lock()
-                            .expect("WAL mutex poisoned")
-                            .write_batch(&batch) {
+                        if let Err(e) = wal.lock().expect("WAL mutex poisoned").write_batch(&batch)
+                        {
                             error!(error = %e, "WAL batch write failed");
                         }
                         batch.clear();
@@ -452,9 +450,7 @@ pub(crate) fn spawn_wal_writer(
                     // Exit after writing final batch
                     if channel_closed {
                         // Final fsync to ensure all data is on disk before thread exits
-                        if let Err(e) = wal.lock()
-                            .expect("WAL mutex poisoned")
-                            .sync() {
+                        if let Err(e) = wal.lock().expect("WAL mutex poisoned").sync() {
                             error!(error = %e, "Final WAL sync failed - DATA MAY BE LOST");
                         }
                         debug!("WAL writer thread: channel closed, all records flushed and synced");
