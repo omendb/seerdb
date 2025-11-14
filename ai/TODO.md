@@ -210,38 +210,6 @@ RUSTFLAGS="-Z sanitizer=thread" cargo +nightly test -Zbuild-std
 
 ---
 
-## Completed Optimizations ✅
-
-### Bug Fixes (Nov 9-10, 2025)
-- ✅ All 9 critical bugs resolved
-- ✅ Block cache unbounded (fixed with quick_cache LRU, 10K blocks, ~40MB limit)
-- ✅ Batch API atomicity (single WAL batch record, atomic recovery)
-- ✅ Checksums (SSTable footer validated on read)
-- ✅ Magic numbers (WAL/VLog have magic + version)
-- ✅ Iterator invalidation (memtables collected before SSTables)
-- ✅ Compaction live key deletion (delayed deletion queue)
-- ✅ WAL recovery race (barrier synchronization + file cursor seek)
-- ✅ Tombstone handling (SSTable.contains() distinguishes tombstone from miss)
-
-### Performance Optimizations (Nov 7-8, 2025)
-- ✅ jemalloc allocator (+17-21% all workloads) 🔥
-- ✅ ArcSwap lock-free structures (+1-4%)
-- ✅ SIMD k-way merge (+3-4% reads)
-- ✅ LZ4 block compression (+34.7% writes) 🔥
-- ✅ foldhash (2x faster hashing)
-- ✅ varint-rs (space-efficient encoding)
-- ✅ quick_cache (lock-free SSTable cache)
-- ✅ ALEX learned index (+55% reads) 🔥
-
-### Core Features (Oct-Nov 2025)
-- ✅ Partitioned memtables (16 partitions)
-- ✅ Lock-free WAL
-- ✅ Decompressed block cache
-- ✅ Dostoevsky compaction
-- ✅ WiscKey vLog (write amp: 1.01x)
-
----
-
 ## References
 
 **Planning**:
