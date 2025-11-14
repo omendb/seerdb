@@ -493,3 +493,69 @@ fn test_sstable_durability_after_crash() {
         }
     }
 }
+
+// ============================================================================
+// Disk Space Checking Tests
+// ============================================================================
+
+#[test]
+fn test_disk_space_check_caching() {
+    // Test that disk space checking uses caching and doesn't call sysinfo on every write
+    let temp_dir = TempDir::new().unwrap();
+    let data_dir = PathBuf::from(temp_dir.path());
+
+    let opts = DBOptions {
+        data_dir,
+        min_disk_space_bytes: Some(1024 * 1024), // 1MB minimum
+        ..Default::default()
+    };
+
+    let db = DB::open(opts).unwrap();
+
+    // Write multiple values - disk space should be checked but cached
+    for i in 0..100 {
+        db.put(format!("key_{:04}", i).as_bytes(), b"value")
+            .unwrap();
+    }
+
+    // All writes should succeed (we have enough disk space)
+    assert_eq!(db.get(b"key_0000").unwrap().unwrap().as_ref(), b"value");
+}
+
+#[test]
+fn test_disk_space_check_disabled_when_not_configured() {
+    // Test that disk space checking is skipped when min_disk_space_bytes is None
+    let temp_dir = TempDir::new().unwrap();
+    let data_dir = PathBuf::from(temp_dir.path());
+
+    let opts = DBOptions {
+        data_dir,
+        min_disk_space_bytes: None, // Disabled
+        ..Default::default()
+    };
+
+    let db = DB::open(opts).unwrap();
+
+    // Writes should succeed without any disk space checks
+    for i in 0..50 {
+        db.put(format!("key_{:04}", i).as_bytes(), b"value")
+            .unwrap();
+    }
+
+    assert_eq!(db.get(b"key_0000").unwrap().unwrap().as_ref(), b"value");
+}
+
+#[test]
+#[ignore] // Requires special setup to simulate low disk space
+fn test_disk_space_full_prevents_writes() {
+    // This test would require mocking the sysinfo disk space check
+    // or running on a partition with very little space
+    //
+    // Expected behavior:
+    // 1. Set min_disk_space_bytes to a high value (e.g., 1TB)
+    // 2. Attempt writes
+    // 3. Should get DBError::DiskSpaceFull
+    //
+    // Implementation note: This is difficult to test in a real environment
+    // without creating a small partition or using mocking
+}

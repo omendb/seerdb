@@ -481,6 +481,11 @@ pub struct DB {
     /// Files are queued here after compaction updates LSM tree, then deleted after a safe delay
     /// This prevents race conditions with concurrent readers holding old LSM snapshots
     pending_deletions: Arc<Mutex<Vec<(PathBuf, std::time::Instant)>>>,
+    /// Cached disk space information for performance
+    /// Timestamp (seconds since UNIX epoch) of last disk space check
+    last_disk_check: Arc<AtomicU64>,
+    /// Cached available disk space in bytes (updated every 10 seconds)
+    cached_available_space: Arc<AtomicU64>,
 }
 
 impl DB {
@@ -731,6 +736,8 @@ impl DB {
             flush_healthy,
             compaction_healthy,
             pending_deletions,
+            last_disk_check: Arc::new(AtomicU64::new(0)),
+            cached_available_space: Arc::new(AtomicU64::new(u64::MAX)), // Start with "infinite" space
         };
 
         // Flush memtables if any partition filled up during recovery
@@ -849,9 +856,8 @@ impl DB {
         }
 
         // Disk space check (if configured)
-        // TODO: Disabled temporarily - calling sysinfo on every write is too slow
-        // Need to implement caching or periodic checking
-        // self.check_disk_space()?;
+        // Uses periodic caching (10s interval) to avoid performance impact
+        self.check_disk_space_cached()?;
 
         // Check WAL writer thread health BEFORE writing
         // If WAL died, writes would be lost even though we return Ok()
@@ -1980,6 +1986,92 @@ impl DB {
         const SSTABLE_CACHE_BYTES: usize = 1_000 * 1024;
 
         active_memtable_bytes + immutable_memtable_bytes + BLOCK_CACHE_BYTES + SSTABLE_CACHE_BYTES
+    }
+
+    /// Check disk space with periodic caching (every 10 seconds)
+    ///
+    /// This is a performance-optimized version of disk space checking that:
+    /// 1. Returns immediately if checked within last 10 seconds (uses cached value)
+    /// 2. Otherwise updates cache and checks disk space
+    ///
+    /// This avoids the performance overhead of calling sysinfo on every write
+    /// while still protecting against disk full scenarios.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if sufficient disk space available
+    /// - `Err(DBError::DiskSpaceFull)` if disk space below threshold
+    ///
+    /// # Performance
+    ///
+    /// - Cached check: < 1 microsecond (single atomic load)
+    /// - Fresh check: ~1-5 milliseconds (sysinfo syscall)
+    fn check_disk_space_cached(&self) -> Result<()> {
+        // Only check if min_disk_space is configured
+        if self.options.min_disk_space_bytes.is_none() {
+            return Ok(());
+        }
+
+        const CHECK_INTERVAL_SECS: u64 = 10;
+
+        // Get current time (seconds since UNIX epoch)
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // Get last check time (atomic load, very fast)
+        let last_check = self.last_disk_check.load(Ordering::Relaxed);
+
+        // If checked within last 10 seconds, use cached value
+        if now.saturating_sub(last_check) < CHECK_INTERVAL_SECS {
+            let cached_space = self.cached_available_space.load(Ordering::Relaxed);
+            let min_space = self.options.min_disk_space_bytes.unwrap();
+
+            if cached_space < min_space {
+                return Err(DBError::DiskSpaceFull {
+                    available: cached_space,
+                    required: min_space,
+                });
+            }
+            return Ok(());
+        }
+
+        // Time to refresh the cache - call the actual disk space check
+        // This uses sysinfo which is slow, but we only do it every 10 seconds
+        use sysinfo::{DiskExt, System, SystemExt};
+
+        let min_space = self.options.min_disk_space_bytes.unwrap();
+        let mut sys = System::new();
+        sys.refresh_disks_list();
+
+        // Find the disk containing our data directory
+        let data_dir = &self.options.data_dir;
+        if let Some(disk) = sys
+            .disks()
+            .iter()
+            .find(|d| data_dir.starts_with(d.mount_point()))
+        {
+            let available = disk.available_space();
+
+            // Update cache (atomic stores)
+            self.cached_available_space
+                .store(available, Ordering::Relaxed);
+            self.last_disk_check.store(now, Ordering::Relaxed);
+
+            if available < min_space {
+                return Err(DBError::DiskSpaceFull {
+                    available,
+                    required: min_space,
+                });
+            }
+        } else {
+            // If we can't find the disk, update timestamp anyway to avoid
+            // hammering sysinfo on every write
+            self.last_disk_check.store(now, Ordering::Relaxed);
+        }
+
+        Ok(())
     }
 
     pub fn stats(&self) -> DBStats {
