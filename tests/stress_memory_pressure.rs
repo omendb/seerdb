@@ -63,11 +63,59 @@ fn test_memory_pressure_80_percent_trigger() {
     // Flush to ensure everything persists
     db.flush().unwrap();
 
+    // Debug: Check DB stats
+    let stats = db.stats();
+    println!("\n=== DB Stats after flush ===");
+    println!("Total flushes: {}", stats.total_flushes);
+    println!("Total puts: {}", stats.total_puts);
+    println!("Memory usage: {} MB", db.estimate_memory_usage() / 1024 / 1024);
+
+    // Debug: Check SSTable files on disk
+    println!("\n=== SSTable files on disk ===");
+    let mut sstable_paths = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&temp_dir) {
+        for entry in entries {
+            if let Ok(entry) = entry {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("sst") {
+                    let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                    println!("  {:?}: {} bytes", path.file_name().unwrap(), size);
+                    sstable_paths.push(path);
+                }
+            }
+        }
+    }
+
+    // Debug: Manually open SSTables and check if key exists
+    println!("\n=== Manually checking SSTables for key_0000000000 ===");
+    use seerdb::SSTable;
+    for sst_path in &sstable_paths {
+        match SSTable::open(sst_path) {
+            Ok(mut sst) => {
+                let contains = sst.contains(b"key_0000000000").unwrap_or(false);
+                println!("  {:?}: {}", sst_path.file_name().unwrap(), if contains { "FOUND" } else { "NOT FOUND" });
+            }
+            Err(e) => {
+                println!("  {:?}: ERROR opening - {}", sst_path.file_name().unwrap(), e);
+            }
+        }
+    }
+
     // Verify some data (spot check)
-    for i in (0..wrote_count).step_by(10000) {
+    for i in (0..wrote_count as i32).step_by(10000) {
         let key = format!("key_{:010}", i);
+        let result = db.get(key.as_bytes()).unwrap();
+        if result.is_none() {
+            println!("\n=== MISSING KEY: {} (write #{}) ===", key, i);
+            // Try adjacent keys to see pattern
+            for j in (i.saturating_sub(5))..=(i+5) {
+                let test_key = format!("key_{:010}", j);
+                let test_result = db.get(test_key.as_bytes()).unwrap();
+                println!("  key_{:010}: {}", j, if test_result.is_some() { "FOUND" } else { "MISSING" });
+            }
+        }
         assert!(
-            db.get(key.as_bytes()).unwrap().is_some(),
+            result.is_some(),
             "Key {} should exist after memory pressure test",
             key
         );

@@ -1387,6 +1387,29 @@ impl DB {
     pub fn flush(&self) -> Result<()> {
         use crate::memtable::Entry;
 
+        // **CRITICAL FIX (Bug #10): Wait for background flush to complete BEFORE acquiring mutex
+        // If background_flush is enabled AND immutable_memtables is occupied,
+        // we must wait for the background flush worker to complete.
+        // IMPORTANT: We must wait BEFORE acquiring flush_mutex, otherwise we deadlock:
+        //   - flush() holds flush_mutex
+        //   - background flush waits for flush_mutex
+        //   - flush() waits for background flush to complete
+        //   - DEADLOCK!
+        if self.options.background_flush {
+            // Wait for any in-progress background flush to complete
+            loop {
+                let immut_arc = self.immutable_memtables.load();
+                if immut_arc.is_none() {
+                    // Background flush completed - safe to proceed
+                    break;
+                }
+                // Background flush still in progress - wait briefly and retry
+                debug!("Waiting for background flush to complete before explicit flush");
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            // immutable_memtables is now None - background flush completed
+        }
+
         // **CRITICAL FIX**: Serialize all flushes to prevent concurrent flush races
         let _flush_lock = self.flush_mutex.lock().expect("Flush mutex poisoned");
 
@@ -1406,92 +1429,96 @@ impl DB {
             "Starting partitioned memtable flush"
         );
 
-        // **CRITICAL**: Check if there's a previous failed flush
-        // If immutable_memtables is occupied, flush it first to avoid data loss (LOCK-FREE!)
-        let pending_immutable_arc = self.immutable_memtables.swap(Arc::new(None));
-        let pending_immutable =
-            Arc::try_unwrap(pending_immutable_arc).unwrap_or_else(|arc| (*arc).clone());
+        // Handle any failed flush (only when background_flush is disabled)
+        if !self.options.background_flush {
+            // Background flush disabled - handle synchronously
+            // Check if there's a previous failed flush
+            // If immutable_memtables is occupied, flush it first to avoid data loss (LOCK-FREE!)
+            let pending_immutable_arc = self.immutable_memtables.swap(Arc::new(None));
+            let pending_immutable =
+                Arc::try_unwrap(pending_immutable_arc).unwrap_or_else(|arc| (*arc).clone());
 
-        if let Some(pending_partitions_arc) = pending_immutable {
-            // Previous flush failed - retry flushing the existing immutable partitions
-            warn!(
-                partitions = pending_partitions_arc.len(),
-                "Retrying flush of previously failed immutable partitions"
-            );
+            if let Some(pending_partitions_arc) = pending_immutable {
+                // Previous flush failed - retry flushing the existing immutable partitions
+                warn!(
+                    partitions = pending_partitions_arc.len(),
+                    "Retrying flush of previously failed immutable partitions"
+                );
 
-            // Generate filename for pending flush
-            let mut counter = self
-                .sstable_counter
-                .lock()
-                .expect("SSTable counter mutex poisoned");
-            let pending_flush_sequence = *counter; // Capture sequence for retry flush
-            let pending_sstable_path = self
-                .options
-                .data_dir
-                .join(format!("L0_{:06}.sst", *counter));
-            *counter += 1;
-            drop(counter);
+                // Generate filename for pending flush
+                let mut counter = self
+                    .sstable_counter
+                    .lock()
+                    .expect("SSTable counter mutex poisoned");
+                let pending_flush_sequence = *counter; // Capture sequence for retry flush
+                let pending_sstable_path = self
+                    .options
+                    .data_dir
+                    .join(format!("L0_{:06}.sst", *counter));
+                *counter += 1;
+                drop(counter);
 
-            // Collect and sort entries from all pending partitions
-            let mut all_entries: Vec<(Bytes, Entry)> = Vec::new();
-            for partition_mt in pending_partitions_arc.iter() {
-                for (key, entry) in partition_mt.iter() {
-                    all_entries.push((key, entry));
+                // Collect and sort entries from all pending partitions
+                let mut all_entries: Vec<(Bytes, Entry)> = Vec::new();
+                for partition_mt in pending_partitions_arc.iter() {
+                    for (key, entry) in partition_mt.iter() {
+                        all_entries.push((key, entry));
+                    }
                 }
+
+                // Sort by key (deduplication handled by taking last value for each key)
+                all_entries.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
+
+                // Build SSTable from sorted entries
+                self.build_sstable_from_entries(
+                    &pending_sstable_path,
+                    all_entries.iter(),
+                    pending_flush_sequence,
+                )?;
+                let pending_size = std::fs::metadata(&pending_sstable_path)?.len();
+
+                // Track physical bytes written to SSTable (retry case)
+                self.metrics.record_physical_bytes(pending_size);
+
+                // CRITICAL FIX (Bug #7c): Serialize LSM tree updates to prevent ABA race
+                {
+                    let _lsm_lock = self.lsm_mutex.lock().expect("LSM mutex poisoned");
+
+                    // Add to LSM tree (serialized)
+                    let mut lsm_clone = (**self.lsm.load()).clone();
+                    lsm_clone.add_l0_sstable(pending_sstable_path.clone(), pending_size);
+                    self.lsm.store(Arc::new(lsm_clone));
+                }
+
+                // CRITICAL FIX (Bug #8): Barrier synchronization before clearing WAL
+                // Send barrier message and wait for background thread to flush all pending records
+                let (ack_tx, ack_rx) = bounded(1); // Oneshot channel
+                self.wal_tx.send(WALMessage::Barrier(ack_tx)).map_err(|_| {
+                    DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "WAL writer thread died",
+                    )))
+                })?;
+                // Wait for acknowledgement (blocks until all pending records written)
+                ack_rx.recv().map_err(|_| {
+                    DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "WAL writer thread died during barrier",
+                    )))
+                })?;
+
+                // Now safe to clear WAL (all records written to disk)
+                let mut wal = self.wal.lock().expect("WAL mutex poisoned");
+                wal.clear()?;
+                drop(wal);
+
+                // Update max_flushed_seq for retry flush
+                // Use fetch_max to handle out-of-order flush completions (only update if new value is greater)
+                self.max_flushed_seq
+                    .fetch_max(pending_flush_sequence, Ordering::SeqCst);
+
+                info!("Successfully flushed previously failed immutable partitions");
             }
-
-            // Sort by key (deduplication handled by taking last value for each key)
-            all_entries.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
-
-            // Build SSTable from sorted entries
-            self.build_sstable_from_entries(
-                &pending_sstable_path,
-                all_entries.iter(),
-                pending_flush_sequence,
-            )?;
-            let pending_size = std::fs::metadata(&pending_sstable_path)?.len();
-
-            // Track physical bytes written to SSTable (retry case)
-            self.metrics.record_physical_bytes(pending_size);
-
-            // CRITICAL FIX (Bug #7c): Serialize LSM tree updates to prevent ABA race
-            {
-                let _lsm_lock = self.lsm_mutex.lock().expect("LSM mutex poisoned");
-
-                // Add to LSM tree (serialized)
-                let mut lsm_clone = (**self.lsm.load()).clone();
-                lsm_clone.add_l0_sstable(pending_sstable_path.clone(), pending_size);
-                self.lsm.store(Arc::new(lsm_clone));
-            }
-
-            // CRITICAL FIX (Bug #8): Barrier synchronization before clearing WAL
-            // Send barrier message and wait for background thread to flush all pending records
-            let (ack_tx, ack_rx) = bounded(1); // Oneshot channel
-            self.wal_tx.send(WALMessage::Barrier(ack_tx)).map_err(|_| {
-                DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    "WAL writer thread died",
-                )))
-            })?;
-            // Wait for acknowledgement (blocks until all pending records written)
-            ack_rx.recv().map_err(|_| {
-                DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    "WAL writer thread died during barrier",
-                )))
-            })?;
-
-            // Now safe to clear WAL (all records written to disk)
-            let mut wal = self.wal.lock().expect("WAL mutex poisoned");
-            wal.clear()?;
-            drop(wal);
-
-            // Update max_flushed_seq for retry flush
-            // Use fetch_max to handle out-of-order flush completions (only update if new value is greater)
-            self.max_flushed_seq
-                .fetch_max(pending_flush_sequence, Ordering::SeqCst);
-
-            info!("Successfully flushed previously failed immutable partitions");
         }
 
         // Now check if active partitions need flushing (lock-free with ArcSwap)
