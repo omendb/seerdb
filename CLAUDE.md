@@ -1,7 +1,7 @@
 # seerdb - Research-Grade Storage Engine
 
 **Repository**: seerdb (Storage Engine with Learned Data Structures)
-**Last Updated**: November 10, 2025
+**Last Updated**: November 14, 2025
 **License**: Elastic License 2.0 (source-available)
 **Status**: Testing complete (0.0.0 pre-alpha) - working towards 0.0.1 (4-5 weeks)
 
@@ -37,7 +37,27 @@
 
 **→ Continuing work?** Check `ai/CURRENT_STATE.md` first, then `ai/TODO.md`
 
+**→ Refactoring context?** See `CONTEXT.md` for recent code improvements (Nov 14, 2025)
+
 **→ Full documentation guide**: See `ai/README.md` for all available docs
+
+---
+
+## Recent Work: Code Quality Improvements (Nov 14, 2025) ✅
+
+**Database Refactoring Complete:**
+- ✅ Extracted background workers into dedicated module (477 lines)
+- ✅ Extracted utility helpers into dedicated module (143 lines)
+- ✅ Reduced `src/db.rs` from 3,654 to 3,141 lines (-14.0%)
+- ✅ Simplified `DB::open()` initialization by 47%
+- ✅ All 146 tests passing, zero functional changes
+- ✅ Better code organization and maintainability
+
+**Branch:** `claude/seerdb-extract-background-workers-01H58mQr9RbAq7QcRSUGgriE` (ready to merge)
+
+**Documentation:**
+- See `CONTEXT.md` for full refactoring summary
+- See `ai/REFACTORING_SUMMARY.md` for detailed technical analysis
 
 ---
 
