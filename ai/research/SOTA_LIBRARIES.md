@@ -28,25 +28,25 @@
 
 ---
 
-## Why This Matters for Vector Databases
+## Why This Matters for Large Value Workloads
 
-### Vector DB Workload Characteristics
+### Large Value Workload Characteristics
 ```
-Typical database vector query:
-1. Point lookup: Get embedding by ID (1KB-4KB value)
-2. Range scan: Get top-K neighbors (100-1000 results)
-3. Write: Insert new document + embedding
+Typical large value query:
+1. Point lookup: Get value by ID (1KB-4KB value)
+2. Range scan: Get results (100-1000 entries)
+3. Write: Insert new entry
 
 Key sizes: 8-32 bytes (UUID/hash)
-Value sizes: 512-4096 bytes (embeddings)
+Value sizes: 512-4096 bytes (blobs/documents)
 Read:Write ratio: 10:1 (read-heavy)
 ```
 
 ### Impact of Missing Optimizations
 
-| Missing | Impact on Vectors | Magnitude |
+| Missing | Impact on Large Values | Magnitude |
 |---------|------------------|-----------|
-| **LZ4 compression** | 2-3x more embeddings fit in cache | 🔥 **+30-50%** reads |
+| **LZ4 compression** | 2-3x more values fit in cache | 🔥 **+30-50%** reads |
 | **ahash** | Faster partition routing | +5-10% writes |
 | **rkyv** | Instant index deserialization | +10-15% cache misses |
 | **varint** | More metadata fits in block | +3-5% everything |
@@ -70,16 +70,16 @@ Decompression: 3000+ MB/s (6x faster!)
 Ratio: 40-60% for typical data
 ```
 
-**Vector DB Impact**:
+**Large Value Impact**:
 ```
 Without LZ4:
-- 4KB block = 1-4 embeddings (depending on size)
-- 1000 blocks in cache = 1000-4000 embeddings
+- 4KB block = 1-4 large values (depending on size)
+- 1000 blocks in cache = 1000-4000 values
 - Cache miss rate: 15%
 
 With LZ4 (50% compression):
-- 2KB compressed block = same 1-4 embeddings
-- 2000 blocks in cache = 2000-8000 embeddings
+- 2KB compressed block = same 1-4 large values
+- 2000 blocks in cache = 2000-8000 values
 - Cache miss rate: 7.5% (2x reduction!)
 ```
 
@@ -109,9 +109,9 @@ Hash strings (ns):
 - fxhash:   3.24
 ```
 
-**Vector DB Impact**:
+**Performance Impact**:
 - We hash every key for partition selection: `partition_for_key(key)`
-- Vector DB has small keys (8-32 bytes typically)
+- Small keys (8-32 bytes typically)
 - foldhash is 50% faster than ahash on small data
 - **Expected**: +5-10% write throughput
 
@@ -141,7 +141,7 @@ Access (after deserialize):
 - rkyv:    Zero-copy, works with mmap
 ```
 
-**Vector DB Impact**:
+**Performance Impact**:
 ```
 SSTable index deserialization on cache miss:
 - Current (bincode):
@@ -196,7 +196,7 @@ Block with 100 entries:
 - Savings: 200-400 bytes per 4KB block = 5-10%
 ```
 
-**Vector DB Impact**:
+**Performance Impact**:
 - 5-10% more entries fit per block
 - 5-10% more blocks fit in cache
 - **Expected**: +3-5% overall (compounding with LZ4)
@@ -351,25 +351,25 @@ baseline-benchmarks = ["dep:rocksdb", "dep:sled", "dep:fjall"]
 
 ---
 
-## Specific to Vector Databases
+## Specific to Large Value Workloads
 
-### Why These Matter More for Vectors
+### Why These Matter More for Large Values
 
 **1. LZ4 Compression**
-- Embeddings are floating-point arrays
-- Highly compressible (similar values)
-- **Real embedding compression**: 50-70% typical
-- More embeddings in cache = fewer disk reads
+- Large blobs are often compressible
+- Highly compressible (similar byte patterns)
+- **Real compression**: 50-70% typical
+- More values in cache = fewer disk reads
 
 **2. Fast Hashing (foldhash)**
-- Every vector insert → partition hash
+- Every insert → partition hash
 - High write throughput needs fast hashing
 - Small keys (IDs) → foldhash excels
 
 **3. Zero-Copy (rkyv)**
-- Vector indexes (HNSW, IVF) are large
+- Large indexes are expensive to deserialize
 - mmap-friendly = no deserialization cost
-- Critical for large-scale vector search
+- Critical for large-scale data
 
 **4. Varint**
 - More index metadata fits in cache

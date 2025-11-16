@@ -128,15 +128,15 @@ Query(key) → initial_bloom(key) → false?
 
 ## Random Notes
 
-### Vector Database Workload Characteristics
-- Large values: 512-4096 bytes (embeddings)
-- Append-heavy: new documents added, rarely updated
-- Read patterns: vector search returns top-K (range scan)
-- Hot data: recent documents queried more
+### Large Value Workload Characteristics
+- Large values: 512-4096 bytes (blobs, documents)
+- Append-heavy: new entries added, rarely updated
+- Read patterns: point lookups + range scans
+- Hot data: recent entries queried more
 
 **seerdb Optimization Ideas** (Validated by Papers):
-- ✅ KV separation (WiscKey) - large embeddings → separate log (10x write amp reduction)
-- ✅ Learned index (ALEX) - document IDs likely sequential (2-4x speedup, 2000x smaller)
+- ✅ KV separation (WiscKey) - large values → separate log (10x write amp reduction)
+- ✅ Learned index (ALEX) - sequential IDs likely (2-4x speedup, 2000x smaller)
 - ✅ Learned bloom (LBF) - 50-90% space savings
 - Tiered compaction (optimize for appends) - need to read Dostoevsky paper
 

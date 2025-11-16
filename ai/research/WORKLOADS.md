@@ -4,24 +4,24 @@
 
 ---
 
-## 1. database Vector Database
+## 1. Large Value Workloads
 
 ### Characteristics
-- **Value sizes**: Large (512-4096 bytes per embedding)
-- **Write pattern**: Append-heavy (new documents added)
-- **Update frequency**: Rare (documents mostly immutable after indexing)
-- **Read pattern**: Vector search → top-K results (range scan)
-- **Access pattern**: Hot/cold (recent documents queried more)
-- **Data distribution**: Document IDs likely sequential or timestamp-based
+- **Value sizes**: Large (512-4096 bytes per blob/document)
+- **Write pattern**: Append-heavy (new entries added)
+- **Update frequency**: Rare (entries mostly immutable after creation)
+- **Read pattern**: Point lookups + range scans
+- **Access pattern**: Hot/cold (recent entries queried more)
+- **Data distribution**: IDs likely sequential or timestamp-based
 
 ### seerdb Optimizations
 1. **KV Separation** (WiscKey):
-   - Large embeddings stored in separate value log
+   - Large values stored in separate value log
    - Avoids rewriting large values during compaction
    - Expected: 10x better write amplification
 
 2. **Learned Index on Keys**:
-   - Document IDs likely have pattern (sequential, timestamp)
+   - IDs likely have pattern (sequential, timestamp)
    - Learned model predicts position in SSTable
    - Expected: Faster lookups
 
@@ -31,13 +31,13 @@
    - Reduce unnecessary compaction
 
 4. **Hot/Cold Separation**:
-   - Recent documents in separate level
-   - Older documents compressed more aggressively
+   - Recent entries in separate level
+   - Older entries compressed more aggressively
 
 ### Data to Collect
-- [ ] Actual document ID distribution from omen
+- [ ] Actual ID distribution from production workload
 - [ ] Read/write ratio
-- [ ] Query access patterns (which docs queried)
+- [ ] Query access patterns (which entries queried)
 
 ---
 

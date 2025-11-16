@@ -10,7 +10,7 @@
 
 **Rationale**:
 - LSM trees optimize for write-heavy workloads
-- All target workloads (database vectors, queue, time series) are write-heavy
+- All target workloads (large values, queue, time series) are write-heavy
 - Research papers focus on LSM optimizations (learned components fit naturally)
 
 **Trade-offs**:
@@ -28,7 +28,7 @@
 **Decision**: Store large values (>4KB threshold) separately in value log (vLog)
 
 **Rationale**:
-- database vectors are 512-4096 bytes (embeddings)
+- Large values are 512-4096 bytes (blobs, documents)
 - WiscKey shows 10-100x write amplification reduction
 - LSM size reduction: 50x smaller (100GB → 2GB for 1KB values)
 - Industrial validation: BlobDB, Titan, TerarkDB, BadgerDB
@@ -57,8 +57,8 @@
 - ❌ Small values: Overhead not worth it
 
 **When to Use**:
-- ✅ Values >1KB that dominate storage (database vectors: YES)
-- ✅ Write-heavy workloads (vector DB: append-heavy documents)
+- ✅ Values >1KB that dominate storage (large blobs: YES)
+- ✅ Write-heavy workloads (append-heavy documents)
 - ✅ SSDs (can exploit parallel reads)
 - ❌ Small uniform values <256B (queue metadata: NO)
 - ❌ Range-scan dominated without prefetch capability

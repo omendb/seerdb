@@ -120,7 +120,7 @@
 3. ✅ ~~**Checksums**: No CRC32 validation~~ - FIXED
 4. ✅ ~~**Magic numbers**: No format version detection~~ - FIXED
 5. ✅ ~~**Memory budget**: No global memory limit enforcement~~ - FIXED
-6. ⏸️ **Snapshot isolation**: Reads can see inconsistent state (deferred to 0.0.2+ - Read Committed sufficient for vectors)
+6. ⏸️ **Snapshot isolation**: Reads can see inconsistent state (deferred to 0.0.2+ - Read Committed sufficient for 0.0.1)
 7. ✅ ~~**Test coverage**: Only 15% (need 80%+)~~ - FIXED (81.54% achieved)
 
 ### Missing Features (Deferred to 0.0.2+)

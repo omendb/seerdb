@@ -132,7 +132,7 @@
 - Close fjall mixed gap (already 1.79x faster than RocksDB)
 
 **Advanced Features**:
-- MVCC/Snapshot API (Read Committed sufficient for vectors)
+- MVCC/Snapshot API (Read Committed sufficient for 0.0.1)
 - VLog GC (GC not implemented yet, will be done correctly)
 - Advanced learned components
 
@@ -167,7 +167,7 @@
 - API documentation
 - Architecture guide
 - Performance tuning guide
-- Examples (vector database, queue, time series, basic KV)
+- Examples (large values, queue, time series, basic KV)
 
 **After Documentation**: Final validation (Week 7-8)
 - Long-running stability tests (optional)

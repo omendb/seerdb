@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-seerdb is a research-grade LSM-tree storage engine combining proven techniques (fjall/RocksDB foundation) with 2018-2024 research innovations (learned components, SIMD, workload-aware optimizations). Target: 2-4M writes/sec, 5-10M reads/sec on vector workloads.
+seerdb is a research-grade LSM-tree storage engine combining proven techniques (fjall/RocksDB foundation) with 2018-2024 research innovations (learned components, SIMD, workload-aware optimizations). Target: 2-4M writes/sec, 5-10M reads/sec on write-heavy workloads.
 
 **Key Innovations**:
 1. Learned bloom filters (90% space reduction)
@@ -579,7 +579,7 @@ src/
 - [ ] Workload analyzer (key distribution, access patterns)
 - [ ] Adaptive model selection (when to use learned vs traditional)
 - [ ] Cost-Benefit Analyzer tuning
-- [ ] Benchmark on vector database workload
+- [ ] Benchmark on real production workload
 - [ ] Tests: adaptive behavior validation
 
 ---
@@ -627,7 +627,7 @@ src/
 - [ ] RocksDB-compatible shim (if needed)
 - [ ] Migrate target application codebase
 - [ ] Run target application test suite
-- [ ] Benchmark on real vector workload
+- [ ] Benchmark on real production workload
 - [ ] Identify application-specific optimizations
 
 **Week 18: Polish + Launch**
@@ -662,7 +662,7 @@ src/
 
 ### Benchmarks (criterion)
 - YCSB workloads (A, B, C, D, E, F)
-- Vector database workload (real data)
+- Real production workload (application data)
 - Compare vs fjall, RocksDB, sled
 
 ---

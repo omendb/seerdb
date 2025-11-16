@@ -29,20 +29,20 @@
    - Write amp: Better than leveled
    - Read amp: Better than tiered
    - Space amp: Similar to leveled (~11%)
-   - Use case: Mixed workloads (database vectors)
+   - Use case: Mixed workloads (read + write balanced)
 
 4. **Fragmented (PebblesDB)**:
    - Write amp: Best (2.4-3x better than RocksDB)
    - Read amp: Worst (multiple sstables per guard)
    - Use case: Pure write-heavy, no range scans
-   - ❌ database needs range queries (vector search top-K)
+   - ❌ Many workloads need range queries
 
 **Rationale**:
-- **database vectors**: Append-heavy + range scans (vector search top-K)
+- **Mixed workloads**: Append-heavy + range scans
 - Lazy Leveling balances both needs perfectly
 - Largest level disjoint → efficient range queries
 - Upper levels tiered → reduced write amplification
-- Can combine with WiscKey (KV separation for large embeddings)
+- Can combine with WiscKey (KV separation for large values)
 
 **Configuration**:
 - Level ratio: T=10 (RocksDB standard, tune later)
@@ -51,9 +51,9 @@
 - Adaptive tuning: Future enhancement (Phase 3)
 
 **Workload Mapping**:
-- **database vectors**: Lazy Leveling ✅ (balanced read/write, range scans)
-- **queue applications**: Tiered (pure write-heavy, FIFO, no range scans)
-- **database time series**: Lazy Leveling (append-heavy + time-range queries)
+- **Large value workloads**: Lazy Leveling ✅ (balanced read/write, range scans)
+- **Queue applications**: Tiered (pure write-heavy, FIFO, no range scans)
+- **Time series**: Lazy Leveling (append-heavy + time-range queries)
 
 **Trade-offs**:
 - ✅ Best balance for mixed workloads

@@ -12,7 +12,7 @@
 
 ### Architecture (`ai/decisions/architecture.md`)
 Core structural decisions that define seerdb:
-1. **LSM Tree foundation** (not B+ tree) - Write-optimized for vector workloads
+1. **LSM Tree foundation** (not B+ tree) - Write-optimized for append-heavy workloads
 2. **Key-Value Separation** (WiscKey) - 4.82x better write amplification
 3. **Rust-native** implementation - Memory safety without GC overhead
 4. **Apache 2.0** - Source-available, prevents cloud provider exploitation
@@ -68,10 +68,10 @@ Compaction strategy and data loss prevention:
 ### Concurrency & Isolation (`ai/decisions/concurrency.md`)
 Thread safety and isolation guarantees:
 - **Arc<Mutex<>>** for shared state - Simple, correct concurrency model
-- **Defer MVCC to 0.0.2+** - Read Committed sufficient for vector databases
-  - Vector DBs (Milvus, Qdrant, Weaviate) use eventual consistency
+- **Defer MVCC to 0.0.2+** - Read Committed sufficient for 0.0.1 scope
   - MVCC: 2-6 weeks effort + 5-10% overhead
   - Can add later without breaking changes
+  - Focus on correctness first
 
 **Current Isolation**: Read Committed (per-operation consistency)
 
@@ -127,13 +127,13 @@ Historical decisions from research phase:
 
 ### MVCC Deferral (Nov 10, 2025)
 **Decision**: Read Committed isolation sufficient for 0.0.1
-- Primary use case (vector databases) doesn't need snapshot isolation
-- MVCC: 2-6 weeks + 5-10% overhead
 - Focus on correctness (80% test coverage) over features
+- MVCC: 2-6 weeks + 5-10% overhead
+- Can add stronger isolation based on user feedback
 
 **Triggers for MVCC** (0.0.2+):
 - User feedback requests stronger isolation
-- Non-vector use cases demand multi-operation consistency
+- Use cases demand multi-operation consistency
 
 ---
 
@@ -173,7 +173,7 @@ Historical decisions from research phase:
    - Don't blindly implement research (traditional blooms won for our use case)
 
 5. **Ship functional, defer speculative**
-   - MVCC: Defer to 0.0.2+ (not needed for vector databases)
+   - MVCC: Defer to 0.0.2+ (Read Committed sufficient for 0.0.1)
    - Workload-aware: Defer (fixed strategy beats RocksDB by 2.5x)
    - Pluggable compaction: Defer (no user demand yet)
 
