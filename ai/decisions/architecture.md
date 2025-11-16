@@ -58,7 +58,7 @@
 
 **When to Use**:
 - ✅ Values >1KB that dominate storage (database vectors: YES)
-- ✅ Write-heavy workloads (omen: append-heavy documents)
+- ✅ Write-heavy workloads (vector DB: append-heavy documents)
 - ✅ SSDs (can exploit parallel reads)
 - ❌ Small uniform values <256B (queue metadata: NO)
 - ❌ Range-scan dominated without prefetch capability

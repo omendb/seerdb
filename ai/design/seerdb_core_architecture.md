@@ -1,6 +1,6 @@
 # seerdb-core Architecture Specification
 
-**Repository**: https://github.com/omendb/seerdb
+**Repository**: TBD (publish after 0.0.1)
 **License**: Apache 2.0 (open source)
 **Purpose**: General-purpose LSM storage engine with SOTA buffer management
 **Status**: Design specification (implementation pending)

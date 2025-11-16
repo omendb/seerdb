@@ -579,7 +579,7 @@ src/
 - [ ] Workload analyzer (key distribution, access patterns)
 - [ ] Adaptive model selection (when to use learned vs traditional)
 - [ ] Cost-Benefit Analyzer tuning
-- [ ] Benchmark on omen vector workload
+- [ ] Benchmark on vector database workload
 - [ ] Tests: adaptive behavior validation
 
 ---
@@ -621,14 +621,14 @@ src/
 
 ### Phase 4: Integration (Weeks 17-18)
 
-**Goal**: Migrate omen from RocksDB to seerdb
+**Goal**: Migrate target application from RocksDB to seerdb
 
-**Week 17: omen Migration**
+**Week 17: Production Migration**
 - [ ] RocksDB-compatible shim (if needed)
-- [ ] Migrate omen codebase
-- [ ] Run omen test suite
+- [ ] Migrate target application codebase
+- [ ] Run target application test suite
 - [ ] Benchmark on real vector workload
-- [ ] Identify omen-specific optimizations
+- [ ] Identify application-specific optimizations
 
 **Week 18: Polish + Launch**
 - [ ] Documentation (README, examples, API docs)
@@ -662,7 +662,7 @@ src/
 
 ### Benchmarks (criterion)
 - YCSB workloads (A, B, C, D, E, F)
-- omen vector workload (real data)
+- Vector database workload (real data)
 - Compare vs fjall, RocksDB, sled
 
 ---

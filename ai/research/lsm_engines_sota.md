@@ -716,7 +716,7 @@ Auto-tiering based on access patterns
 
 ## Key Takeaways for Each Repository
 
-### seerdb (Public, MIT)
+### seerdb (Public, Apache 2.0)
 **Focus**: General-purpose LSM with SOTA buffer management
 - ✅ Pointer swizzling (LeanStore)
 - ✅ Variable-size pages (Umbra)
@@ -724,19 +724,6 @@ Auto-tiering based on access patterns
 - ✅ Bloom filters (RocksDB)
 - ✅ Autonomous commits (LeanStore 2025)
 - ✅ io_uring async I/O (Linux)
-
-**Focus**: Fork of seerdb with vector optimizations
-- ✅ Dimension-aware page sizes (extends Umbra variable pages)
-- ✅ SIMD-aligned vector storage
-- ✅ LSM-VEC compaction hooks (connectivity-aware)
-- ✅ Hot/cold tiering with RaBitQ compression
-- ✅ Graph-aware storage layouts (DiskANN patterns)
-
-**Focus**: LSM-VEC using specialized storage
-- ✅ Buffer management patterns for L0 memory
-- ✅ RocksDB-Cloud tiering patterns (L0-L2 SSD, L3-L6 S3)
-- ✅ Workload-aware placement (Keigo)
-- ✅ Compaction strategies for streaming ingestion
 
 ### oadb (Embedded Vector Database)
 **Focus**: HNSW in-memory, simple persistence

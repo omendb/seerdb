@@ -43,7 +43,7 @@ If data has patterns → ML models can replace traditional structures
 **Q: Which learned component to implement first?**
 - Answer: **Learned bloom filters** (simpler than learned indexes)
 - Rationale: No update handling needed (immutable), easier to validate
-- ALEX already in omen (can use existing implementation later)
+- ALEX implementation available (can use existing code later)
 
 ---
 
@@ -128,7 +128,7 @@ Query(key) → initial_bloom(key) → false?
 
 ## Random Notes
 
-### omen Vector Workload Characteristics
+### Vector Database Workload Characteristics
 - Large values: 512-4096 bytes (embeddings)
 - Append-heavy: new documents added, rarely updated
 - Read patterns: vector search returns top-K (range scan)

@@ -211,7 +211,7 @@ cargo test --release --test soak_test test_large_dataset_100gb -- --ignored --no
 
 **Does NOT validate**:
 - Large dataset behavior (use 100GB test)
-- Real workload patterns (use Phase 5.2 omen integration)
+- Real workload patterns (use Phase 5.2 production integration)
 
 ### 100GB Test
 
@@ -224,7 +224,7 @@ cargo test --release --test soak_test test_large_dataset_100gb -- --ignored --no
 
 **Does NOT validate**:
 - Long-term stability (use 24h test)
-- Real workload patterns (use Phase 5.2 omen integration)
+- Real workload patterns (use Phase 5.2 production integration)
 
 ---
 
@@ -269,7 +269,7 @@ Once both tests pass:
    - Performance baselines
 
 2. **Move to Phase 5.2** (Real Workload Validation):
-   - Integrate with omen vector database
+   - Integrate with target vector database application
    - Test actual production workload
    - Dual-write validation vs RocksDB
 
