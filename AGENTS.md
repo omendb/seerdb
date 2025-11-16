@@ -15,7 +15,7 @@
 - LSM-tree based storage engine (like RocksDB)
 - Learned data structures replace traditional components
 - Workload-aware optimization
-- Optimized for vectors, time series, and high-throughput workloads
+- Optimized for large values, time series, and high-throughput workloads
 - Rust-native with modern hardware optimizations
 
 **Positioning**: "RocksDB but with 2020s research - 4.82x better write amplification (validated)"
@@ -135,24 +135,24 @@
 ### Isolation Level
 - **Current**: Read Committed (per-operation snapshot consistency)
 - **Future (0.0.2+)**: Snapshot Isolation (multi-operation MVCC)
-- **Rationale**: Vector databases (Milvus, Qdrant, Weaviate) use eventual consistency for ANN search. Read Committed is sufficient for vector database workloads. MVCC deferred to 0.0.2+ based on user feedback. See: ai/research/LSM_MVCC_CONCURRENCY_RESEARCH.md
+- **Rationale**: Read Committed is sufficient for many embedded use cases. MVCC deferred to 0.0.2+ based on user feedback.
 
 ---
 
 ## Workload Optimization
 
-### Vector Database Workloads
+### Large Value Workloads
 
 **Characteristics**:
-- Large values (embeddings: 512-4096 bytes)
-- Append-heavy (new documents)
-- Range scans (vector search results)
-- Hot/cold data (recent docs hot)
+- Large values (blobs/documents: 512-4096 bytes)
+- Append-heavy (new entries)
+- Range scans (sequential access)
+- Hot/cold data (recent entries hot)
 
 **seerdb Optimizations**:
-- Key-value separation (large embeddings separate - vLog)
-- Learned index (ALEX - predict document ID patterns)
-- LZ4 compression (embeddings highly compressible)
+- Key-value separation (large values separate - vLog)
+- Learned index (ALEX - predict ID patterns)
+- LZ4 compression (large values highly compressible)
 - Workload-aware compaction
 
 ### Time Series Workloads
@@ -272,7 +272,7 @@
 - Performance targets: 763K ops/sec baseline, LeanStore integration path
 
 **Code Reuse Strategy**:
-- seerdb: Foundation for vector databases and embedded applications
+- seerdb: Foundation for databases and embedded applications
 - Same LSM foundation, different frontends
 - Fix bugs once, all products benefit
 
