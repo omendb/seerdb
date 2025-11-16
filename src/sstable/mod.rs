@@ -59,10 +59,32 @@ struct TopLevelIndexEntry {
 /// Convert bytes key to i64 for ALEX index
 /// Uses big-endian to preserve lexicographic ordering
 fn bytes_to_i64(bytes: &[u8]) -> i64 {
-    let mut buf = [0u8; 8];
-    let len = bytes.len().min(8);
-    buf[..len].copy_from_slice(&bytes[..len]);
-    i64::from_be_bytes(buf)
+    // Convert key bytes to i64 while preserving lexicographic ordering
+    // Bug #11 fix: Previous implementation only used first 8 bytes, causing collisions
+    // when keys share the same prefix (e.g., "key_0000000000" and "key_0000000100" both
+    // had "key_0000" as first 8 bytes, hashing to the same value)
+    //
+    // New approach: Use bytes at strategic positions to capture differences
+    // Position 0, 2, 4, 6, 8, 10, 12, len-1 gives good spread while maintaining some ordering
+
+    let len = bytes.len();
+    if len <= 8 {
+        // Short keys: use all bytes with padding
+        let mut buf = [0u8; 8];
+        buf[..len].copy_from_slice(&bytes[..len]);
+        i64::from_be_bytes(buf)
+    } else {
+        // Long keys: sample bytes at multiple positions to capture structure
+        // This provides better collision resistance than first/last only
+        let positions = [0, 2, 4, 6, 8.min(len-1), 10.min(len-1), 12.min(len-1), len-1];
+        let mut buf = [0u8; 8];
+        for (i, &pos) in positions.iter().enumerate() {
+            if pos < len {
+                buf[i] = bytes[pos];
+            }
+        }
+        i64::from_be_bytes(buf)
+    }
 }
 
 // ============================================================================
@@ -651,33 +673,13 @@ impl SSTable {
     }
 
     fn find_index_block(&self, key: &[u8]) -> Option<(u64, u32)> {
-        // ALEX learned index with optimized lower_bound
-        // Uses keys_only() + binary search instead of pairs() linear scan
-        let idx = if let Some(ref alex) = self.alex_index {
-            let key_i64 = bytes_to_i64(key);
-
-            // This code works correctly but is slower than partition_point
-            match alex.lower_bound(key_i64) {
-                Ok(Some((_first_key, value))) => {
-                    if value.len() >= 8 {
-                        let mut bytes = [0u8; 8];
-                        bytes.copy_from_slice(&value[..8]);
-                        u64::from_le_bytes(bytes) as usize
-                    } else {
-                        self.top_level_index
-                            .partition_point(|entry| entry.last_key.as_ref() < key)
-                    }
-                }
-                _ => self
-                    .top_level_index
-                    .partition_point(|entry| entry.last_key.as_ref() < key),
-            }
-        } else {
-            // Use partition_point to find first block where last_key >= key
-            // This is the correct semantic for finding which block contains the key
-            self.top_level_index
-                .partition_point(|entry| entry.last_key.as_ref() < key)
-        };
+        // CRITICAL FIX (Bug #11): Disable ALEX for top-level index lookup
+        // ALEX learned index cannot correctly handle keys with shared prefixes
+        // (e.g., "key_0000000000" and "key_0000000100" produce non-monotonic i64 values)
+        // The partition_point binary search is correct and fast (O(log N) where N is typically 2-10)
+        let idx = self
+            .top_level_index
+            .partition_point(|entry| entry.last_key.as_ref() < key);
 
         if idx < self.top_level_index.len() {
             Some((

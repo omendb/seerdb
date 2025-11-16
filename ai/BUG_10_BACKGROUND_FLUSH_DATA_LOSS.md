@@ -1,15 +1,28 @@
 # Bug #10: Background Flush Writes Empty/Incorrect SSTables
 
-**Status**: 🚨 **CRITICAL** - Active Investigation
-**Date**: November 14, 2025
+**Status**: ✅ **RESOLVED** - Was actually Bug #11 (ALEX Key Collision)
+**Date**: November 14, 2025 (Found), November 16, 2025 (Resolved)
 **Branch**: `claude/review-ai-priorities-01QQNVtAZhr5wfxCXFhk5Fr7`
 **Severity**: **CRITICAL** - Causes complete data loss under memory pressure
+**Root Cause**: Bug #11 - ALEX learned index key collision, NOT background flush
 
 ---
 
-## Summary
+## Resolution
+
+**This was a misdiagnosis.** The background flush was working correctly - data WAS written to SSTables. The actual issue was in SSTable.get() - the ALEX learned index lookup fails for keys with shared prefixes (e.g., "key_0000000000" through "key_0000099999" all hash to same i64 value due to only first 8 bytes being used).
+
+See: `ai/BUG_11_ALEX_KEY_COLLISION.md` for full details.
+
+**Fix applied**: Disabled ALEX for top-level index lookup in `src/sstable/mod.rs::find_index_block()`, using binary search instead.
+
+---
+
+## Original Summary (Incorrect)
 
 When background flush is enabled and memory pressure triggers automatic flushing, the background flush worker creates SSTable files on disk, but these SSTables are EMPTY or do not contain the expected keys. This results in complete data loss for keys that were in the memtables when the background flush was triggered.
+
+**UPDATE**: The keys WERE in the SSTables - verified by iteration. The bug was in SSTable.get() lookup, not in flush.
 
 ## Discovered By
 

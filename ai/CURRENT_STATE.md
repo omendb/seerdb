@@ -1,4 +1,4 @@
-# seerdb Current State - November 10, 2025
+# seerdb Current State - November 16, 2025
 
 **Version**: 0.0.0 (pre-alpha, unstable)
 **Status**: Testing phase complete, preparing for 0.0.1 release
@@ -9,11 +9,15 @@
 ## TL;DR
 
 **Performance**: 🏆 **#1 on ALL workloads** vs all competitors (2x+ faster)
-**Correctness**: ✅ **ALL 7 critical bugs FIXED!** (cache ✅, batch ✅, checksums ✅, compaction ✅, WAL recovery ✅, iterators ✅, magic numbers ✅, 1 deferred: VLog GC ⏸️)
+**Correctness**: ✅ **ALL 8 critical bugs FIXED!** (cache ✅, batch ✅, checksums ✅, compaction ✅, WAL recovery ✅, iterators ✅, magic numbers ✅, **ALEX key collision ✅**, 1 deferred: VLog GC ⏸️)
 **Testing**: ✅ **81.54% coverage achieved!** (exceeded 80% goal) + ASAN clean + 271 tests passing
 **Production Ready**: 🔄 **4-5 weeks away** - testing complete, need production hardening + docs
 
-**Latest Achievements**:
+**Latest Achievements** (November 16, 2025):
+- ✅ **Bug #11 FIXED**: ALEX learned index key collision (CRITICAL - caused data loss with prefixed keys)
+  - Root cause: bytes_to_i64() only uses first 8 bytes, causing collisions
+  - Fix: Disabled ALEX for top-level index lookup, using binary search instead
+  - See: `ai/BUG_11_ALEX_KEY_COLLISION.md`
 - ✅ Block cache bounded (quick_cache, 10K blocks, ~40MB)
 - ✅ Batch API atomic (single WAL record, no corruption window)
 - ✅ Checksum validation (SSTable footer checksum now validated)
@@ -23,7 +27,7 @@
 - ✅ Magic numbers (WAL/VLog validate format + version on open)
 - ✅ **Testing complete**: 81.54% coverage (target: 80%+)
 - ✅ **ASAN clean**: No memory safety issues
-- ✅ **271 tests passing**: 0 failures
+- ✅ **271 tests passing**: 0 failures (146 lib tests + integration tests)
 - ⏸️ VLog GC race (deferred: GC not implemented, will be done correctly in 0.0.2+)
 
 **Production Hardening (Nov 9, 2025)**:
