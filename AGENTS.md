@@ -235,7 +235,7 @@
 
 1. ✅ "ALEX: An Updatable Adaptive Learned Index" (Ding et al., MIT/Columbia 2020)
    - Implemented: O(log error) lower_bound, +55% read performance
-   
+
 2. ✅ "WiscKey: Separating Keys from Values" (Lu et al., Wisconsin 2016)
    - Implemented: vLog for large values, 4.82x better write amp
 
@@ -247,6 +247,34 @@
 
 5. 📚 LZ4 compression (Yann Collet)
    - Implemented: Block compression, +34.7% writes
+
+---
+
+## 📚 Research Foundation (November 14, 2025)
+
+**SOTA Research Complete** (from omendb parent project):
+
+**Phase 1: LSM Engines** (`ai/research/lsm_engines_sota.md`)
+- 12 papers on LSM-tree internals, buffer management, compaction
+- WiscKey, Monkey, Dostoevsky, SILK, etc.
+- Foundation for seerdb's LSM optimizations
+
+**Phase 4: General Storage** (`ai/research/general_storage_engine_sota.md`)
+- LeanStore pointer swizzling (40-60% speedup)
+- Bw-tree lock-free design (100% improvement)
+- Mini-page optimization for in-memory workloads
+- Future path for seerdb buffer manager improvements
+
+**Architecture Spec** (`ai/design/seerdb_core_architecture.md`)
+- Complete prescriptive architecture for seerdb-core
+- Public MIT-licensed LSM engine specification
+- Six-layer architecture: API → Buffer Pool → WAL → MemTable → SSTable → Compaction
+- Performance targets: 763K ops/sec baseline, LeanStore integration path
+
+**Code Reuse Strategy**:
+- seerdb-core: Foundation for oadb (embedded) and omendb (cloud)
+- Same LSM foundation, different frontends
+- Fix bugs once, all products benefit
 
 ---
 
