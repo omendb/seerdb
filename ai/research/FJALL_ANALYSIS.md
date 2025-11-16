@@ -98,7 +98,7 @@ pub struct Strategy {
 
 **Our Advantage**:
 - Implement Tucana-style learned compaction: predict key distribution, adjust levels
-- Analyze database vector workload: append-heavy, large values → optimize for that pattern
+- Analyze target workload: append-heavy, large values → optimize for that pattern
 - Adaptive level ratios based on actual write vs read patterns
 - **Priority**: HIGH (3-5x write amplification reduction for our workload)
 
@@ -207,8 +207,8 @@ pub blob_file_target_size: u64,           // Default: 64MB
 **Our Advantage**:
 - Implement true WiscKey: separate value log with independent GC
 - Smart GC: identify hot/cold values, trigger based on vlog fragmentation
-- Optimization: Large values (like vector embeddings) handled more efficiently
-- **Priority**: HIGH for vector workload (write amplification reduction)
+- Optimization: Large values handled more efficiently
+- **Priority**: HIGH for large value workloads (write amplification reduction)
 
 ---
 
@@ -328,13 +328,13 @@ src/
 
 3. **Workload-Aware Compaction** (3-5x write amp reduction)
    - Analyze key distribution patterns
-   - Detect vector workload characteristics
+   - Detect workload characteristics
    - Adapt level ratios and compaction strategy
 
 4. **WiscKey-Style KV Separation** (better write amp for large values)
    - Separate vlog with independent GC
    - Smart GC based on fragmentation/access patterns
-   - Optimize for vector embeddings
+   - Optimize for large values
 
 ### Medium-Impact (5x gains):
 5. **SIMD Optimizations**
@@ -380,8 +380,8 @@ src/
 ### Research Phase (Week 1-4):
 1. ✅ Understand Fjall's design choices
 2. Implement learned bloom filter prototype
-3. Benchmark Fjall baseline on database vector workload
-4. Identify specific bottlenecks for database use case
+3. Benchmark Fjall baseline on target workload
+4. Identify specific bottlenecks for target use case
 
 ### Innovation Phase (Weeks 9-12):
 1. Integrate learned bloom filters
@@ -391,7 +391,7 @@ src/
 ### Optimization Phase (Weeks 13-16):
 1. Add SIMD to hot paths
 2. Implement workload-aware compaction
-3. Fine-tune for vector database workload
+3. Fine-tune for target workload
 
 ---
 

@@ -20,7 +20,7 @@ This document specifies the block-based SSTable format designed for:
 - 99% memory reduction
 
 **V3 Format** (this spec): Memory + Storage + Cache efficiency
-- **LZ4 compression**: 2-3x more data fits in cache (CRITICAL for vector DBs)
+- **LZ4 compression**: 2-3x more data fits in cache (CRITICAL for large values)
 - **Varint encoding**: 30-50% metadata space savings
 - **Combined**: +30-50% read throughput potential
 - Still block-based (V2 benefits retained)
@@ -270,7 +270,7 @@ Migration strategy:
 ```
 Typical seerdb data:
 - Keys: Low compression (random UUIDs/hashes) → 10-20%
-- Values (embeddings): High compression (similar floats) → 50-70%
+- Values (blobs/documents): High compression (similar patterns) → 50-70%
 - Metadata: High compression (small integers) → 60-80%
 - Overall block: 40-60% compression ratio
 ```
