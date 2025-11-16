@@ -11,13 +11,12 @@
 **Goal**: Design seerdb-core as a production-grade, public (MIT) general-purpose LSM storage engine that:
 - Outperforms RocksDB (already demonstrated: 2.47× writes, 2.07× reads)
 - Uses modern techniques (pointer swizzling, variable-size pages, optimized compaction)
-- Serves as foundation for seerdb-vector (private, vector-optimized fork)
 
 **Key Finding**: Don't reinvent the wheel. Adopt proven patterns from LeanStore (buffer management), Umbra (variable pages), modern LSM research (WiscKey value separation, PebblesDB fragmented compaction, LSM-Bush adaptive ratios), and latest 2024 innovations (Bf-Tree mini-pages, Keigo workload-aware placement).
 
 **Applicable to**:
 - **seerdb-core** (public): All findings (buffer management, compaction, WAL, MVCC)
-- **omendb**: Buffer management for L0 memory management, WAL patterns
+- vector applications: Buffer management for L0 memory management, WAL patterns
 - **oadb**: WAL patterns for incremental save, buffer management concepts for mmap
 
 ---
@@ -129,7 +128,6 @@ Cold page on disk?  → Load and swizzle pointer
 **Source**: https://github.com/leanstore/leanstore (MIT License)
 
 **Applies to seerdb-core**: ✅ Core buffer manager architecture
-**Applies to omendb**: ✅ L0 memory management patterns
 **Applies to oadb**: ✅ Buffer concepts for mmap-friendly persistence
 
 ---
@@ -185,7 +183,6 @@ Value Log (Sequential):
 - WiscKey: 756 GB write I/O (17× amplification)
 
 **Applies to seerdb-core**: ✅ For large metadata values (if metadata > 1KB)
-**Applies to omendb**: ✅ Vector data separation (keys in LSM, vectors in separate storage)
 **Applies to oadb**: ❌ Not applicable (embedded, no large values)
 
 ---
@@ -236,7 +233,6 @@ Level 1: [Guard: a-f] [Guard: g-m] [Guard: n-z]
 - HyperDex with PebblesDB: Similar gains
 
 **Applies to seerdb-core**: ✅ Optional compaction strategy for write-heavy workloads
-**Applies to omendb**: ✅ Streaming vector ingestion (high write throughput needed)
 **Applies to oadb**: ❌ Not applicable (embedded, not write-optimized)
 
 ---
@@ -297,7 +293,6 @@ Level 1: [Guard: a-f] [Guard: g-m] [Guard: n-z]
 - Real-time analytics pipelines
 
 **Applies to seerdb-core**: ✅ Hybrid log concept for hot/cold tiering
-**Applies to omendb**: ✅ Hot L0 in RAM, cold L1+ on SSD/S3 (similar architecture)
 **Applies to oadb**: ❌ Not applicable (embedded, no tiered storage)
 
 ---
@@ -346,7 +341,6 @@ L4: 10.24 GB (ratio: 32×)
 4. **LSM-Bush**: Adaptive ratios for best scalability
 
 **Applies to seerdb-core**: ✅ Configurable compaction policies
-**Applies to omendb**: ✅ Workload-aware compaction (write-heavy during ingestion, read-heavy during search)
 **Applies to oadb**: ❌ Not applicable (no LSM structure)
 
 ---
@@ -420,7 +414,6 @@ impl VariableSizePageManager {
 - Scales to datasets much larger than memory
 
 **Applies to seerdb-core**: ✅ Variable-size pages for mixed workloads
-**Applies to seerdb-vector** (private): ✅ Dimension-aware page sizes (64KB→256KB based on vector dims)
 **Applies to oadb**: ❌ Not applicable (no page-based storage)
 
 ---
@@ -474,7 +467,6 @@ impl VariableSizePageManager {
 **Source**: https://github.com/umbra-db/colibri-vldb2024
 
 **Applies to seerdb-core**: ❌ Not needed (not HTAP workload)
-**Applies to omendb**: ❌ Vector workloads different from HTAP
 **Applies to oadb**: ❌ Not applicable
 
 ---
@@ -502,7 +494,6 @@ Auto-tiering based on access patterns
 - Lower cost per GB than pure DRAM systems
 
 **Applies to seerdb-core**: ⏭️ Future consideration (CXL not widely available yet)
-**Applies to omendb**: ⏭️ Future cloud optimization
 **Applies to oadb**: ❌ Not applicable
 
 ---
@@ -532,7 +523,6 @@ Auto-tiering based on access patterns
 - **2× faster point lookups** than both
 
 **Applies to seerdb-core**: ✅ Mini-page concept for variable-size records
-**Applies to omendb**: ✅ Caching strategy for hot vectors
 **Applies to oadb**: ❌ Not applicable
 
 ---
@@ -559,7 +549,6 @@ Auto-tiering based on access patterns
 - Works with heterogeneous storage (NVMe + SSD + HDD)
 
 **Applies to seerdb-core**: ✅ Workload-aware file placement
-**Applies to omendb**: ✅ L0-L2 (NVMe), L3-L6 (S3) tiering decisions
 **Applies to oadb**: ❌ Not applicable
 
 ---
@@ -576,7 +565,6 @@ Auto-tiering based on access patterns
 - **Compaction**: Transforms layout during propagation
 
 **Applies to seerdb-core**: ❌ Graph-specific, not applicable
-**Applies to omendb**: ❌ Not graph database
 **Applies to oadb**: ❌ Not applicable
 
 ---
@@ -610,7 +598,6 @@ Auto-tiering based on access patterns
 - Useful for time-series data (prefix = timestamp range)
 
 **Applies to seerdb-core**: ✅ All patterns (bloom filters, tiered compaction, DeleteRange, compression)
-**Applies to omendb**: ✅ Tiered compaction patterns for S3 integration
 **Applies to oadb**: ❌ Not applicable
 
 ---
@@ -627,7 +614,7 @@ Auto-tiering based on access patterns
 
 2. **Variable-Size Pages** (Umbra)
    - Size classes: 64KB, 128KB, 256KB, 512KB
-   - Dimension-aware for seerdb-vector fork
+   - Dimension-aware for specialized forks
    - **Rationale**: Reduces fragmentation, better cache utilization
 
 3. **Async I/O**
@@ -738,7 +725,6 @@ Auto-tiering based on access patterns
 - ✅ Autonomous commits (LeanStore 2025)
 - ✅ io_uring async I/O (Linux)
 
-### seerdb-vector (Private, Elastic 2.0)
 **Focus**: Fork of seerdb with vector optimizations
 - ✅ Dimension-aware page sizes (extends Umbra variable pages)
 - ✅ SIMD-aligned vector storage
@@ -746,8 +732,7 @@ Auto-tiering based on access patterns
 - ✅ Hot/cold tiering with RaBitQ compression
 - ✅ Graph-aware storage layouts (DiskANN patterns)
 
-### omendb (Cloud Vector Database)
-**Focus**: LSM-VEC using seerdb-vector
+**Focus**: LSM-VEC using specialized storage
 - ✅ Buffer management patterns for L0 memory
 - ✅ RocksDB-Cloud tiering patterns (L0-L2 SSD, L3-L6 S3)
 - ✅ Workload-aware placement (Keigo)

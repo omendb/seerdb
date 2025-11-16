@@ -15,7 +15,7 @@ Core structural decisions that define seerdb:
 1. **LSM Tree foundation** (not B+ tree) - Write-optimized for vector workloads
 2. **Key-Value Separation** (WiscKey) - 4.82x better write amplification
 3. **Rust-native** implementation - Memory safety without GC overhead
-4. **Elastic License 2.0** - Source-available, prevents cloud provider exploitation
+4. **Apache 2.0** - Source-available, prevents cloud provider exploitation
 
 **Impact**: Foundation for 2.5x RocksDB performance
 

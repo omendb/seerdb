@@ -66,10 +66,10 @@ for i in 0..100 {
    - Atomic batch writes (all-or-nothing)
    - Lock-free concurrent reads/writes
    - WAL durability
-   - Sufficient for omendb (vector database) use case
+   - Sufficient for vector applications (vector database) use case
 
 **Rationale**:
-- **Primary use case**: omendb vector database - doesn't require snapshot isolation
+- **Primary use case**: vector database applications - doesn't require snapshot isolation
 - **Industry standard**: All major vector DBs use eventual consistency for ANN search
 - **Complexity**: 2-6 weeks implementation + testing burden
 - **Performance**: MVCC adds 5-10% overhead (would lose competitive advantage)

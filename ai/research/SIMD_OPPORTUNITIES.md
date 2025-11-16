@@ -2,7 +2,7 @@
 
 **Date**: November 5, 2025
 **Context**: Evaluating std::simd migration from hand-rolled intrinsics
-**Key Insight**: seerdb is I/O bound, unlike CPU-bound omendb
+**Key Insight**: seerdb is I/O bound, unlike CPU-bound vector workloads
 
 ---
 
@@ -130,7 +130,7 @@ return bits.all()  // ← Overhead for gather + reduce
 **Why migrate**:
 - ✅ Code quality: 1 impl vs 3 (AVX2/SSE2/NEON)
 - ✅ Maintainability: Easier to understand
-- ✅ Alignment: Match omendb patterns
+- ✅ Alignment: Match vector application patterns
 - ✅ Future-proof: std library guaranteed support
 
 ---
@@ -257,8 +257,8 @@ where
 - No new SIMD opportunities with significant impact
 - I/O bound workload limits CPU optimization gains
 
-**Comparison to omendb**:
-| Metric | omendb | seerdb |
+**Comparison to vector applications**:
+| Metric | Vector App | seerdb |
 |--------|--------|--------|
 | **Workload** | CPU-bound | I/O-bound |
 | **Hot path** | Distance computation | Disk reads |
@@ -275,13 +275,13 @@ where
 **Do migrate**:
 - ✅ ALEX SIMD search (488 lines → ~150 lines)
 - ✅ Remove bloom SIMD (regression on critical path)
-- ✅ Align with omendb patterns
+- ✅ Align with vector patterns patterns
 - ✅ Simplify maintenance
 
 **Don't expect**:
 - ❌ Major performance gains (<5% realistic)
 - ❌ New SIMD opportunities (I/O bound)
-- ❌ Comparable wins to omendb (different workload)
+- ❌ Comparable wins to vector applications (different workload)
 
 **Set expectations**:
 - **Primary goal**: Code simplification and alignment
@@ -342,7 +342,7 @@ where
 - ✅ Lines of SIMD code reduced 60%+
 - ✅ Single implementation for all platforms
 - ✅ Easier to understand and maintain
-- ✅ Aligned with omendb patterns
+- ✅ Aligned with vector application patterns
 
 **Secondary** (performance):
 - ✅ No regression on any benchmark
@@ -353,7 +353,7 @@ where
 
 ## Conclusion
 
-**Key Insight**: seerdb is fundamentally I/O bound, unlike CPU-bound omendb.
+**Key Insight**: seerdb is fundamentally I/O bound, unlike CPU-bound vector workloads.
 
 **SIMD in seerdb**:
 - **Limited opportunities**: ~20% of execution time is CPU
@@ -363,7 +363,7 @@ where
 
 **Why migrate anyway**:
 1. ✅ Code simplification (70% less SIMD code)
-2. ✅ Align with omendb (shared knowledge)
+2. ✅ Align with vector patterns (shared knowledge)
 3. ✅ Future-proof (std library)
 4. ✅ Maintainability
 

@@ -1,7 +1,7 @@
 # seerdb-core Architecture Specification
 
 **Repository**: https://github.com/omendb/seerdb
-**License**: MIT (public, open source)
+**License**: Apache 2.0 (open source)
 **Purpose**: General-purpose LSM storage engine with SOTA buffer management
 **Status**: Design specification (implementation pending)
 **Last Updated**: November 14, 2025
@@ -15,13 +15,13 @@
 **seerdb-core** is a production-grade LSM storage engine that:
 - **Beats RocksDB**: Already demonstrated 2.47× faster writes, 2.07× faster reads
 - **Uses modern techniques**: Pointer swizzling (LeanStore), variable-size pages (Umbra), autonomous commits
-- **Serves as foundation**: Public base for private seerdb-vector fork
+- **General-purpose**: Foundation for vector, time-series, and embedded applications
 
 **Key Design Principles**:
 1. **Performance first**: Adopt proven SOTA techniques (LeanStore buffer manager)
 2. **Production-ready**: WAL, crash recovery, ACID guarantees
-3. **Public credibility**: MIT license, clean codebase, well-documented
-4. **Fork-friendly**: Design allows private vector-optimized fork (seerdb-vector)
+3. **Open source**: Apache 2.0 license, clean codebase, well-documented
+4. **Extensible**: Modular design for workload-specific optimizations
 
 ---
 
@@ -332,31 +332,6 @@ pub struct Config {
 | Memory overhead | < 1.5× data size | 2-3× | ⏭️ Measure with buffer manager |
 
 **Note**: Existing seerdb already beats RocksDB. This design refactors for SOTA techniques.
-
----
-
-## Public vs Private Split
-
-**seerdb-core** (this repo, MIT license):
-- General-purpose LSM engine
-- No vector-specific code
-- Public API, public benchmarks
-- Community contributions welcome
-
-**seerdb-vector** (private fork, Elastic 2.0):
-- Imports seerdb-core as dependency
-- Adds vector-specific optimizations:
-  - Dimension-aware page sizes
-  - SIMD-aligned vector storage
-  - LSM-VEC compaction hooks
-  - RaBitQ quantization integration
-
-**Dependency**:
-```toml
-# seerdb-vector/Cargo.toml
-[dependencies]
-seerdb-core = { git = "https://github.com/omendb/seerdb", tag = "v0.1.0" }
-```
 
 ---
 

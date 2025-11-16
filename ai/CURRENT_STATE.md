@@ -411,7 +411,7 @@ seerdb/
 
 ## Community & Support
 
-**License**: Elastic License 2.0 (source-available, not OSI open source)
+**License**: Apache 2.0 (source-available, not OSI open source)
 **Repository**: github.com/omendb/seerdb (will migrate to standalone)
 **Discord**: TBD (create after 0.0.1)
 **Documentation**: docs.rs/seerdb (after 0.0.1)

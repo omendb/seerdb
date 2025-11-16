@@ -19,7 +19,7 @@
 **Applicable to**:
 - **bw-tree repo** (Mojo experiment): All findings (full LeanStore implementation)
 - **seerdb-core**: Buffer management, OLC, I/O patterns (already covered in Phase 1)
-- **omendb**: Buffer management concepts for L0 memory management
+- vector applications: Buffer management concepts for L0 memory management
 - **oadb**: Buffer/I/O concepts for persistence (already covered in Phase 3)
 
 ---
@@ -802,12 +802,7 @@ impl WAL {
 - ✅ WAL with autonomous commits
 - ⏭️ Future: Variable-size pages
 
-### omendb (Cloud Vector Database)
-**Focus**: L0 memory management using buffer manager concepts
-- ✅ Buffer management patterns for L0 HNSW graphs
-- ✅ Eviction policies (CLOCK/2Q) for hot vector eviction
-- ❌ No B+-Tree needed (LSM-VEC uses HNSW graphs)
-
+### vector database applications)
 ### oadb (Embedded Vector Database)
 **Focus**: Simple persistence, no complex buffer management
 - ✅ WAL concepts for incremental save

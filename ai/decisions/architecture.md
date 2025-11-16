@@ -88,9 +88,9 @@
 
 ---
 
-## 5. Elastic License 2.0 (Source-Available)
+## 5. Apache 2.0 (Source-Available)
 
-**Decision**: Use Elastic License 2.0 (not MIT/Apache)
+**Decision**: Use Apache 2.0 (not MIT/Apache)
 
 **Rationale**:
 - Prevents cloud providers from offering managed seerdb
