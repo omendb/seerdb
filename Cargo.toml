@@ -2,7 +2,7 @@
 name = "seerdb"
 version = "0.0.0"
 edition = "2024"
-license = "Elastic-2.0"
+license = "Apache-2.0"
 authors = ["seerdb contributors"]
 description = "Research-grade storage engine with learned data structures"
 repository = "https://github.com/omendb/seerdb"

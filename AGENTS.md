@@ -135,7 +135,7 @@
 ### Isolation Level
 - **Current**: Read Committed (per-operation snapshot consistency)
 - **Future (0.0.2+)**: Snapshot Isolation (multi-operation MVCC)
-- **Rationale**: Vector databases (Milvus, Qdrant, Weaviate) use eventual consistency for ANN search. Read Committed is sufficient for omendb vector database workload. MVCC deferred to 0.0.2+ based on user feedback. See: ai/research/LSM_MVCC_CONCURRENCY_RESEARCH.md
+- **Rationale**: Vector databases (Milvus, Qdrant, Weaviate) use eventual consistency for ANN search. Read Committed is sufficient for vector database workloads. MVCC deferred to 0.0.2+ based on user feedback. See: ai/research/LSM_MVCC_CONCURRENCY_RESEARCH.md
 
 ---
 
@@ -252,7 +252,7 @@
 
 ## 📚 Research Foundation (November 14, 2025)
 
-**SOTA Research Complete** (from omendb parent project):
+**SOTA Research Complete**:
 
 **Phase 1: LSM Engines** (`ai/research/lsm_engines_sota.md`)
 - 12 papers on LSM-tree internals, buffer management, compaction
@@ -272,7 +272,7 @@
 - Performance targets: 763K ops/sec baseline, LeanStore integration path
 
 **Code Reuse Strategy**:
-- seerdb-core: Foundation for oadb (embedded) and omendb (cloud)
+- seerdb: Foundation for vector databases and embedded applications
 - Same LSM foundation, different frontends
 - Fix bugs once, all products benefit
 

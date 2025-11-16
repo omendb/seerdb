@@ -2,7 +2,7 @@
 
 Research-grade LSM storage engine with learned data structures.
 
-[![License](https://img.shields.io/badge/license-Elastic%202.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 > **Experimental**: Not recommended for production use.
 
@@ -70,4 +70,4 @@ See [ai/research/](ai/research/) for paper summaries and [ai/STATUS.md](ai/STATU
 
 ## License
 
-[Elastic License 2.0](LICENSE) - Free to use and modify, cannot resell as managed service.
+[Apache License 2.0](LICENSE)
