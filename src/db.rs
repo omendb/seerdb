@@ -1895,7 +1895,7 @@ impl DB {
         #[cfg(feature = "object-store")]
         let use_cloud_storage = self.storage_backend.is_some();
         #[cfg(not(feature = "object-store"))]
-        let use_cloud_storage = false;
+        let _use_cloud_storage = false;
 
         if let (Some(threshold), Some(ref mut vlog)) =
             (self.options.vlog_threshold, vlog_guard.as_mut())
