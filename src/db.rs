@@ -3,24 +3,24 @@
 
 pub(crate) use crate::background_workers::WALMessage;
 use crate::background_workers::{CompactionTask, FlushTask};
-use crate::compaction::{LSMTree, compact_sstables};
+use crate::compaction::{compact_sstables, LSMTree};
 use crate::health::{HealthCheck, HealthStatus};
 use crate::memtable::Memtable;
 use crate::metrics::{DBStats, MetricsCollector};
 use crate::range::RangeIterator;
 use crate::sstable::SSTable;
 use crate::vlog::VLog;
-use crate::wal::{Record, SyncPolicy, WAL, WALReader};
+use crate::wal::{Record, SyncPolicy, WALReader, WAL};
 use arc_swap::ArcSwap;
 use bytes::Bytes;
-use crossbeam_channel::{Sender as CrossbeamSender, bounded, unbounded};
+use crossbeam_channel::{bounded, unbounded, Sender as CrossbeamSender};
 use foldhash::fast::FixedState;
 use quick_cache::sync::Cache;
 use std::hash::BuildHasher;
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{Sender, channel};
+use std::sync::mpsc::{channel, Sender};
+use std::sync::LazyLock;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
@@ -887,7 +887,7 @@ impl DB {
         let partition = partition_for_key(&key);
         let mt = self.memtables[partition].load(); // Lock-free Arc load
         mt.put(key, value); // SkipMap is already lock-free
-        // Arc automatically dropped, no lock to release!
+                            // Arc automatically dropped, no lock to release!
 
         // Track write operation for Dostoevsky adaptive compaction
         self.write_count
@@ -1266,7 +1266,7 @@ impl DB {
         let partition = partition_for_key(&key);
         let mt = self.memtables[partition].load(); // Lock-free Arc load
         mt.put(key, value); // SkipMap is already lock-free
-        // Arc automatically dropped, no lock to release!
+                            // Arc automatically dropped, no lock to release!
 
         // Track write operation for Dostoevsky adaptive compaction
         self.write_count
@@ -3191,11 +3191,9 @@ mod tests {
 
         // Should get key005-key009 and key020-key024 (5 + 5 = 10 keys)
         assert_eq!(results.len(), 10);
-        assert!(
-            !results
-                .iter()
-                .any(|k| k.as_str() >= "key010" && k.as_str() < "key020")
-        );
+        assert!(!results
+            .iter()
+            .any(|k| k.as_str() >= "key010" && k.as_str() < "key020"));
     }
 
     #[test]

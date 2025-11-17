@@ -1,5 +1,5 @@
 // Simple point query benchmark to measure DB::get() performance
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::time::Instant;
 use tempfile::TempDir;
 

@@ -1,7 +1,7 @@
 // Demonstration of write amplification reduction with KV separation
 // Compares traditional LSM vs WiscKey-style separation
 
-use seerdb::{DB, DBOptions, SyncPolicy};
+use seerdb::{DBOptions, SyncPolicy, DB};
 use std::time::Instant;
 use tempfile::tempdir;
 

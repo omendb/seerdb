@@ -2,7 +2,7 @@
 // Tests checksum validation and corruption handling
 // Critical for data integrity: detect and reject corrupted data
 
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::fs::{self, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;

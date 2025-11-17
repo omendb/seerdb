@@ -2,7 +2,7 @@
 // Tests for memory budget, disk space, background panic detection, etc.
 // These validate the production-readiness features added in Nov 2025
 
-use seerdb::{DB, DBError, DBOptions};
+use seerdb::{DBError, DBOptions, DB};
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;

@@ -3,7 +3,7 @@
 // Critical for production multi-threaded workloads
 // Added Nov 14, 2025 for production validation
 
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::path::PathBuf;
 use std::sync::{Arc, Barrier};
 use std::thread;

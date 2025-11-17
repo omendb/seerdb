@@ -4,8 +4,8 @@
 use bytes::Bytes;
 use crossbeam_skiplist::SkipMap;
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use crate::sstable::{SSTableBuilder, SSTableError};
 

@@ -2,7 +2,7 @@
 // Tests that batch operations are truly atomic (all-or-nothing)
 // Critical for data integrity - batches must be recoverable as a single unit
 
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
@@ -330,11 +330,10 @@ fn test_batch_interleaved_with_individual_operations() {
     // Verify all writes succeeded
     for i in 0..100 {
         assert!(db.get(format!("batch_{}", i).as_bytes()).unwrap().is_some());
-        assert!(
-            db.get(format!("single_{}", i).as_bytes())
-                .unwrap()
-                .is_some()
-        );
+        assert!(db
+            .get(format!("single_{}", i).as_bytes())
+            .unwrap()
+            .is_some());
     }
 }
 
@@ -371,11 +370,10 @@ fn test_batch_during_flush() {
 
     // Verify batch data is present
     for i in 0..100 {
-        assert!(
-            db.get(format!("during_flush_{}", i).as_bytes())
-                .unwrap()
-                .is_some()
-        );
+        assert!(db
+            .get(format!("during_flush_{}", i).as_bytes())
+            .unwrap()
+            .is_some());
     }
 }
 
@@ -416,11 +414,10 @@ fn test_batch_during_compaction() {
 
     // Verify batch data is present
     for i in 0..100 {
-        assert!(
-            db.get(format!("during_compact_{}", i).as_bytes())
-                .unwrap()
-                .is_some()
-        );
+        assert!(db
+            .get(format!("during_compact_{}", i).as_bytes())
+            .unwrap()
+            .is_some());
     }
 }
 

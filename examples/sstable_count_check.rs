@@ -1,6 +1,6 @@
 // Check how many SSTables are created and their structure
 
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::fs;
 use tempfile::tempdir;
 

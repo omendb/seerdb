@@ -3,7 +3,7 @@
 // This benchmark measures the impact of ALEX on SSTable top-level index lookups.
 // Expected: 1.5x faster lookups with ALEX vs binary search
 
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::time::Instant;
 use tempfile::TempDir;
 

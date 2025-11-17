@@ -1,7 +1,7 @@
 // Profile flush overhead
 // Measure how much time is spent in flush() calls
 
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::time::Instant;
 use tempfile::tempdir;
 

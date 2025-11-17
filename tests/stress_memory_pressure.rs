@@ -3,7 +3,7 @@
 // Critical for preventing OOM in production
 // Added Nov 14, 2025 for production validation
 
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::path::PathBuf;
 use tempfile::TempDir;
 

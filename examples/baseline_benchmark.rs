@@ -51,7 +51,7 @@ fn main() {
 }
 
 fn benchmark_rocksdb() {
-    use rocksdb::{DB, Options};
+    use rocksdb::{Options, DB};
 
     let path = "/tmp/bench_rocksdb";
     let mut opts = Options::default();
@@ -341,7 +341,7 @@ fn benchmark_fjall() {
 
 #[cfg(feature = "baseline-benchmarks")]
 fn benchmark_seerdb() {
-    use seerdb::{DB, DBOptions};
+    use seerdb::{DBOptions, DB};
     use std::path::PathBuf;
 
     let path = PathBuf::from("/tmp/bench_seerdb");

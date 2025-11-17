@@ -1,5 +1,5 @@
 // Check how many SSTables exist during baseline_benchmark sequence
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::fs;
 use std::path::PathBuf;
 

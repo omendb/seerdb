@@ -1,6 +1,6 @@
 // Simple test to verify DB reopen works
 
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::path::PathBuf;
 use tempfile::TempDir;
 

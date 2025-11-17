@@ -1,7 +1,7 @@
 // Concurrent edge case tests
 // Tests complex interactions: flush during read, compact during write, etc.
 
-use seerdb::{DB, DBOptions, SyncPolicy};
+use seerdb::{DBOptions, SyncPolicy, DB};
 use std::path::PathBuf;
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -330,19 +330,17 @@ fn test_heavy_concurrent_mixed_operations() {
     }
     // key_a_250..499: should exist
     for i in 250..500 {
-        assert!(
-            db.get(format!("key_a_{:04}", i).as_bytes())
-                .unwrap()
-                .is_some()
-        );
+        assert!(db
+            .get(format!("key_a_{:04}", i).as_bytes())
+            .unwrap()
+            .is_some());
     }
     // key_b_0..499: all should exist
     for i in 0..500 {
-        assert!(
-            db.get(format!("key_b_{:04}", i).as_bytes())
-                .unwrap()
-                .is_some()
-        );
+        assert!(db
+            .get(format!("key_b_{:04}", i).as_bytes())
+            .unwrap()
+            .is_some());
     }
 }
 
@@ -385,11 +383,10 @@ fn test_flush_during_wal_write() {
 
     // All data should be present
     for i in 0..100 {
-        assert!(
-            db.get(format!("key_{:03}", i).as_bytes())
-                .unwrap()
-                .is_some()
-        );
+        assert!(db
+            .get(format!("key_{:03}", i).as_bytes())
+            .unwrap()
+            .is_some());
     }
 }
 

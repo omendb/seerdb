@@ -1,7 +1,7 @@
 // Write Amplification: Inline vs vlog (WiscKey)
 // Tests if vlog achieves 5-10x write amp reduction for large values
 
-use seerdb::{DB, DBOptions, SyncPolicy};
+use seerdb::{DBOptions, SyncPolicy, DB};
 use std::path::PathBuf;
 use std::time::Instant;
 use tempfile::TempDir;

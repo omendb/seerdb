@@ -3,7 +3,7 @@
 
 use bytes::Bytes;
 use seerdb::wal::SyncPolicy;
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use tempfile::tempdir;
 
 #[test]

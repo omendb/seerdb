@@ -1,4 +1,4 @@
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::path::PathBuf;
 use std::time::Duration;
 use sysinfo::{Pid, ProcessExt, System, SystemExt};

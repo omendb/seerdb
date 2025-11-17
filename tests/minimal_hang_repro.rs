@@ -1,6 +1,6 @@
 // Minimal reproduction test to isolate DB::open() hang
 
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use tempfile::TempDir;
 
 #[test]

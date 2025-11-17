@@ -1,5 +1,5 @@
 // Profile to understand where remaining overhead is
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::path::PathBuf;
 use std::time::Instant;
 

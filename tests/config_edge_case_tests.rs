@@ -2,7 +2,7 @@
 // Tests unusual/extreme configuration values
 // Critical for stability: handle all valid configs safely
 
-use seerdb::{DB, DBOptions, SyncPolicy};
+use seerdb::{DBOptions, SyncPolicy, DB};
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -26,11 +26,10 @@ fn test_tiny_memtable_capacity() {
 
     // Verify all data present
     for i in 0..100 {
-        assert!(
-            db.get(format!("key_{:03}", i).as_bytes())
-                .unwrap()
-                .is_some()
-        );
+        assert!(db
+            .get(format!("key_{:03}", i).as_bytes())
+            .unwrap()
+            .is_some());
     }
 }
 
@@ -54,11 +53,10 @@ fn test_large_memtable_capacity() {
 
     // Should all be in memtable (no flush)
     for i in 0..1000 {
-        assert!(
-            db.get(format!("key_{:04}", i).as_bytes())
-                .unwrap()
-                .is_some()
-        );
+        assert!(db
+            .get(format!("key_{:04}", i).as_bytes())
+            .unwrap()
+            .is_some());
     }
 }
 
@@ -83,11 +81,10 @@ fn test_base_level_size_extreme_values() {
 
     // Verify data
     for i in 0..100 {
-        assert!(
-            db.get(format!("key_{:03}", i).as_bytes())
-                .unwrap()
-                .is_some()
-        );
+        assert!(db
+            .get(format!("key_{:03}", i).as_bytes())
+            .unwrap()
+            .is_some());
     }
 }
 
@@ -111,11 +108,10 @@ fn test_size_ratio_extreme_values() {
     db.flush().unwrap();
 
     for i in 0..100 {
-        assert!(
-            db.get(format!("key_{:03}", i).as_bytes())
-                .unwrap()
-                .is_some()
-        );
+        assert!(db
+            .get(format!("key_{:03}", i).as_bytes())
+            .unwrap()
+            .is_some());
     }
 }
 
@@ -139,11 +135,10 @@ fn test_single_level() {
     db.flush().unwrap();
 
     for i in 0..100 {
-        assert!(
-            db.get(format!("key_{:03}", i).as_bytes())
-                .unwrap()
-                .is_some()
-        );
+        assert!(db
+            .get(format!("key_{:03}", i).as_bytes())
+            .unwrap()
+            .is_some());
     }
 }
 
@@ -167,11 +162,10 @@ fn test_many_levels() {
     db.flush().unwrap();
 
     for i in 0..100 {
-        assert!(
-            db.get(format!("key_{:03}", i).as_bytes())
-                .unwrap()
-                .is_some()
-        );
+        assert!(db
+            .get(format!("key_{:03}", i).as_bytes())
+            .unwrap()
+            .is_some());
     }
 }
 
@@ -250,11 +244,10 @@ fn test_background_compaction_disabled() {
     db.flush().unwrap();
 
     for i in 0..100 {
-        assert!(
-            db.get(format!("key_{:03}", i).as_bytes())
-                .unwrap()
-                .is_some()
-        );
+        assert!(db
+            .get(format!("key_{:03}", i).as_bytes())
+            .unwrap()
+            .is_some());
     }
 }
 
@@ -280,11 +273,10 @@ fn test_background_compaction_enabled() {
     std::thread::sleep(std::time::Duration::from_secs(1));
 
     for i in 0..100 {
-        assert!(
-            db.get(format!("key_{:03}", i).as_bytes())
-                .unwrap()
-                .is_some()
-        );
+        assert!(db
+            .get(format!("key_{:03}", i).as_bytes())
+            .unwrap()
+            .is_some());
     }
 }
 

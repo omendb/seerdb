@@ -1,6 +1,6 @@
 //! Profile mixed workload to identify bottlenecks
 
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::time::Instant;
 
 fn main() -> anyhow::Result<()> {

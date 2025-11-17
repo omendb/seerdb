@@ -1,7 +1,7 @@
 // Multi-threaded write benchmark to measure partitioned memtable benefits
 // Expected: +25-40% throughput due to reduced lock contention
 
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::sync::Arc;
 use std::thread;
 use std::time::Instant;

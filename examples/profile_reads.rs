@@ -1,7 +1,7 @@
 // Profile read path to identify bottlenecks
 // Tests different scenarios to isolate performance issues
 
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::time::Instant;
 use tempfile::tempdir;
 

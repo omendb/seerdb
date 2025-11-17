@@ -1,7 +1,7 @@
 // Write amplification benchmark
 // Measures how much data is written to disk vs logical data written by user
 
-use seerdb::{DB, DBOptions, SyncPolicy};
+use seerdb::{DBOptions, SyncPolicy, DB};
 use std::path::PathBuf;
 use std::time::Instant;
 use tempfile::TempDir;

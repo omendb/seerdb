@@ -2,7 +2,7 @@
 // Tests: basic iteration, range scans, seeking, edge cases, concurrent modifications
 
 use bytes::Bytes;
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::path::PathBuf;
 use tempfile::TempDir;
 

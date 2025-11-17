@@ -8,7 +8,7 @@
 
 use bytes::Bytes;
 
-use crate::db::{DB, DBError, Result};
+use crate::db::{DBError, Result, DB};
 use crate::wal::{BatchOp, Record};
 
 /// Operation type in a batch
@@ -240,7 +240,7 @@ impl<'db> Batch<'db> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DB, DBOptions};
+    use crate::{DBOptions, DB};
     use tempfile::tempdir;
 
     #[test]

@@ -1,5 +1,5 @@
 // Measure time spent in iteration vs creation
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::path::PathBuf;
 use std::time::Instant;
 

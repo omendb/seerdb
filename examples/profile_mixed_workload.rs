@@ -2,7 +2,7 @@
 //!
 //! Run with: cargo flamegraph --release --example profile_mixed_workload
 
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::time::Instant;
 
 fn main() -> anyhow::Result<()> {

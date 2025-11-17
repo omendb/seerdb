@@ -132,7 +132,7 @@ pub mod wal;
 pub use alex::AlexTree;
 pub use batch::Batch;
 pub use bloom::{BloomFilter, LearnedBloomFilter};
-pub use db::{DB, DBError, DBOptions};
+pub use db::{DBError, DBOptions, DB};
 pub use health::{CheckStatus, HealthCheck, HealthStatus};
 pub use memtable::Memtable;
 pub use metrics::DBStats;

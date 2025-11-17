@@ -1,7 +1,7 @@
 // Varint decoding comparison: varint-rs vs varint-simd
 // Tests whether SIMD varint provides meaningful speedup for block parsing
 
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::io::Cursor;
 
 // Generate test data: varint-encoded values
@@ -53,7 +53,7 @@ fn bench_varint_rs(c: &mut Criterion) {
 // Benchmark: varint-simd (SIMD-accelerated)
 #[cfg(feature = "varint-simd")]
 fn bench_varint_simd(c: &mut Criterion) {
-    use varint_simd::{VarIntTarget, decode};
+    use varint_simd::{decode, VarIntTarget};
 
     let mut group = c.benchmark_group("varint_simd");
 
@@ -117,7 +117,7 @@ fn bench_full_block_simulation(c: &mut Criterion) {
     // SIMD version
     #[cfg(feature = "varint-simd")]
     {
-        use varint_simd::{VarIntTarget, decode};
+        use varint_simd::{decode, VarIntTarget};
 
         c.bench_function("full_block_50_entries_varint_simd", |b| {
             b.iter(|| {

@@ -1,5 +1,5 @@
 // Profile range scan to identify bottleneck (memtable vs SSTable iteration)
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::time::Instant;
 use tempfile::TempDir;
 

@@ -3,7 +3,7 @@
 // Utility functions used by the main DB implementation that are relatively
 // self-contained and don't require the full DB struct.
 
-use crate::db::{DBError, DBOptions, Result, partition_for_key};
+use crate::db::{partition_for_key, DBError, DBOptions, Result};
 use crate::memtable::Memtable;
 use crate::wal::{Record, WALReader};
 use std::path::{Path, PathBuf};

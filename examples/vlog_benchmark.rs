@@ -2,7 +2,7 @@
 // Tests performance with large values (key-value separation)
 // Compares performance with vlog enabled vs disabled
 
-use seerdb::{DB, DBOptions, SyncPolicy};
+use seerdb::{DBOptions, SyncPolicy, DB};
 use std::path::PathBuf;
 use std::time::Instant;
 use tempfile::TempDir;

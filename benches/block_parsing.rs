@@ -2,7 +2,7 @@
 // Tests varint decoding and prefix reconstruction hot paths
 
 use bytes::{Bytes, BytesMut};
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::io::Cursor;
 
 // Trait for varint decoding abstraction

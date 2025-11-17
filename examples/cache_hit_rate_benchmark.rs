@@ -1,7 +1,7 @@
 // Benchmark to measure block cache hit rate
 // This helps understand if low cache hits are the bottleneck
 
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::time::Instant;
 use tempfile::tempdir;
 

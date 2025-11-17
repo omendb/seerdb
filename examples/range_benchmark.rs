@@ -1,5 +1,5 @@
 // Quick benchmark for range scans
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::time::Instant;
 use tempfile::TempDir;
 

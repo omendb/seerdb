@@ -2,7 +2,7 @@
 // Tests that compaction doesn't lose, duplicate, or corrupt data
 // Critical for data integrity - compaction is the most complex operation
 
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;

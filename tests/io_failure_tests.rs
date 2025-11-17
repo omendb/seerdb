@@ -2,7 +2,7 @@
 // Tests error handling when I/O operations fail
 // Critical for reliability: must handle I/O errors gracefully without data loss
 
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::fs::{self, OpenOptions};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -264,11 +264,10 @@ fn test_write_data_despite_wal_issues() {
 
     // Verify data is readable
     for i in 0..50 {
-        assert!(
-            db.get(format!("key_{:03}", i).as_bytes())
-                .unwrap()
-                .is_some()
-        );
+        assert!(db
+            .get(format!("key_{:03}", i).as_bytes())
+            .unwrap()
+            .is_some());
     }
 }
 

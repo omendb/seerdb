@@ -1,7 +1,7 @@
 // Analyze bloom filter false positive rate
 // This helps understand if bloom filter is the bottleneck
 
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::time::Instant;
 use tempfile::tempdir;
 

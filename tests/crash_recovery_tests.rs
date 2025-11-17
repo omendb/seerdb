@@ -2,7 +2,7 @@
 // Tests WAL replay after simulated crashes
 // Critical for durability: data must survive crashes
 
-use seerdb::{DB, DBOptions, SyncPolicy};
+use seerdb::{DBOptions, SyncPolicy, DB};
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -237,20 +237,18 @@ fn test_recovery_after_flush() {
 
         // Flushed data should be in SSTables
         for i in 0..50 {
-            assert!(
-                db.get(format!("flushed_{:03}", i).as_bytes())
-                    .unwrap()
-                    .is_some()
-            );
+            assert!(db
+                .get(format!("flushed_{:03}", i).as_bytes())
+                .unwrap()
+                .is_some());
         }
 
         // Unflushed data should be recovered from WAL
         for i in 0..50 {
-            assert!(
-                db.get(format!("unflushed_{:03}", i).as_bytes())
-                    .unwrap()
-                    .is_some()
-            );
+            assert!(db
+                .get(format!("unflushed_{:03}", i).as_bytes())
+                .unwrap()
+                .is_some());
         }
     }
 }

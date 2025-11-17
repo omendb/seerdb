@@ -2,7 +2,7 @@
 // Tests that reads see consistent point-in-time snapshots
 // Critical for correctness: concurrent writes must not affect in-progress reads
 
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::path::PathBuf;
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -180,18 +180,18 @@ fn test_snapshot_isolation_multiple_keys() {
 
 #[test]
 #[ignore] // TODO(0.0.2): Requires Snapshot API for multi-operation consistency
-// Current isolation: Read Committed (per-operation snapshot)
-// This test requires: Snapshot Isolation (multi-operation snapshot)
-//
-// Context: Each get() call captures a separate point-in-time snapshot. Between
-// calls, database state can change (flush, compaction), causing keys to move
-// between memtable/immutable/SSTables. A reader iterating 100 keys may see
-// inconsistent state if a flush happens mid-iteration.
-//
-// Fix: Implement Snapshot API (capture state once, read multiple times)
-// Deferred to 0.0.2+ because vector databases don't require snapshot isolation
-// (Milvus, Qdrant, Weaviate all use eventual consistency for ANN search).
-// See: ai/research/LSM_MVCC_CONCURRENCY_RESEARCH.md
+          // Current isolation: Read Committed (per-operation snapshot)
+          // This test requires: Snapshot Isolation (multi-operation snapshot)
+          //
+          // Context: Each get() call captures a separate point-in-time snapshot. Between
+          // calls, database state can change (flush, compaction), causing keys to move
+          // between memtable/immutable/SSTables. A reader iterating 100 keys may see
+          // inconsistent state if a flush happens mid-iteration.
+          //
+          // Fix: Implement Snapshot API (capture state once, read multiple times)
+          // Deferred to 0.0.2+ because vector databases don't require snapshot isolation
+          // (Milvus, Qdrant, Weaviate all use eventual consistency for ANN search).
+          // See: ai/research/LSM_MVCC_CONCURRENCY_RESEARCH.md
 fn test_concurrent_reads_consistent() {
     let temp_dir = TempDir::new().unwrap();
     let opts = DBOptions {

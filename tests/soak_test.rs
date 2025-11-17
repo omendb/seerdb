@@ -13,9 +13,9 @@
 //   - test_24hour_soak_extreme: 24 hours continuous operation
 //   - test_100gb_dataset_extreme: 100GB dataset
 
-use seerdb::{DB, DBOptions, SyncPolicy};
-use std::sync::Arc;
+use seerdb::{DBOptions, SyncPolicy, DB};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::tempdir;

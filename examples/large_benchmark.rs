@@ -1,5 +1,5 @@
 // Large workload benchmark to test background flush effectiveness
-use seerdb::{DB, DBOptions, SyncPolicy};
+use seerdb::{DBOptions, SyncPolicy, DB};
 use std::time::Instant;
 use tempfile::TempDir;
 

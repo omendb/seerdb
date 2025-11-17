@@ -2,7 +2,7 @@
 // Tests for large keys, large values, rapid cycles, etc.
 // Added Nov 14, 2025 for production validation
 
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::path::PathBuf;
 use tempfile::TempDir;
 

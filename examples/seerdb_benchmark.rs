@@ -1,7 +1,7 @@
 // Simple benchmark for seerdb
 // Compare against fjall baseline (438k writes/sec)
 
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::time::Instant;
 use tempfile::tempdir;
 

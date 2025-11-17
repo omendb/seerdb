@@ -1,5 +1,5 @@
 // Match baseline_benchmark sequence exactly to profile range scan bottleneck
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::path::PathBuf;
 use std::time::Instant;
 

@@ -4,7 +4,7 @@
 //! performance at 50M+ rows by using a tree of inner nodes for routing, keeping
 //! the hot routing data in CPU cache.
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 
 use super::gapped_node::GappedNode;
 use super::linear_model::LinearModel;

@@ -1,5 +1,5 @@
 // Simple write benchmark
-use seerdb::{DB, DBOptions, SyncPolicy};
+use seerdb::{DBOptions, SyncPolicy, DB};
 use std::time::Instant;
 use tempfile::TempDir;
 

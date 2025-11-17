@@ -1,7 +1,7 @@
 // Storage abstraction overhead benchmark
 // Verifies that file handle reuse has zero overhead compared to direct file I/O
 
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;

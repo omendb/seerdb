@@ -1,7 +1,7 @@
 // Measures write amplification with and without vLog (WiscKey value separation)
 // Write amplification = (Bytes written to disk) / (Logical bytes written by user)
 
-use seerdb::{DB, DBOptions};
+use seerdb::{DBOptions, DB};
 use std::path::PathBuf;
 
 fn main() {
