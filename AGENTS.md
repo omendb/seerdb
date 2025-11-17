@@ -1,9 +1,9 @@
 # seerdb - Research-Grade Storage Engine
 
 **Repository**: seerdb (Storage Engine with Learned Data Structures)
-**Last Updated**: November 14, 2025
-**License**: Elastic License 2.0 (source-available)
-**Status**: Testing complete (0.0.0 pre-alpha) - working towards 0.0.1 (4-5 weeks)
+**Last Updated**: November 16, 2025
+**License**: Apache-2.0
+**Status**: PRE-ALPHA - MISSING STANDARD API FEATURES (range iterators, snapshots)
 
 ---
 
@@ -30,20 +30,107 @@
 
 **→ First time?** Load these in order:
 1. This file (CLAUDE.md) - Project overview
-2. `ai/CURRENT_STATE.md` - TL;DR current status (start here!)
-3. `ai/PRODUCTION_READINESS.md` - Roadmap to 0.0.1 (8 weeks)
-4. `ai/BUGS_AND_EDGE_CASES.md` - All known bugs (critical to minor)
-5. `ai/DECISIONS.md` - Design decisions with rationale
+2. `ai/STATUS.md` - Current state (read FIRST - has honest assessment)
+3. `ai/design/NEXT_API_PRIORITIES.md` - Missing features roadmap
+4. `ai/design/API_COMPARISON_TABLE.md` - Shows gaps vs competitors
+5. `CONTEXT.md` - Session context
 
-**→ Continuing work?** Check `ai/CURRENT_STATE.md` first, then `ai/TODO.md`
+**→ Continuing work?** Check `ai/STATUS.md` first, then `ai/TODO.md`
 
-**→ Refactoring context?** See `CONTEXT.md` for recent code improvements (Nov 14, 2025)
+**→ API research?** See `ai/research/LSM_API_RESEARCH_SUMMARY.md` for competitor analysis
 
 **→ Full documentation guide**: See `ai/README.md` for all available docs
 
 ---
 
-## Recent Work: Code Quality Improvements (Nov 14, 2025) ✅
+## ⚠️ CRITICAL: API Completeness Issues (Nov 16, 2025)
+
+**REALITY CHECK**: seerdb is missing fundamental features that all competitors have.
+
+### What We Have (Works Well)
+```rust
+// ✅ Point operations only
+db.get(key)           // Point lookup
+db.put(key, value)    // Write
+db.delete(key)        // Delete
+db.batch()            // Atomic batch writes
+db.flush()            // Sync to disk
+db.get_stats()        // Observability
+db.check_health()     // Health checks
+```
+
+### What's Missing (CRITICAL)
+```rust
+// ❌ ALL COMPETITORS HAVE THESE
+db.range(start..end)  // NO RANGE QUERIES - blocks 70% of use cases
+db.iter()             // NO ITERATION AT ALL
+db.prefix(prefix)     // NO PREFIX SCANS
+db.snapshot()         // NO CONSISTENT MULTI-READ VIEWS
+db.transaction()      // NO MVCC/TRANSACTIONS
+```
+
+**Impact**: Without range iterators, seerdb blocks:
+- Time series queries (by time range)
+- Analytics (scanning data)
+- Pagination (iterating results)
+- Queue patterns (ordered dequeue)
+- Secondary indexes
+
+**See**: `ai/design/API_COMPARISON_TABLE.md` for full gap analysis
+
+---
+
+## Current Phase: API Completeness (PRE-ALPHA)
+
+**Status**: ❌ **INCOMPLETE** - Missing standard features, NOT ready for release
+
+**What's Good**:
+- ✅ Performance: 2.47x RocksDB writes, 2.07x reads
+- ✅ Tests: 271 passing, 81.54% coverage, ASAN clean
+- ✅ Critical bugs fixed (batch atomicity, checksums, etc.)
+
+**What's Missing**:
+- ❌ **Range iterators** - CRITICAL, blocks most use cases
+- ❌ **Snapshots** - No consistent multi-read views
+- ❌ **Iteration** - Can't scan or paginate
+- ❌ **Cloud storage backend** - No S3/GCS support
+
+**Performance** (valid for point operations only):
+- Writes: 878K ops/sec (2.47x RocksDB) 🏆
+- Reads: 2,207K ops/sec (2.07x RocksDB) 🏆
+- Write amp: 1.01x (4.82x better than traditional LSM) 🏆
+
+**Optimizations Applied** (all for point operations):
+- LZ4 block compression, jemalloc allocator
+- ALEX learned index, ArcSwap lock-free structures
+- Partitioned memtables (16), lock-free WAL
+- foldhash, varint-rs encoding
+
+**Bug Fixes Complete**:
+- ✅ Block cache bounded (quick_cache LRU)
+- ✅ Batch API atomic (single WAL record)
+- ✅ Checksums (CRC32 validated on read)
+- ✅ Magic numbers + version detection
+- ✅ Compaction safety (delayed deletion queue)
+
+**Next Priority**: Implement missing API features before ANY release
+
+---
+
+## Recent Work: API Audit (Nov 16, 2025)
+
+**Critical Discovery**: Competitor analysis revealed major API gaps
+- Created `ai/design/API_COMPARISON_TABLE.md` - Gap analysis
+- Created `ai/design/NEXT_API_PRIORITIES.md` - Implementation roadmap
+- Created `ai/research/LSM_API_RESEARCH_SUMMARY.md` - Full research
+- Updated `ai/STATUS.md` - Honest assessment (PRE-ALPHA)
+- Fixed CI failures (SIMD feature gates, clippy rules)
+
+**Key Learning**: Performance benchmarks ≠ feature completeness. We tested only what exists, not what should exist.
+
+---
+
+## Previous Work: Code Refactoring (Nov 14, 2025) ✅
 
 **Database Refactoring Complete:**
 - ✅ Extracted background workers into dedicated module (477 lines)
@@ -51,91 +138,35 @@
 - ✅ Reduced `src/db.rs` from 3,654 to 3,141 lines (-14.0%)
 - ✅ Simplified `DB::open()` initialization by 47%
 - ✅ All 146 tests passing, zero functional changes
-- ✅ Better code organization and maintainability
-
-**Branch:** `claude/seerdb-extract-background-workers-01H58mQr9RbAq7QcRSUGgriE` (ready to merge)
-
-**Documentation:**
-- See `CONTEXT.md` for full refactoring summary
-- See `ai/REFACTORING_SUMMARY.md` for detailed technical analysis
-
----
-
-## Current Phase: Testing Complete → Documentation (0.0.1 Preparation)
-
-**Status**: ✅ **Testing Phase Complete!** - 81.54% coverage (exceeded 80% goal), ASAN clean, 271 tests passing
-
-**Latest Performance** (jemalloc + ArcSwap + SIMD - Nov 8, 2025):
-- **Writes**: 878K ops/sec (2.47x RocksDB, 2.06x fjall) 🏆
-- **Reads**: 2,207K ops/sec (2.07x RocksDB, 1.90x fjall) 🏆  
-- **Mixed**: 718K ops/sec (1.79x RocksDB, 0.86x fjall)
-- **Scans**: 19.6K scans/sec (0.99x RocksDB, 0.98x fjall)
-- **Write amp**: 1.01x (4.82x better than traditional LSM) 🏆
-
-**Optimizations Complete**:
-- ✅ LZ4 block compression (+34.7% writes)
-- ✅ jemalloc allocator (+17-21% all workloads)
-- ✅ ArcSwap lock-free structures (+1-4%)
-- ✅ SIMD key comparison (+3-4% reads)
-- ✅ ALEX learned index (+55% reads)
-- ✅ Partitioned memtables (16 partitions)
-- ✅ Lock-free WAL
-- ✅ Decompressed block cache
-- ✅ foldhash (2x faster hashing)
-- ✅ varint-rs (space-efficient encoding)
-
-**Critical Issues Status**: ✅ **ALL FIXED!**
-1. ✅ Block cache unbounded (FIXED - quick_cache LRU, 10K blocks, ~40MB limit)
-2. ✅ Batch API non-atomic (FIXED - single WAL batch record, atomic recovery)
-3. ✅ No checksums (FIXED - SSTable footer checksum validated on read)
-4. ✅ No magic numbers (FIXED - WAL/VLog have magic numbers + version)
-5. ✅ Iterator invalidation (FIXED - memtables collected before SSTables)
-6. ⏸️ VLog GC race (DEFERRED - GC not implemented yet, will be done correctly in 0.0.2+)
-7. ✅ Compaction can delete live keys (FIXED - delayed deletion queue)
-8. ✅ WAL recovery race (FIXED - barrier synchronization + file cursor seek)
-9. ✅ Tombstone handling in SSTables (FIXED - SSTable.contains() distinguishes tombstone from miss)
-
-**Testing Phase Complete (Nov 10, 2025)**:
-- ✅ All critical bugs fixed!
-- ✅ All tests passing (271 tests, 0 failures)
-- ✅ **81.54% test coverage achieved** (exceeded 80% goal)
-- ✅ **Memory safety validated** (ASAN clean)
-- ✅ **Thread safety validated** (50+ concurrent tests)
-- ✅ Production hardening complete
-
-**Remaining Work for 0.0.1**:
-- ❌ Documentation (API guide, architecture, examples)
-- ❌ Long-running stability tests (optional)
-- ❌ Final validation & release prep
-
-**Next Focus**: Documentation or declare testing complete
 
 ---
 
 ## Success Metrics
 
-### Current Performance ✅
-- ✅ All tests passing (100% pass rate)
+### Current Performance ✅ (Point Operations Only)
+- ✅ All tests passing (271 tests, 0 failures)
 - ✅ Write amp: 1.01x (4.82x better than traditional LSM)
-- ✅ Writes: 2.47x RocksDB (best-in-class) 🏆
-- ✅ Reads: 2.07x RocksDB (best-in-class) 🏆
-- ✅ Mixed: 1.79x RocksDB 🏆
-- ⚠️ Mixed: 0.86x fjall (14% gap - investigating)
+- ✅ Writes: 2.47x RocksDB (point operations) 🏆
+- ✅ Reads: 2.07x RocksDB (point operations) 🏆
+- ❌ Range queries: NOT IMPLEMENTED
+- ❌ Iteration: NOT IMPLEMENTED
 
 ### Quality Status
-- ✅ Test coverage: 81.54% (exceeded 80% goal for 0.0.1)
-- ✅ Crash recovery: All tests passing
-- ✅ Memory safety: ASAN clean, Rust + minimal unsafe
+- ✅ Test coverage: 81.54% (for existing features)
+- ✅ Memory safety: ASAN clean
 - ✅ Thread safety: 50+ concurrent tests passing
-- ✅ Data loss prevention: All critical bugs fixed
-- ✅ Compaction safety: Tombstone + deletion queue fixes prevent data loss
-- ✅ Performance claims: Documented with benchmarks
-- ⚠️ Production ready: 4-5 weeks (documentation + final validation)
+- ✅ Data integrity: Checksums, batch atomicity, compaction safety
+- ❌ **API completeness: MISSING fundamental features (range iterators, snapshots)**
+- ❌ Production ready: NO - missing standard functionality
 
-### Isolation Level
-- **Current**: Read Committed (per-operation snapshot consistency)
-- **Future (0.0.2+)**: Snapshot Isolation (multi-operation MVCC)
-- **Rationale**: Read Committed is sufficient for many embedded use cases. MVCC deferred to 0.0.2+ based on user feedback.
+### Feature Completeness
+- ✅ Point operations (get/put/delete/batch)
+- ✅ Observability (stats, health checks)
+- ❌ **Range queries** - CRITICAL MISSING
+- ❌ **Iteration** - CRITICAL MISSING
+- ❌ **Snapshots** - HIGH PRIORITY MISSING
+- ❌ **Transactions/MVCC** - MEDIUM PRIORITY MISSING
+- ❌ **Cloud storage** - HIGH PRIORITY MISSING
 
 ---
 
@@ -363,62 +394,60 @@ seerdb/
 
 ---
 
-## Roadmap to 0.0.1 (4-5 Weeks Remaining)
+## Roadmap to 0.0.1 (Timeline: TBD - BLOCKED on feature audit)
 
-### Phase 1: Critical Bugs (Data Safety) ✅ **COMPLETE**
-- ✅ Block cache (quick_cache with size limits)
-- ✅ Batch API atomicity (single WAL record)
-- ✅ Checksums (CRC32 for all data blocks)
-- ✅ Magic numbers + version detection
-- ✅ Iterator invalidation fix
+### Phase 1: Bug Fixes ✅ **COMPLETE**
+- ✅ Block cache bounded
+- ✅ Batch API atomicity
+- ✅ Checksums and magic numbers
+- ✅ Compaction safety
 
-### Phase 2: Production Hardening ✅ **COMPLETE**
-- ✅ Memory budget enforcement
-- ✅ Disk space checks
-- ✅ File descriptor limits
-- ✅ SSTable fsync
-- ✅ Background panic handling
-- ✅ Compaction live key deletion fix
-- ⏸️ VLog GC race fix (deferred - not implemented yet)
+### Phase 2: Testing Infrastructure ✅ **COMPLETE**
+- ✅ 271 tests, 81.54% coverage
+- ✅ ASAN clean, thread safety validated
 
-### Phase 3: Comprehensive Testing ✅ **COMPLETE**
-- ✅ ALEX tests (20 tests, 462 LOC)
-- ✅ VLog tests (24 tests, 631 LOC)
-- ✅ Coverage measurement: **81.54%** (exceeded 80% goal)
-- ✅ ASAN: ALL PASSED (no memory issues)
-- ✅ Thread safety: 50+ concurrent tests
-- ✅ 271 tests passing (0 failures)
+### Phase 3: API Completeness ❌ **CRITICAL - NOT STARTED**
+**Timeline**: TBD (need full audit first)
 
-### Phase 4: Documentation 📚 (Next Priority)
-- Complete API documentation
-- Architecture guide
-- Performance tuning guide
-- Examples (5+)
-- **Status**: Not started
+1. **Range Iterators** - CRITICAL (blocks 70% of use cases)
+   - `db.range(start..end)` - range queries
+   - `db.iter()` - full iteration
+   - `db.prefix(prefix)` - prefix scans
+   - `db.iter_rev()` - reverse iteration
 
-### Phase 5: Buffer & Release 🚀
-- Full validation
-- Long-running stability tests (optional)
-- Release notes
+2. **Snapshots** - HIGH PRIORITY
+   - `db.snapshot()` - point-in-time views
+   - Consistent multi-read operations
+
+3. **Cloud Storage** - HIGH PRIORITY
+   - S3/GCS backend via object_store crate
+   - Hybrid: local memtable + cloud SSTables
+
+4. **Transactions** - MEDIUM PRIORITY
+   - MVCC for multi-key atomicity
+   - Full ACID guarantees
+
+### Phase 4: Stability & Fuzzing 📊 (After API Complete)
+- 24+ hour fuzzing campaigns
+- Long-running soak tests
+- Chaos/fault injection
+
+### Phase 5: Documentation & Release 🚀
+- Complete API docs (minimal)
+- Examples
 - Version tagging (0.0.1)
-- **Status**: Not started
 
-### Deferred to 0.0.2+ (Post-Release)
-- rkyv zero-copy (only +3% benefit, high complexity)
-- Multi-tier caching (needs production workload data)
-- Close fjall mixed gap (already 1.79x faster than RocksDB)
-- Advanced learned components
-- **Rationale**: Correctness > optimization
+**No release until API features complete and stable.**
 
 ---
 
-*Last Updated: November 10, 2025 - Testing phase complete*
+*Last Updated: November 16, 2025 - API audit revealed critical gaps*
 
 **Product**: seerdb - Research-grade storage engine
-**Status**: Testing complete (0.0.0 pre-alpha) - working towards 0.0.1 documentation
-**Performance**: 878K writes/sec, 2.2M reads/sec (2.5x RocksDB in benchmarks) 🏆
-**Quality**: 81.54% coverage (exceeded 80% goal), ASAN clean, 271 tests passing (0 failures)
-**Critical Issues**: ✅ ALL FIXED (7/7 complete, 1 deferred to 0.0.2+)
-**Recent Achievement**: Testing phase complete - coverage goal exceeded, memory/thread safety validated
-**Timeline**: 4-5 weeks to 0.0.1 (documentation + final validation)
-**Next**: Documentation or declare testing complete
+**Status**: PRE-ALPHA - MISSING STANDARD API FEATURES
+**Performance**: 878K writes/sec, 2.2M reads/sec (point operations only) 🏆
+**Quality**: 81.54% coverage, ASAN clean, 271 tests passing
+**Critical Gap**: ❌ NO RANGE ITERATORS (blocks 70% of use cases)
+**Missing Features**: Range queries, iteration, prefix scans, snapshots, transactions
+**Timeline**: TBD - blocked on feature audit and implementation
+**Next**: Full feature audit, then implement missing API (no release until complete)
