@@ -1,166 +1,192 @@
 # TODO - seerdb
 
 **Last Updated**: November 16, 2025
-**Current Sprint**: Documentation & Release Prep
-**Recent Work**: ✅ **Bug #11 FIXED** - ALEX learned index key collision (CRITICAL)
-**Current Risk**: 🟢 LOW → All critical bugs fixed, stress tests passing
+**Current Sprint**: Feature Completeness (Snapshots + Convenience APIs)
+**Previous**: Feature audit revealed range queries WORK, snapshots missing
+**Timeline**: 4-6 weeks to 0.0.1
 
 ---
 
-## Today's Completion: Bug #11 Critical Fix (Nov 16, 2025) ✅
+## Current Priority: Implement Snapshots
 
-**Branch:** `claude/seerdb-roadmap-planning-01FYGzXeWMntEai2SB6TmBpZ`
-**Status:** ✅ **CRITICAL BUG FIXED & PUSHED**
+### Phase 1: Snapshots (1-2 weeks) - HIGHEST PRIORITY
 
-### What Was Done
+**Why**: Without snapshots, no consistent multi-read views. Critical for:
+- Range scans during concurrent writes
+- Consistent backup
+- Multi-key atomic reads
+- Long-running queries
 
-1. **Discovered Bug #11** (CRITICAL - ALEX Key Collision)
-   - Root cause: `bytes_to_i64()` only uses first 8 bytes
-   - Keys with shared prefixes hash to same value (e.g., "key_0000000000" and "key_0000000100")
-   - ALEX index overwrites earlier entries, only last index block reachable
-   - Caused complete data loss for keys with common prefixes
+**Implementation Plan**:
 
-2. **Fixed Bug #11** (src/sstable/mod.rs)
-   - Disabled ALEX for top-level index lookup in `find_index_block()`
-   - Using partition_point binary search instead (correct and fast)
-   - O(log N) where N is typically 2-10 entries
+1. **Snapshot Structure**
+   ```rust
+   pub struct Snapshot {
+       seq_num: u64,                    // Sequence number at snapshot time
+       memtables: Vec<Arc<Memtable>>,   // Pinned memtables
+       sstables: Vec<Arc<SSTable>>,     // Pinned SSTables
+       lsm_tree: Arc<...>,              // Reference to LSM state
+   }
+   ```
 
-3. **Verified Fix**
-   - ✅ All 146 lib tests pass (no regressions)
-   - ✅ Stress test (80K operations) passes with all keys findable
-   - ✅ Memory pressure test completes successfully
+2. **API**
+   ```rust
+   impl DB {
+       pub fn snapshot(&self) -> Snapshot;
+   }
 
-4. **Bug #10 Resolved** (Was misdiagnosis)
-   - "Background flush writes empty SSTables" was actually Bug #11
-   - Data WAS written correctly, but SSTable.get() couldn't find it
-   - Root cause was ALEX key collision, not background flush
+   impl Snapshot {
+       pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>>;
+       pub fn range(&self, start: &[u8], end: Option<&[u8]>) -> RangeIterator;
+   }
+   ```
 
-5. **Documentation**
-   - Created `ai/BUG_11_ALEX_KEY_COLLISION.md` - Full bug analysis
-   - Updated `ai/BUG_10_BACKGROUND_FLUSH_DATA_LOSS.md` - Marked resolved
-   - Updated `ai/CURRENT_STATE.md` - 8 critical bugs now fixed
+3. **Key Requirements**
+   - Reference counting for SSTable retention
+   - Don't delete SSTables while snapshots hold references
+   - Immutable view of LSM tree state at snapshot time
+   - Memtable pinning (prevent flush from clearing data)
 
-6. **Cleanup**
-   - Removed obsolete `examples/bloom_simd_benchmark.rs`
-   - Removed debug test files used during investigation
-   - Committed and pushed to branch
-
-### Results
-
-✅ **Critical Bug Eliminated:**
-- ALEX key collision: FIXED
-- Data loss with prefixed keys: ELIMINATED
-- All 8 critical bugs now fixed (up from 7)
-- Stress tests passing (80K operations, 3 background flushes)
-
-✅ **Quality Maintained:**
-- 146 lib tests passing (no regressions)
-- All integration tests passing
-- ASAN clean (no memory issues)
-- No performance regressions
+4. **Tests Needed**
+   - Snapshot consistency during writes
+   - Snapshot with concurrent compaction
+   - Snapshot with concurrent flush
+   - Long-lived snapshot (hours)
+   - Memory reclamation after snapshot drop
 
 ---
 
-## Current Status: Ready for 0.0.1 Release Prep
+### Phase 2: Convenience APIs (1 week) - MEDIUM PRIORITY
 
-### ✅ All 8 Critical Bugs Fixed!
+**Why**: Make common patterns easier, match competitor APIs
 
-1. ✅ Block cache unbounded → quick_cache with size limits
-2. ✅ Batch API non-atomic → single WAL record
-3. ✅ No checksums → CRC32 for all data blocks
-4. ✅ No magic numbers → WAL/VLog format validation
-5. ✅ Iterator invalidation → memtables collected first
-6. ✅ Compaction live key deletion → delayed deletion queue
-7. ✅ WAL recovery race → barrier synchronization
-8. ✅ **ALEX key collision** → disabled ALEX for top-level lookup
-9. ⏸️ VLog GC race → deferred (GC not implemented yet)
+1. **Full Table Iterator**
+   ```rust
+   impl DB {
+       pub fn iter(&self) -> RangeIterator {
+           self.range(&[], None)  // All keys
+       }
+   }
+   ```
 
-### Performance Achievement
+2. **Prefix Scan**
+   ```rust
+   impl DB {
+       pub fn prefix(&self, prefix: &[u8]) -> RangeIterator {
+           let end = increment_prefix(prefix);
+           self.range(prefix, Some(&end))
+       }
+   }
+   ```
 
-| Workload | seerdb | RocksDB | fjall | vs RocksDB | vs fjall |
-|----------|--------|---------|-------|------------|----------|
-| **Writes** | **878K** | 355K | 427K | **+2.47x** ✅ | **+2.06x** ✅ |
-| **Reads** | **2,207K** | 1,064K | 1,161K | **+2.07x** ✅ | **+1.90x** ✅ |
-| **Mixed** | **718K** | 402K | 832K | **+1.79x** ✅ | **0.86x** ⚠️ |
+3. **Per-Operation Options**
+   ```rust
+   pub struct ReadOptions {
+       verify_checksums: bool,  // Default: true
+       fill_cache: bool,        // Default: true
+       snapshot: Option<Snapshot>,
+   }
 
-**Write Amplification**: 1.01x (4.82x better than traditional LSM) 🏆
+   pub struct WriteOptions {
+       sync: bool,  // Override WAL sync policy
+   }
+   ```
 
 ---
 
-## Next Priority: Documentation (0.0.1 Release Prep)
+### Phase 3: Stability Testing (1-2 weeks) - REQUIRED
 
-### Option A: API Documentation ⭐ RECOMMENDED
-**Time**: 2-3 days
-**Deliverable**: Complete rustdoc for all public APIs
+**Why**: Ensure production reliability before 0.0.1 release
 
-**What to document**:
-- Public API surface (DB::open, get, put, delete, batch, range)
-- Configuration options (DBOptions)
-- Error handling (Result types)
-- Performance tuning guide
-- Usage examples (5+ examples)
+1. **Long-Running Fuzzing** (24h+)
+   - All 4 fuzz targets (sstable_parse, wal_parse, vlog_parse, db_operations)
+   - Run overnight with crash detection
+   - Expand corpus with edge cases
 
-### Option B: Architecture Guide
-**Time**: 1-2 days
-**Deliverable**: Technical architecture documentation
+2. **Soak Tests** (72h+)
+   - Continuous read/write operations
+   - Memory stability (no leaks)
+   - Handle recovery (crash injection)
+   - File descriptor stability
 
-**What to document**:
-- Six-layer architecture (API → Buffer → WAL → MemTable → SSTable → Compaction)
-- ALEX learned index integration
-- WiscKey key-value separation
-- Concurrency model (lock-free WAL, partitioned memtables)
+3. **Chaos Testing**
+   - Random process kills during operations
+   - Disk full scenarios
+   - Network partitions (for future cloud backend)
 
-### Option C: Release Validation
-**Time**: 1-2 days
-**Deliverable**: Final validation and release prep
+---
 
-**What to do**:
-- Long-running stability tests (2+ hours)
-- Performance regression checks
-- Release notes (CHANGELOG.md)
+### Phase 4: Documentation & Release (1 week)
+
+**Minimal docs for 0.0.1**:
+- API reference (rustdoc)
+- Quick start guide
+- Configuration options
+- 5+ usage examples
+
+**Release checklist**:
 - Version tagging (0.0.1)
+- CHANGELOG.md
+- GitHub release
+- crates.io publish (ask first)
 
 ---
 
-## Remaining Work for 0.0.1
+## Quick Reference: What's Implemented vs Missing
 
-**Critical** (must do):
-- ❌ API documentation (rustdoc)
-- ❌ Usage examples (5+)
-- ❌ Release notes
+### ✅ IMPLEMENTED (Working)
+- Point operations: get(), put(), delete(), batch()
+- Range queries: range(start, end) with k-way merge
+- Durability: WAL with configurable sync (SyncAll/SyncData/None)
+- Observability: stats(), check_health(), 20+ metrics
+- Crash recovery: WAL replay, CRC32 checksums
+- Compaction: Leveled + adaptive (Dostoevsky)
+- Performance: 2.47x RocksDB writes, 2.07x reads
 
-**Nice to have** (time permitting):
-- ⏸️ Architecture guide
-- ⏸️ Long-running soak tests
-- ⏸️ Performance tuning guide
-
-**Deferred to 0.0.2+**:
-- VLog GC implementation
-- MVCC/Snapshot API
-- fjall mixed gap optimization
-
----
-
-## References
-
-**Bug Documentation**:
-- `ai/BUG_11_ALEX_KEY_COLLISION.md` - ALEX key collision (FIXED)
-- `ai/BUG_10_BACKGROUND_FLUSH_DATA_LOSS.md` - Background flush (RESOLVED - was Bug #11)
-- `ai/BUGS_AND_EDGE_CASES.md` - All known bugs
-
-**Current State**:
-- `ai/CURRENT_STATE.md` - TL;DR current status (8 critical bugs fixed)
-- `ai/PRODUCTION_READINESS.md` - Roadmap to 0.0.1
-
-**Design**:
-- `ai/DECISIONS.md` - All architecture decisions
-- `ai/design/seerdb_core_architecture.md` - Core architecture spec
+### ❌ NOT IMPLEMENTED (Priority Order)
+1. **Snapshots** - Point-in-time consistent views (HIGH)
+2. **Convenience APIs** - iter(), prefix(), options (MEDIUM)
+3. **Column families** - Multiple namespaces (MEDIUM)
+4. **Transactions** - MVCC multi-key atomicity (MEDIUM)
+5. **Reverse iteration** - iter_rev() (LOW)
+6. **TTL/Expiration** - Automatic key deletion (LOW)
+7. **Cloud storage** - S3/GCS backend (LOW for 0.0.1)
 
 ---
 
-**Status**: ✅ **All Critical Bugs Fixed** - Ready for documentation phase
-**Coverage**: 81.54% (exceeds 80% goal)
-**Tests**: 146 lib tests + integration tests passing
-**ASAN**: Clean (no memory issues)
-**Next Action**: Documentation for 0.0.1 release
+## CI Status
+
+**Latest fixes** (Nov 16, 2025):
+- ✅ Rust edition 2024 → 2021 (2024 doesn't exist)
+- ✅ Let-chain syntax converted to nested if-let
+- ✅ SIMD feature gates with fallbacks
+- ✅ 72 files reformatted with import ordering
+
+**Waiting**: CI run to complete and verify all passes
+
+---
+
+## Next Session Tasks
+
+1. **Verify CI green** - Check latest run passes
+2. **Start snapshot implementation** - Create Snapshot struct
+3. **Design retention mechanism** - Reference counting for SSTables
+4. **Add snapshot tests** - Consistency during concurrent operations
+5. **Update lib.rs exports** - Make Snapshot public
+
+---
+
+## Deferred to 0.0.2+
+
+- VLog garbage collection (not implemented)
+- Column families (use key prefixes for now)
+- MVCC transactions (batch API is per-operation atomic)
+- Cloud storage backend (local only for 0.0.1)
+
+---
+
+**Status**: Feature audit complete, snapshots highest priority
+**Timeline**: 4-6 weeks to 0.0.1
+**Quality**: 271 tests passing, 81.54% coverage, ASAN clean
+**Performance**: 2.47x RocksDB writes, 2.07x reads 🏆
 **Updated**: November 16, 2025

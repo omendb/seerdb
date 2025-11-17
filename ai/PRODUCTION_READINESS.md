@@ -1,55 +1,39 @@
-# Production Readiness Assessment & Action Plan
+# Production Readiness Assessment
 
-**Date**: November 8, 2025
+**Date**: November 16, 2025 (Updated)
 **Goal**: Prepare seerdb for 0.0.1 release
-**Timeline**: 7-8 weeks
+**Timeline**: 4-6 weeks
+**Status**: Mostly complete, missing snapshots/transactions
 
 ---
 
 ## Executive Summary
 
-### Current Cache Situation 🔍 **CRITICAL FINDING**
+### Current State (Nov 16, 2025)
 
-**You were RIGHT to question this!** We have a MAJOR gap:
+**What's Working Well**:
+- ✅ Core operations: get/put/delete/batch/range
+- ✅ Block cache: quick_cache LRU (10K blocks, ~40MB)
+- ✅ Checksums: CRC32 on SSTable footer
+- ✅ Magic numbers + versioning: WAL/VLog format validation
+- ✅ Batch atomicity: Single WAL record
+- ✅ Crash recovery: WAL replay tested
+- ✅ 271 tests passing, 81.54% coverage
+- ✅ ASAN clean (memory safety)
+- ✅ Performance: 2.47x RocksDB writes, 2.07x reads
 
-**What we have**:
-- ✅ SSTable cache: `quick_cache` (LRU, 1000 item limit)
-- ❌ Block cache: `HashMap` (unbounded, NO eviction, NO size limit!)
-
-**The Problem**:
-```rust
-// src/sstable/mod.rs:436
-block_cache: Arc<Mutex<HashMap<u64, Block>>>,  // ← NO SIZE LIMIT!
-```
-
-**Impact**: **OOM RISK** - Block cache can grow unbounded until system runs out of memory!
-
-**What RocksDB/fjall do**:
-- RocksDB: LRU cache with strict capacity limits (configured in MB)
-- fjall: `quick_cache` with weight-based eviction (configured in bytes)
-
-**What we SHOULD do**:
-```rust
-// Replace HashMap with quick_cache for blocks
-use quick_cache::sync::Cache;
-
-pub struct SSTable {
-    block_cache: Arc<Cache<u64, Vec<u8>>>,  // ✅ LRU with eviction!
-}
-
-// Configure with byte-based capacity
-let block_cache = Cache::with_weighter(
-    capacity_bytes,
-    1000,  // estimated items
-    |key, value: &Vec<u8>| value.len() as u64,  // Weight by size
-);
-```
+**What's Missing**:
+- ❌ Snapshots (point-in-time consistent views)
+- ❌ MVCC transactions
+- ❌ Convenience APIs (iter(), prefix())
+- ❌ Column families
+- ❌ Per-operation options (ReadOptions, WriteOptions)
 
 ---
 
-## Feature Comparison: seerdb vs RocksDB vs fjall
+## Feature Comparison: Current State
 
-### Core Features
+### Core Features ✅
 
 | Feature | RocksDB | fjall | seerdb | Status |
 |---------|---------|-------|--------|--------|
@@ -60,580 +44,157 @@ let block_cache = Cache::with_weighter(
 | **Compaction** | ✅ Multi-strategy | ✅ Leveled | ✅ Leveled + Adaptive | ✅ Better |
 | **Block Compression** | ✅ LZ4/Snappy/Zstd | ✅ LZ4 | ✅ LZ4 | ✅ Complete |
 | **Key-Value Separation** | ✅ BlobDB | ✅ | ✅ VLog | ✅ Complete |
+| **Range Queries** | ✅ | ✅ | ✅ K-way merge | ✅ Complete |
 
-### Caching
+### Caching ✅
 
 | Feature | RocksDB | fjall | seerdb | Status |
 |---------|---------|-------|--------|--------|
-| **Block Cache** | ✅ LRU (size-limited) | ✅ quick_cache (weight) | ❌ HashMap (unbounded) | 🚨 **CRITICAL** |
+| **Block Cache** | ✅ LRU (size-limited) | ✅ quick_cache | ✅ quick_cache (10K blocks) | ✅ FIXED |
 | **Index Cache** | ✅ | ✅ | ✅ quick_cache | ✅ Complete |
-| **Filter Cache** | ✅ | ✅ | ⚠️ In-memory only | ⚠️ Minor |
-| **Cache Size Config** | ✅ | ✅ | ❌ | 🚨 **CRITICAL** |
-| **Tiered Cache** | ✅ (L1+L2) | ❌ | ❌ | 📅 Future |
+| **Cache Size Config** | ✅ | ✅ | ❌ Hardcoded 40MB | ⚠️ Minor |
 
-### Batch Operations
+### Data Integrity ✅
 
 | Feature | RocksDB | fjall | seerdb | Status |
 |---------|---------|-------|--------|--------|
-| **WriteBatch** | ✅ | ✅ | ⚠️ Non-atomic | 🚨 **CRITICAL** |
-| **Batch Size Limits** | ✅ | ✅ | ❌ | 🚨 **CRITICAL** |
-| **Write Options** | ✅ | ✅ | ❌ | ⚠️ Important |
+| **Checksums** | ✅ CRC32 | ✅ CRC32 | ✅ CRC32 | ✅ FIXED |
+| **Magic Numbers** | ✅ | ✅ | ✅ 0x574C4F47 | ✅ FIXED |
+| **Format Versioning** | ✅ | ✅ | ✅ Version byte | ✅ FIXED |
+| **Fsync on Write** | ✅ Configurable | ✅ | ✅ SyncPolicy | ✅ Complete |
+| **Corruption Detection** | ✅ | ✅ | ✅ CRC validation | ✅ FIXED |
 
-### Data Integrity
-
-| Feature | RocksDB | fjall | seerdb | Status |
-|---------|---------|-------|--------|--------|
-| **Checksums** | ✅ CRC32 | ✅ CRC32 | ❌ | 🚨 **CRITICAL** |
-| **Magic Numbers** | ✅ | ✅ | ❌ | 🚨 **CRITICAL** |
-| **Format Versioning** | ✅ | ✅ | ❌ | 🚨 **CRITICAL** |
-| **Fsync on Write** | ✅ Configurable | ✅ | ⚠️ WAL only | ⚠️ Important |
-| **Corruption Detection** | ✅ | ✅ | ❌ | 🚨 **CRITICAL** |
-
-### Concurrency & Safety
+### Concurrency & Isolation
 
 | Feature | RocksDB | fjall | seerdb | Status |
 |---------|---------|-------|--------|--------|
 | **Thread-Safe Reads** | ✅ | ✅ | ✅ | ✅ Complete |
 | **Thread-Safe Writes** | ✅ | ✅ | ✅ | ✅ Complete |
-| **Snapshot Isolation** | ✅ | ✅ | ❌ | 🚨 **CRITICAL** |
-| **Iterator Stability** | ✅ | ✅ | ❌ | 🚨 **CRITICAL** |
-| **Crash Recovery** | ✅ Tested | ✅ Tested | ❌ Untested | 🚨 **CRITICAL** |
+| **Snapshot Isolation** | ✅ | ✅ | ❌ | 🚨 **PRIORITY** |
+| **Iterator Stability** | ✅ | ✅ | ✅ (collect first) | ✅ FIXED |
+| **Crash Recovery** | ✅ Tested | ✅ Tested | ✅ WAL replay tested | ✅ Complete |
 
-### Configuration & Tuning
-
-| Feature | RocksDB | fjall | seerdb | Status |
-|---------|---------|-------|--------|--------|
-| **Memory Budget** | ✅ | ✅ | ❌ | 🚨 **CRITICAL** |
-| **Disk Space Checks** | ✅ | ✅ | ❌ | ⚠️ Important |
-| **FD Limit Handling** | ✅ | ✅ | ❌ | ⚠️ Important |
-| **Compaction Throttling** | ✅ | ✅ | ❌ | ⚠️ Important |
-| **Background Thread Control** | ✅ | ✅ | ⚠️ Fixed count | ⚠️ Important |
-
-### Observability
+### Observability ✅
 
 | Feature | RocksDB | fjall | seerdb | Status |
 |---------|---------|-------|--------|--------|
-| **Metrics** | ✅ Comprehensive | ✅ | ⚠️ Basic | ⚠️ Important |
-| **Health Checks** | ✅ | ✅ | ✅ | ✅ Complete |
-| **Stats** | ✅ Histograms | ✅ | ⚠️ Avg only | ⚠️ Important |
-| **Logging** | ✅ | ✅ | ⚠️ Limited | ⚠️ Important |
-| **Profiling Hooks** | ✅ | ✅ | ❌ | 📅 Future |
-
-### Advanced Features
-
-| Feature | RocksDB | fjall | seerdb | Status |
-|---------|---------|-------|--------|--------|
-| **Column Families** | ✅ | ❌ | ❌ | 📅 Future |
-| **Transactions** | ✅ | ❌ | ❌ | 📅 Future |
-| **Merge Operators** | ✅ | ❌ | ❌ | 📅 Future |
-| **Range Deletes** | ✅ | ✅ | ❌ | 📅 Future |
-| **Backup/Restore** | ✅ | ✅ | ❌ | 📅 Future |
-| **Replication** | ✅ | ❌ | ❌ | 📅 Future |
-
-### Our Unique Features ✨
-
-| Feature | RocksDB | fjall | seerdb | Status |
-|---------|---------|-------|--------|--------|
-| **ALEX Learned Index** | ❌ | ❌ | ✅ | ✅ **UNIQUE** |
-| **Adaptive Compaction** | ⚠️ Limited | ❌ | ✅ | ✅ **UNIQUE** |
-| **Partitioned Memtables** | ❌ | ❌ | ✅ (16) | ✅ **UNIQUE** |
-| **Lock-Free WAL Queue** | ❌ | ❌ | ✅ | ✅ **UNIQUE** |
+| **Statistics** | ✅ | ✅ | ✅ 20+ metrics | ✅ Complete |
+| **Health Checks** | ⚠️ Basic | ❌ | ✅ 5 built-in | ✅ Better |
+| **Latency Histograms** | ✅ | ❌ | ✅ HDRHistogram | ✅ Better |
+| **Write Amplification** | ✅ | ✅ | ✅ Tracked | ✅ Complete |
 
 ---
 
-## Critical Issues Breakdown
+## Roadmap to 0.0.1 (4-6 weeks)
 
-### 🚨 Tier 1: Data Safety (MUST FIX)
+### Week 1-2: Snapshots (HIGHEST PRIORITY)
 
-1. **Block cache unbounded** (OOM risk)
-2. **Batch API non-atomic** (data corruption)
-3. **No checksums** (silent corruption)
-4. **No magic numbers** (version detection)
-5. **Iterator invalidation** (incorrect results)
-6. **VLog GC race** (wrong values)
-7. **Compaction live key deletion** (data loss)
-8. **WAL recovery race** (corruption)
+**Why**: Without snapshots, no consistent multi-read views
 
-**Impact**: Data corruption, data loss, OOM crashes
-**Timeline**: 3-4 weeks to fix
-
----
-
-### ⚠️ Tier 2: Production Hardening (SHOULD FIX)
-
-1. **Memory budget enforcement** (prevent OOM)
-2. **Disk space checks** (prevent partial writes)
-3. **File descriptor limits** (prevent "too many files" errors)
-4. **SSTable fsync** (durability)
-5. **Background panic handling** (graceful degradation)
-6. **Flush race condition** (resource waste)
-7. **Compaction throttling** (prevent CPU/IO starvation)
-
-**Impact**: Operational issues, resource exhaustion
-**Timeline**: 2-3 weeks to fix
-
----
-
-### 📅 Tier 3: Nice to Have (CAN DEFER)
-
-1. **Advanced caching** (multi-tier, ARC)
-2. **Range deletes** (convenience)
-3. **Backup/restore** (operational)
-4. **Profiling hooks** (debugging)
-5. **Column families** (isolation)
-
-**Impact**: Quality of life, advanced features
-**Timeline**: Defer to 0.0.2+
-
----
-
-## The Cache Fix (PRIORITY #1)
-
-### What's Wrong
-
+**Implementation**:
 ```rust
-// Current: Unbounded HashMap ❌
-pub struct SSTable {
-    block_cache: Arc<Mutex<HashMap<u64, Block>>>,
+pub struct Snapshot {
+    seq_num: u64,
+    memtables: Vec<Arc<Memtable>>,
+    sstables: Vec<Arc<SSTable>>,
+}
+
+impl DB {
+    pub fn snapshot(&self) -> Snapshot;
+}
+
+impl Snapshot {
+    pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>>;
+    pub fn range(&self, start: &[u8], end: Option<&[u8]>) -> RangeIterator;
 }
 ```
 
-**Problems**:
-- No size limit (OOM on large databases)
-- No eviction (keeps ALL blocks forever)
-- Mutex contention (serializes access)
-- Can't configure capacity
+**Key requirements**:
+- Reference counting for SSTable retention
+- Immutable view at snapshot time
+- Memtable pinning
 
-### What RocksDB Does
+### Week 3: Convenience APIs
 
-```cpp
-// RocksDB uses LRUCache with strict capacity
-std::shared_ptr<Cache> cache = NewLRUCache(capacity_bytes);
+- `db.iter()` - Full table iteration
+- `db.prefix(prefix)` - Prefix scans
+- `ReadOptions`/`WriteOptions` - Per-operation config
 
-// Features:
-// - Size-based eviction (not count-based)
-// - Sharded for concurrency (16-64 shards)
-// - Configurable capacity (MB/GB)
-// - High/low priority pools
-```
+### Week 4-5: Stability Testing
 
-### What fjall Does
+- 24h+ fuzzing campaigns
+- 72h+ soak tests
+- Chaos testing (crash injection)
+- Memory leak validation
 
-```rust
-// fjall uses quick_cache with weight-based eviction
-use quick_cache::{sync::Cache, Weighter};
+### Week 6: Documentation & Release
 
-let cache = Cache::with_weighter(
-    capacity_bytes,          // Max size in bytes
-    estimated_items,         // Initial capacity
-    |_key, value: &Vec<u8>| value.len() as u64,  // Weight function
-);
-```
-
-### What We Should Do
-
-```rust
-// Option 1: Use quick_cache like fjall (RECOMMENDED)
-use quick_cache::sync::Cache;
-
-pub struct SSTable {
-    // Replace Mutex<HashMap> with quick_cache
-    block_cache: Arc<Cache<u64, Vec<u8>>>,
-}
-
-impl SSTable {
-    pub fn open(path: PathBuf) -> Result<Self> {
-        // Configure block cache with size limit
-        let block_cache = {
-            use quick_cache::sync::OptionsBuilder;
-
-            OptionsBuilder::new()
-                .weight_capacity(512 * 1024 * 1024)  // 512MB default
-                .estimated_items_capacity(10_000)
-                .build_with_weighter(
-                    10_000,
-                    |_key, value: &Vec<u8>| value.len() as u64
-                )
-        };
-
-        Ok(Self {
-            block_cache: Arc::new(block_cache),
-            // ...
-        })
-    }
-
-    fn load_block(&self, offset: u64, size: u32) -> Result<Block> {
-        // quick_cache is lock-free, no Mutex needed!
-        self.block_cache.get_or_insert_with(&offset, || {
-            // Load and decompress block
-            self.read_and_decompress_block(offset, size)
-        })
-    }
-}
-```
-
-### Benefits
-
-✅ **Size-based eviction** (prevents OOM)
-✅ **Lock-free** (better concurrency than Mutex)
-✅ **Configurable** (users can tune capacity)
-✅ **Same as fjall** (proven in production)
-✅ **Drop-in replacement** (minimal code changes)
-
-### Configuration
-
-```rust
-pub struct DBOptions {
-    /// Block cache capacity in bytes (default: 512MB)
-    pub block_cache_capacity: usize,
-
-    /// SSTable cache capacity in count (default: 1000 SSTables)
-    pub sstable_cache_capacity: usize,
-}
-
-impl Default for DBOptions {
-    fn default() -> Self {
-        Self {
-            block_cache_capacity: 512 * 1024 * 1024,  // 512MB
-            sstable_cache_capacity: 1000,
-            // ...
-        }
-    }
-}
-```
+- API reference (rustdoc)
+- Quick start guide
+- Usage examples (5+)
+- Version tagging (0.0.1)
 
 ---
 
-## Action Plan for 0.0.1
+## Risk Assessment
 
-### Week 1-2: Critical Bugs (Data Safety)
+### Low Risk (Production Ready)
+- ✅ Core CRUD operations
+- ✅ Range queries
+- ✅ Data integrity (checksums, WAL)
+- ✅ Crash recovery
+- ✅ Memory safety
 
-**Goals**: Fix all Tier 1 issues
+### Medium Risk (Needs Validation)
+- ⚠️ Long-running stability (needs soak tests)
+- ⚠️ High concurrency (needs stress testing)
+- ⚠️ Large datasets (needs 100GB+ testing)
 
-**Tasks**:
-1. ✅ Fix block cache (add quick_cache with size limits) - 2 days
-2. ✅ Fix batch API atomicity (single WAL batch write) - 2-3 days
-3. ✅ Add checksums (CRC32 for blocks, bloom, index) - 2-3 days
-4. ✅ Add magic numbers + version (SSTable format v2) - 1 day
-5. ✅ Fix iterator invalidation (snapshot isolation) - 2-3 days
-
-**Deliverables**:
-- All Tier 1 bugs fixed
-- No data corruption risks
-- Format v2 with checksums + magic
-
----
-
-### Week 3-4: Production Hardening (Tier 2)
-
-**Goals**: Fix operational issues
-
-**Tasks**:
-1. ✅ Memory budget enforcement - 1-2 days
-2. ✅ Disk space checks - 1 day
-3. ✅ File descriptor limits - 1 day
-4. ✅ SSTable fsync - 4 hours
-5. ✅ Background panic handling - 1 day
-6. ✅ Flush race fix - 4 hours
-7. ✅ VLog GC fix - 2-3 days
-8. ✅ Compaction live key fix - 2-3 days
-
-**Deliverables**:
-- Operational stability
-- No resource leaks
-- Graceful degradation
+### High Risk (Blocking Features)
+- 🚨 Snapshots NOT IMPLEMENTED
+- 🚨 MVCC NOT IMPLEMENTED
+- 🚨 Column families NOT IMPLEMENTED
 
 ---
 
-### Week 5-6: Comprehensive Testing ✅ **COMPLETE** (Nov 10, 2025)
+## What's NOT Blocking 0.0.1
 
-**Goals**: 80%+ test coverage → **ACHIEVED: 81.54%**
+**Deferred to 0.0.2+**:
+- VLog garbage collection (not implemented yet)
+- MVCC transactions (batch is per-operation atomic)
+- Column families (use key prefixes)
+- Cloud storage backend
+- TTL/expiration
 
-**Completed**:
-1. ✅ ALEX learned index tests (20 tests - 462 LOC)
-2. ✅ VLog tests (24 tests - 631 LOC)
-3. ✅ Coverage measurement: **81.54%** (2721/3337 lines)
-4. ✅ Address Sanitizer (ASAN): ALL PASSED
-5. ✅ Thread Sanitizer (TSAN): SKIPPED (low ROI, 50+ concurrent tests already validate)
-6. ✅ 271 tests passing (258 passed, 13 ignored, 0 failed)
-
-**Tools Used**:
-- cargo tarpaulin (coverage)
-- ASAN (memory safety)
-- 50+ concurrent tests (thread safety)
-
-**Deliverables**:
-- ✅ 81.54% line coverage (exceeded 80% goal)
-- ✅ ASAN clean (no memory issues)
-- ✅ Thread safety validated (50+ concurrent tests)
-- ⏸️ Fuzz testing (deferred - time permitting)
+**Rationale**: These features are important but not critical for initial release. Many use cases don't require them.
 
 ---
 
-### Week 7: Documentation & Polish
+## Quality Metrics
 
-**Goals**: Production-ready docs
+**Current**:
+- Tests: 271 passing (0 failures)
+- Coverage: 81.54% (exceeds 80% goal)
+- Memory: ASAN clean
+- Thread safety: 50+ concurrent tests
+- Performance: 2.47x RocksDB writes, 2.07x reads
 
-**Tasks**:
-1. ✅ API documentation (all public methods)
-2. ✅ Architecture guide
-3. ✅ Performance tuning guide
-4. ✅ Failure mode documentation
-5. ✅ Migration guide (RocksDB → seerdb)
-6. ✅ Examples (5+ complete examples)
-
-**Deliverables**:
-- Complete docs.rs documentation
-- User guide
-- Migration guide
-- Performance tuning guide
+**Needed for 0.0.1**:
+- 24h+ fuzzing with no crashes
+- 72h+ soak test stable
+- All snapshot tests passing
+- CI green on all platforms
 
 ---
 
-### Week 8: Buffer & Release Prep
+## Summary
 
-**Goals**: Final validation
+**seerdb is closer to production than previously thought**. The Nov 16 feature audit revealed range queries already work (previously thought missing). Main gap is snapshots for consistency guarantees.
 
-**Tasks**:
-1. ✅ Full test suite run (multiple times)
-2. ✅ Benchmark suite validation
-3. ✅ Memory leak checks (valgrind)
-4. ✅ Long-running stability tests (24+ hours)
-5. ✅ Security audit (basic)
-6. ✅ Release notes preparation
-7. ✅ Version tagging (0.0.1)
-
-**Deliverables**:
-- 0.0.1 release candidate
-- Validated on multiple platforms
-- Release notes
-- Migration guide
+**Timeline**: 4-6 weeks (was 8+ weeks before audit correction)
+**Priority**: Implement snapshots, then stability testing
+**Status**: Ready to start snapshot implementation
 
 ---
 
-## Feature Prioritization
-
-### Must Have for 0.0.1 ✅
-
-- [x] Core LSM functionality
-- [x] WAL durability
-- [x] Partitioned memtables
-- [x] ALEX learned index
-- [x] LZ4 compression
-- [ ] **Block cache with limits** 🚨
-- [ ] **Checksums** 🚨
-- [ ] **Atomic batches** 🚨
-- [ ] **Memory budget** 🚨
-- [ ] **80%+ test coverage** 🚨
-
-### Should Have for 0.0.1 ⚠️
-
-- [ ] Disk space checks
-- [ ] FD limit handling
-- [ ] SSTable fsync
-- [ ] Snapshot isolation
-- [ ] Comprehensive metrics
-- [ ] Background panic handling
-
-### Nice to Have for 0.0.2 📅
-
-- Advanced caching (multi-tier)
-- Range deletes
-- Backup/restore
-- Profiling hooks
-- Better observability
-
-### Future (0.1.0+) 🔮
-
-- Column families
-- Transactions
-- Merge operators
-- Replication
-
----
-
-## Testing Strategy
-
-### Unit Tests (Current: ~50, Target: 150+)
-
-**Coverage areas**:
-- Each module isolated
-- Edge cases
-- Error paths
-- Boundary conditions
-
-### Integration Tests (Current: ~20, Target: 80+)
-
-**Coverage areas**:
-- End-to-end workflows
-- Multi-component interactions
-- Failure scenarios
-- Recovery scenarios
-
-### Stress Tests (Current: 0, Target: 10+)
-
-**Coverage areas**:
-- Large datasets (1M+ ops)
-- High concurrency (100+ threads)
-- Memory pressure
-- Disk pressure
-
-### Fuzz Tests (Current: 0, Target: 5+)
-
-**Coverage areas**:
-- Batch API
-- SSTable parsing
-- WAL parsing
-- Key/value edge cases
-
-### Sanitizer Tests (Current: 0, Target: All passing)
-
-**Tools**:
-- AddressSanitizer (ASAN) - memory errors
-- MemorySanitizer (MSAN) - uninitialized reads
-- ThreadSanitizer (TSAN) - data races
-- LeakSanitizer (LSAN) - memory leaks
-
----
-
-## Performance Regression Prevention
-
-### Benchmark Suite
-
-**Current benchmarks**:
-- Baseline (100K ops)
-- vs RocksDB
-- vs fjall
-- vs sled
-
-**Add for 0.0.1**:
-- Large scale (1M, 10M ops)
-- Various workloads (YCSB A-F)
-- Cache behavior (hit rates)
-- Memory usage tracking
-
-### CI Integration
-
-```yaml
-# .github/workflows/benchmark.yml
-name: Performance Regression
-on: [pull_request]
-
-jobs:
-  benchmark:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Baseline benchmark
-        run: cargo bench --bench baseline
-      - name: Compare with main
-        run: cargo bench --bench baseline -- --baseline main
-      - name: Fail if >10% regression
-        run: check_regression.sh 0.10
-```
-
----
-
-## Timeline Summary
-
-**Week 1-2**: ✅ Critical bugs (data safety) - COMPLETE
-**Week 3-4**: ✅ Production hardening - COMPLETE
-**Week 5-6**: ✅ Comprehensive testing - COMPLETE (Days 1-5)
-**Week 6**: Documentation (optional - can be done closer to release)
-**Week 7**: Buffer & release preparation
-
-**Remaining**: 4-5 weeks to 0.0.1 (documentation + validation)
-
-**Confidence**: HIGH (testing phase exceeded all goals)
-
----
-
-## Decision: rkyv and Advanced Caching
-
-### DEFER Both to 0.0.2+
-
-**Rationale**:
-1. **Current performance**: Already 2x+ competitors
-2. **ROI**: rkyv only +3% overall, caching only +8-12%
-3. **Complexity**: Both add 20%+ code complexity
-4. **Testing burden**: Need to test new code paths
-5. **Critical bugs**: Fix data corruption first!
-
-**When to revisit**:
-- After 0.0.1 released
-- After production deployment
-- After real-world workload data
-- When databases exceed 10GB+ scale
-
----
-
-## What We're Missing vs Competitors
-
-### Critical (Fix for 0.0.1)
-
-1. ❌ **Block cache size limits** (we have: unbounded HashMap)
-2. ❌ **Checksums** (we have: none)
-3. ❌ **Atomic batches** (we have: non-atomic)
-4. ❌ **Memory budget** (we have: none)
-5. ❌ **Snapshot isolation** (we have: none)
-
-### Important (Fix for 0.0.1 if time)
-
-1. ⚠️ **Disk space checks**
-2. ⚠️ **FD limits**
-3. ⚠️ **Compaction throttling**
-4. ⚠️ **SSTable fsync**
-
-### Nice to Have (Defer to 0.0.2+)
-
-1. 📅 **Range deletes**
-2. 📅 **Backup/restore**
-3. 📅 **Multi-tier cache**
-4. 📅 **rkyv zero-copy**
-
----
-
-## Success Criteria for 0.0.1
-
-### Correctness ✅
-
-- [ ] All critical bugs fixed (8/8)
-- [ ] All high priority bugs fixed (7+/12)
-- [ ] 80%+ test coverage
-- [ ] All sanitizers clean
-- [ ] Fuzz testing passing
-- [ ] No known data corruption issues
-
-### Performance ✅
-
-- [x] Faster than RocksDB (2x+)
-- [x] Faster than fjall (1.08x+)
-- [ ] No performance regressions from bug fixes
-- [ ] Cache hit rate >90%
-
-### Usability ✅
-
-- [ ] Complete API documentation
-- [ ] 5+ working examples
-- [ ] Performance tuning guide
-- [ ] Migration guide from RocksDB
-- [ ] Clear error messages
-
-### Operations ✅
-
-- [ ] Configurable resource limits
-- [ ] Health checks
-- [ ] Metrics exposure
-- [ ] Graceful degradation
-- [ ] Clear upgrade path
-
----
-
-**Status**: Testing phase complete (Days 1-5 of Week 5-6)
-**First Priority**: Production hardening (optional) or documentation
-**Timeline**: 4-5 weeks to 0.0.1 release
-**Confidence**: HIGH
-
----
-
-**Updated**: November 10, 2025
-**Next Review**: After documentation or production hardening
+**Updated**: November 16, 2025
