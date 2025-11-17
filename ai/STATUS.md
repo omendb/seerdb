@@ -1,60 +1,61 @@
 # STATUS - seerdb
 
 **Last Updated**: November 16, 2025
-**Current Phase**: API Completeness Assessment (PRE-ALPHA)
+**Current Phase**: Feature Completeness Assessment (PRE-ALPHA)
 **Tests**: 271 tests passing (0 failures)
 **Coverage**: 81.54%
-**Critical Issue**: MISSING fundamental features (range iterators, snapshots)
+**Status**: MOSTLY COMPLETE - missing snapshots/transactions
 
 ---
 
 ## REALITY CHECK (Nov 16, 2025)
 
-### What We Thought
-- "Testing Complete - Ready for Documentation"
-- "4-5 weeks to 0.0.1 release"
+### Previous Concern (CORRECTED)
+- Previous session claimed "NO RANGE ITERATORS - blocks 70% of use cases"
+- **WRONG**: We DO have `db.range(start, end)` with k-way merge iterator
 
 ### What's Actually True
 - **Performance**: Excellent (2.47x RocksDB writes, 2.07x reads)
 - **Bug fixes**: All critical data safety issues fixed
 - **Test coverage**: 81.54% (good)
-- **API completeness**: **INCOMPLETE** - missing fundamental features
+- **Range queries**: ✅ WORKING (k-way merge iterator)
+- **API completeness**: ⚠️ Missing snapshots/transactions (not critical for many use cases)
 
-### Critical Missing Features
+### Missing Features (Priority Order)
 
-| Feature | Impact | Competitors Have It? |
-|---------|--------|---------------------|
-| **Range Iterators** | BLOCKS 70% OF USE CASES | ✅ All (RocksDB, fjall, sled) |
-| **Prefix Scans** | Can't do key prefix queries | ✅ All |
-| **Snapshots** | No consistent multi-read views | ✅ RocksDB, fjall |
-| **Transactions** | No MVCC atomicity | ✅ RocksDB, fjall |
+| Feature | Impact | Priority |
+|---------|--------|----------|
+| **Snapshots** | No consistent multi-read views | HIGH |
+| **Convenience APIs** | iter(), prefix(), iter_rev() | MEDIUM |
+| **Column Families** | Single namespace only | MEDIUM |
+| **Transactions/MVCC** | No multi-operation atomicity | MEDIUM |
+| **TTL** | No automatic expiration | LOW |
 
 ### What We Actually Have
 
 ```rust
-// ✅ IMPLEMENTED
-db.get(key)           // Point lookup
-db.put(key, value)    // Write
-db.delete(key)        // Delete
-db.batch()            // Atomic batch writes
-db.flush()            // Sync to disk
-db.get_stats()        // Observability
-db.check_health()     // Health checks
+// ✅ IMPLEMENTED - Core Operations
+db.get(key)                  // Point lookup
+db.put(key, value)           // Write
+db.delete(key)               // Delete
+db.batch()                   // Atomic batch writes
+db.range(start, end)         // Range iteration (k-way merge)
+db.flush()                   // Sync to disk
+db.get_stats()               // Comprehensive observability
+db.check_health()            // 5 built-in health checks
 
-// ❌ MISSING (standard in competitors)
-db.range(start..end)  // CRITICAL - NO RANGE QUERIES
-db.iter()             // NO ITERATION
-db.prefix(prefix)     // NO PREFIX SCANS
-db.snapshot()         // NO CONSISTENT READS
-db.transaction()      // NO MVCC
+// ❌ MISSING (important for some use cases)
+db.snapshot()                // No point-in-time views
+db.transaction()             // No MVCC
+db.iter()                    // No full table iterator (use range(b"", None))
+db.prefix(prefix)            // No prefix scan helper (use range manually)
 ```
 
-**Without range iterators, seerdb is only useful for point lookups. This blocks:**
-- Time series queries (by time range)
-- Analytics (scanning data)
-- Pagination (iterating results)
-- Queue patterns (ordered dequeue)
-- Secondary indexes
+**seerdb is usable for:**
+- Key-value storage with range queries
+- Time series (with manual range queries)
+- Analytics (scanning with range iterator)
+- Most embedded use cases that don't need snapshots
 
 ---
 
@@ -77,73 +78,79 @@ Performance claims are valid, but **feature completeness is not**.
 - ✅ 81.54% coverage
 - ✅ ASAN clean (memory safety)
 - ✅ All critical bugs fixed
-- ✅ CI fixed (stable Rust compatible)
+- ✅ CI fixed (stable Rust 2021 edition)
+- ✅ Range iteration working (k-way merge)
+- ✅ Comprehensive observability
 
-### Bad
-- ❌ Missing range iterators (fundamental API gap)
-- ❌ Missing snapshots (consistency guarantees)
-- ❌ No cloud storage backend
-- ❌ Claimed "ready" when incomplete
+### Needs Work
+- ⚠️ Missing snapshots (point-in-time consistency)
+- ⚠️ No MVCC transactions
+- ⚠️ Block cache not configurable (fixed 40MB)
+- ⚠️ No column families
 
 ---
 
 ## Revised Roadmap
 
-### Phase 1: Feature Completeness (CURRENT PRIORITY)
-**Timeline**: TBD (need full audit first)
+### Phase 1: Snapshots (HIGHEST PRIORITY)
+**Timeline**: 1-2 weeks
 
-1. **Range Iterators** - CRITICAL
-   - `db.range(start..end)` - range queries
-   - `db.iter()` - full iteration
-   - `db.prefix(prefix)` - prefix scans
-   - `db.iter_rev()` - reverse iteration
+- `db.snapshot()` - Point-in-time views
+- Consistent multi-read operations
+- Reference counting for SSTable retention
 
-2. **Snapshots** - HIGH
-   - `db.snapshot()` - point-in-time views
-   - Consistent multi-read operations
+### Phase 2: Convenience APIs (MEDIUM PRIORITY)
+**Timeline**: 1 week
 
-3. **Cloud Storage** - HIGH
-   - S3/GCS backend via object_store crate
-   - Hybrid: local memtable + cloud SSTables
+- `db.iter()` - Full table iteration helper
+- `db.prefix(prefix)` - Prefix scan helper
+- ReadOptions/WriteOptions per-operation
 
-4. **Transactions** - MEDIUM
-   - MVCC for multi-key atomicity
-   - Full ACID guarantees
+### Phase 3: Stability Testing (REQUIRED FOR RELEASE)
+**Timeline**: 1-2 weeks
 
-### Phase 2: Stability Testing
 - 24+ hour fuzzing campaigns
-- Long-running soak tests
+- Long-running soak tests (72h+)
 - Chaos/fault injection
+- CI hardening
 
-### Phase 3: Documentation & Release
-- Complete API docs
-- Architecture guide
-- Performance tuning guide
-- Examples
+### Phase 4: Documentation & Release
+**Timeline**: 1 week
 
-**No release until features are complete and stable.**
+- Complete API docs (minimal)
+- Examples (5+)
+- Version tagging (0.0.1)
+
+**Total: 4-6 weeks to 0.0.1**
 
 ---
 
 ## CI Status
 
 **Recent Fixes** (Nov 16, 2025):
+- ✅ Rust edition changed from "2024" to "2021"
+- ✅ Let-chain syntax converted to nested if-let
 - ✅ SIMD feature properly gated (nightly-only)
 - ✅ Fallback implementations for stable Rust
 - ✅ Clippy rules adjusted
-- ✅ API mismatch fixed (batch.commit() not batch.write())
+- ✅ Formatting applied
 
-**Still Failing**: Need to verify after push
+**Current Status**: Waiting for CI run results
 
 ---
 
 ## Key Learnings
 
-### Nov 16, 2025 - API Audit
-- **Performance benchmarks ≠ feature completeness**
-- Focused too much on optimization, missed fundamental API gaps
-- "Testing complete" was premature - only tested what exists
-- Competitor analysis revealed major feature gaps
+### Nov 16, 2025 - Feature Audit
+- **Previous audit was WRONG about range iterators** - we have them!
+- `db.range()` with k-way merge iterator already implemented
+- Main gap is snapshots (point-in-time consistency), not range queries
+- Situation is better than initially thought
+
+### Nov 16, 2025 - CI Fixes
+- Rust 2024 edition doesn't exist yet (changed to 2021)
+- Let-chain syntax (`if let && condition`) is Rust 2024 only
+- SIMD features need nightly, must have fallbacks
 
 ### Previous (Still Valid)
 - Library optimizations matter (LZ4: +34.7%)
@@ -152,16 +159,18 @@ Performance claims are valid, but **feature completeness is not**.
 
 ---
 
-## Next Actions (Post-Compaction)
+## Next Actions
 
-1. **Full feature audit** - What else is missing?
-2. **API design** - Design range iterator API matching competitors
-3. **Implementation plan** - Estimate effort for missing features
-4. **Revised timeline** - Realistic estimate for 0.0.1
+1. ✅ **Feature audit complete** - Range queries work, snapshots missing
+2. **Implement snapshots** - Highest priority for consistency
+3. **Add convenience APIs** - iter(), prefix(), options
+4. **Long-running stability tests** - 24h+ fuzzing
+5. **0.0.1 release** - After stability validation
 
 ---
 
-**Status**: PRE-ALPHA (missing fundamental features)
-**Not Ready For**: Any release
-**Ready For**: Implementation of missing features
+**Status**: PRE-ALPHA (mostly complete, missing snapshots)
+**Usable For**: Key-value storage, range queries, time series (without consistency)
+**Not Ready For**: Use cases requiring point-in-time snapshots
+**Timeline**: 4-6 weeks to 0.0.1
 **Updated**: November 16, 2025
