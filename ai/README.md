@@ -1,306 +1,247 @@
 # ai/ Directory - Development Documentation
 
-**Purpose**: Internal development documentation, research notes, and planning documents
-**Audience**: Developers working on seerdb
-**Last Updated**: November 8, 2025
+**Purpose**: Session context and development documentation for seerdb
+**Audience**: AI agents and developers working on seerdb
+**Last Updated**: November 17, 2025
 
 ---
 
 ## Quick Start
 
 **New to the project?** Read in this order:
-1. `CURRENT_STATE.md` - TL;DR of where we are
-2. `PRODUCTION_READINESS.md` - Roadmap to 0.0.1
-3. `BUGS_AND_EDGE_CASES.md` - Known issues to fix
-4. `DECISIONS.md` - Why we built things this way
+1. `STATUS.md` - Current state and recent progress
+2. `TODO.md` - Active tasks and priorities
+3. `PRODUCTION_READINESS.md` - Roadmap to production
+4. `BUGS_AND_EDGE_CASES.md` - Known issues
 
 ---
 
-## Active Documents (Current, Up-to-Date)
+## Directory Structure
 
-### Planning & Status
-- **`CURRENT_STATE.md`** - Current status, priorities, immediate next steps
-- **`PRODUCTION_READINESS.md`** - Comprehensive roadmap to 0.0.1 (8 weeks)
-- **`BUGS_AND_EDGE_CASES.md`** - All known bugs (critical to minor)
-- **`TODO.md`** - Active tasks
-
-### Code & API Reviews
-- **`API_REVIEW.md`** - Batch API critique and fixes needed
-- **`OPTIMIZATION_STATUS.md`** - Performance status, what to defer
-
-### Historical Record
-- **`DECISIONS.md`** - Design decisions with rationale (keep updating)
-- **`STATUS.md`** - Detailed performance history and milestones
-
----
-
-## Archived/Old Documents (Superseded, Can Delete)
-
-### Superseded by PRODUCTION_READINESS.md
-- `PLAN.md` - Old project plan (outdated)
-- `PHASE_2_PLAN.md` - Old phase plan (completed)
-- `PHASE_2_COMPLETE.md` - Old milestone (completed)
-- `OPTIMIZATION_PLAN.md` - Superseded by OPTIMIZATION_STATUS.md
-
-### Superseded by BUGS_AND_EDGE_CASES.md
-- `CRITICAL_BUGS.md` - Partial list (incomplete)
-- `CRITICAL_LEAK_FINDINGS.md` - Specific issue (now in BUGS)
-- `UNWRAP_AUDIT.md` - Specific audit (now in BUGS)
-
-### Superseded by STATUS.md / CURRENT_STATE.md
-- `BENCHMARKS.md` - Old benchmarks (outdated)
-- `COMPETITIVE_ADVANTAGES.md` - Covered in CURRENT_STATE
-- `CONTEXT.md` - Covered in CURRENT_STATE
-
-### Specialized Docs (Keep for Reference)
-- `ARCHITECTURE.md` - System architecture (still relevant)
-- `RESEARCH.md` - Paper summaries (still relevant)
-- `CHECKSUM_DESIGN.md` - Checksum implementation plan (TODO item)
-- `KWAY_MERGE_PLAN.md` - K-way merge design (implemented, historical)
-- `SOTA_EXPERIMENTS.md` - SOTA library experiments (historical)
-- `SOTA_SESSION_SUMMARY.md` - SOTA session notes (historical)
-- `VLOG_BENCHMARK.md` - VLog performance data (historical)
-
-### Testing Docs (Active but Needs Cleanup)
-- `CRASH_RECOVERY_TESTS.md` - Crash recovery test plan (TODO)
-- `FUZZING.md` - Fuzzing strategy (TODO)
-- `LEAK_DETECTION.md` - Memory leak detection (TODO)
-- `PRACTICAL_SOAK_TESTS.md` - Soak testing plan (TODO)
-- `SOAK_TESTING.md` - Soak testing strategy (TODO)
-- `STRESS_TESTS.md` - Stress testing plan (TODO)
-
----
-
-## Cleanup Recommendations
-
-### Delete (Superseded)
-```bash
-rm ai/PLAN.md
-rm ai/PHASE_2_PLAN.md
-rm ai/PHASE_2_COMPLETE.md
-rm ai/OPTIMIZATION_PLAN.md
-rm ai/CRITICAL_BUGS.md
-rm ai/CRITICAL_LEAK_FINDINGS.md
-rm ai/UNWRAP_AUDIT.md
-rm ai/BENCHMARKS.md
-rm ai/COMPETITIVE_ADVANTAGES.md
-rm ai/CONTEXT.md
 ```
-
-### Archive (Historical Value)
-```bash
-mkdir -p ai/archive/
-mv ai/KWAY_MERGE_PLAN.md ai/archive/
-mv ai/SOTA_EXPERIMENTS.md ai/archive/
-mv ai/SOTA_SESSION_SUMMARY.md ai/archive/
-mv ai/VLOG_BENCHMARK.md ai/archive/
-mv ai/CHECKSUM_DESIGN.md ai/archive/  # Will rewrite when implementing
-```
-
-### Consolidate Testing Docs
-```bash
-# Merge all testing docs into one comprehensive plan
-# Keep: CRASH_RECOVERY_TESTS.md, FUZZING.md
-# Delete duplicates: SOAK_TESTING.md, PRACTICAL_SOAK_TESTS.md
+ai/
+├── STATUS.md                      # Current state, metrics, recent progress
+├── TODO.md                        # Active tasks and priorities
+├── PROFILING_RESULTS.md           # Latest profiling work (Nov 17, 2025)
+├── OPTIMIZATION_PREFIX_ITERATION.md # Current optimization work
+├── PRODUCTION_READINESS.md        # Production roadmap
+├── BUGS_AND_EDGE_CASES.md         # Active bug tracking
+├── README.md                      # This file
+├── DECISIONS.md                   # Decision index
+├── RESEARCH.md                    # Research index
+│
+├── bugs/                          # Historical bug tracking
+│   ├── BUG_10_BACKGROUND_FLUSH_DATA_LOSS.md
+│   └── BUG_11_ALEX_KEY_COLLISION.md
+│
+├── decisions/                     # Detailed design decisions
+│   ├── architecture.md
+│   ├── performance.md
+│   ├── storage.md
+│   ├── compaction.md
+│   ├── concurrency.md
+│   └── superseded-2025-11.md
+│
+├── design/                        # Design specifications
+│   ├── seerdb_core_architecture.md
+│   ├── API_COMPARISON_TABLE.md
+│   ├── NEXT_API_PRIORITIES.md
+│   ├── ARCHITECTURE.md
+│   ├── API_DESIGN.md
+│   ├── API_REVIEW.md
+│   ├── TIERED_STORAGE_ROADMAP.md
+│   └── ...
+│
+├── performance/                   # Performance analysis archive
+│   ├── STORAGE_BENCHMARK_RESULTS.md
+│   ├── STORAGE_OPTIMIZATION_ANALYSIS.md
+│   ├── HOT_PATH_ANALYSIS.md
+│   └── BLOCK_CACHE_OPTIMIZATION.md
+│
+├── research/                      # Research findings
+│   ├── INDEX.md
+│   ├── LSM_API_RESEARCH_SUMMARY.md
+│   ├── lsm_engines_sota.md
+│   ├── general_storage_engine_sota.md
+│   └── ...
+│
+├── summaries/                     # Historical summaries
+│   └── REFACTORING_SUMMARY.md
+│
+└── testing/                       # Test results archive
+    ├── STRESS_TEST_RESULTS.md
+    ├── SOAK_TESTING.md
+    ├── FUZZING.md
+    ├── COVERAGE_REPORT.md
+    └── ...
 ```
 
 ---
 
-## Document Structure Standards
+## Session Files (Read Every Session)
 
-### File Naming
-- `SCREAMING_SNAKE_CASE.md` for major docs
-- Clear, descriptive names
-- No dates in filenames (use "Last Updated" in content)
+**Core files** (<500 lines each, updated frequently):
 
-### Document Format
-```markdown
-# Title - Brief Description
+1. **`STATUS.md`** - Current state, metrics, recent progress
+   - Last updated: November 17, 2025
+   - Contains: Performance metrics, recent work, priorities
+   - Read: Every session start
 
-**Date**: November 8, 2025
-**Status**: Active/Archived/Superseded
-**Purpose**: One-line description
+2. **`TODO.md`** - Active tasks and priorities
+   - Last updated: November 17, 2025
+   - Contains: Active tasks, completed work, next steps
+   - Read: Every session start
+
+3. **`PROFILING_RESULTS.md`** - Latest profiling analysis
+   - Date: November 17, 2025
+   - Contains: Flamegraph results, CPU hotspots, optimization opportunities
+   - Read: When working on performance
+
+4. **`OPTIMIZATION_PREFIX_ITERATION.md`** - Current optimization work
+   - Date: November 17, 2025
+   - Contains: Prefix scan optimization for omendb workload
+   - Read: When working on range iteration
+
+5. **`PRODUCTION_READINESS.md`** - Production roadmap
+   - Last updated: November 16, 2025
+   - Contains: Gap analysis, API completeness, production checklist
+   - Read: When planning releases
+
+6. **`BUGS_AND_EDGE_CASES.md`** - Active bug tracking
+   - Contains: Known bugs, severity, status
+   - Read: Before implementing fixes
 
 ---
 
-## TL;DR
+## Index Files (Reference On Demand)
 
-Quick summary in 2-3 bullets
+7. **`DECISIONS.md`** - Design decisions index
+   - Points to: `decisions/` subdirectory
+   - Contains: Links to detailed decision documents
+
+8. **`RESEARCH.md`** - Research index
+   - Points to: `research/` subdirectory
+   - Contains: Links to paper summaries and analysis
 
 ---
 
-## Content
+## Reference Subdirectories (Loaded On Demand)
 
-...
+### `bugs/` - Historical Bug Tracking
+Fixed bugs with detailed analysis. Reference when encountering similar issues.
 
----
+### `decisions/` - Detailed Design Decisions
+Architecture, performance, storage, compaction, concurrency decisions with rationale.
 
-**Last Updated**: November 8, 2025
-**Next Review**: [When to review again]
-```
+### `design/` - Design Specifications
+Architecture specs, API designs, format specifications, roadmaps.
 
-### Required Sections
-1. **TL;DR** - Quick summary
-2. **Status** - Active/archived/superseded
-3. **Last Updated** - Date of last edit
-4. **Next Review** - When to review again
+### `performance/` - Performance Analysis Archive
+Historical benchmarks, optimization analyses, profiling results.
+
+### `research/` - Research Findings
+Paper summaries, competitive analysis, SOTA research (>200 lines per topic).
+
+### `summaries/` - Historical Summaries
+Session summaries, refactoring summaries, milestone reports.
+
+### `testing/` - Test Results Archive
+Stress tests, soak tests, fuzzing results, coverage reports.
 
 ---
 
 ## Workflow
 
-### When Starting Work
-1. Read `CURRENT_STATE.md` for current status
-2. Check `TODO.md` for active tasks
-3. Review `BUGS_AND_EDGE_CASES.md` for known issues
+### Starting a Session
+1. Read `STATUS.md` - Understand current state
+2. Read `TODO.md` - Check active tasks
+3. Check `BUGS_AND_EDGE_CASES.md` - Known issues
 
-### When Making Decisions
-1. Document in `DECISIONS.md` with rationale
-2. Update `CURRENT_STATE.md` if priorities change
-3. Update `TODO.md` with action items
+### During Work
+- Update `TODO.md` - Mark tasks in_progress/completed
+- Consult `decisions/` or `research/` as needed
+- Add to `BUGS_AND_EDGE_CASES.md` if bugs found
 
-### When Completing Work
-1. Update `STATUS.md` with results
-2. Update `TODO.md` (mark complete, add follow-ups)
-3. Update `CURRENT_STATE.md` if major milestone
-
-### When Discovering Bugs
-1. Add to `BUGS_AND_EDGE_CASES.md` with severity
-2. Update `TODO.md` if actionable now
-3. Update `PRODUCTION_READINESS.md` if affects timeline
+### Ending a Session
+- Update `STATUS.md` - Document progress
+- Update `TODO.md` - Mark completed, add new tasks
+- Commit changes to git
 
 ---
 
 ## Key Principles
 
-### Documentation
-- **Current > Complete** - Keep docs current, remove outdated content
-- **Actionable > Detailed** - Focus on what to do next
-- **Concise > Comprehensive** - Be brief, link to details
+### Documentation Strategy
+- **Session files** (ai/ root): Current, active, <500 lines
+- **Reference files** (subdirs): Detailed, loaded on demand
+- **Token efficiency**: ~2,500 tokens for session context (down from 35,000+)
 
 ### Maintenance
-- Review every 2 weeks
-- Delete superseded docs immediately
-- Archive historical docs (don't delete)
+- Delete outdated files immediately (git preserves history)
+- Archive completed work to subdirectories
+- Keep session files focused and current
 - Update "Last Updated" on every edit
 
 ### Organization
-- Active docs in root (ai/)
-- Archives in ai/archive/
-- Research in ai/research/
-- Design in ai/design/
+- Active work → ai/ root
+- Historical analysis → subdirectories
+- Completed work → archive
+- Research → `research/`
 
 ---
 
-## Research Subdirectory
+## Current Status (November 17, 2025)
 
-### ai/research/
-- Paper summaries
-- Benchmark results
-- Experimental findings
-- Competitive analysis
+**Performance**:
+- Block cache: 1,406x improvement (30,943 scans/sec)
+- Cache hit rate: 97.38%
+- Write amp: 1.01x
 
-### ai/design/
-- Design proposals
-- Architecture diagrams
-- API designs
-- Format specifications
+**Recent Work**:
+- ✅ Cloud storage integration complete (S3/GCS/Azure)
+- ✅ Flamegraph profiling Phase 1 complete
+- ✅ ai/ directory reorganized (39 files → 9 active)
 
----
-
-## Git Workflow
-
-### What to Commit
-- ✅ Active planning docs (CURRENT_STATE, TODO)
-- ✅ Decision records (DECISIONS)
-- ✅ Architecture docs (ARCHITECTURE)
-- ✅ Major milestones (STATUS updates)
-
-### What NOT to Commit
-- ❌ Temporary notes
-- ❌ Scratch work
-- ❌ Personal todos
-- ❌ Sensitive data
-
-### Commit Messages
-```
-docs(ai): update CURRENT_STATE with Week 1 progress
-
-- Mark block cache fix complete
-- Update timeline
-- Add test coverage metrics
-```
-
----
-
-## Tools & Scripts
-
-### Cleanup Script
-```bash
-#!/bin/bash
-# ai/cleanup.sh - Remove old/superseded docs
-
-# Delete superseded files
-rm -f ai/PLAN.md ai/PHASE_2_*.md ai/OPTIMIZATION_PLAN.md
-rm -f ai/CRITICAL_BUGS.md ai/BENCHMARKS.md ai/CONTEXT.md
-
-# Archive historical files
-mkdir -p ai/archive/
-mv ai/KWAY_MERGE_PLAN.md ai/SOTA_*.md ai/VLOG_BENCHMARK.md ai/archive/ 2>/dev/null
-
-echo "Cleanup complete!"
-```
-
-### Doc Validation
-```bash
-#!/bin/bash
-# ai/validate.sh - Check doc structure
-
-for file in ai/*.md; do
-    if ! grep -q "Last Updated" "$file"; then
-        echo "Missing 'Last Updated': $file"
-    fi
-    if ! grep -q "TL;DR\|Executive Summary" "$file"; then
-        echo "Missing summary: $file"
-    fi
-done
-```
+**Next Priorities**:
+1. Allocation profiling (dhat-rs/heaptrack)
+2. Lock contention analysis
+3. SIMD validation
+4. Real workload comparisons
 
 ---
 
 ## FAQ
 
-### Q: Which doc should I update when...
+### Q: Which file should I update when...
 
 **...I find a bug?** → `BUGS_AND_EDGE_CASES.md`
-**...I make a decision?** → `DECISIONS.md`
-**...I complete a milestone?** → `STATUS.md` + `CURRENT_STATE.md`
-**...I discover a performance issue?** → `OPTIMIZATION_STATUS.md`
-**...I plan next week's work?** → `TODO.md`
+**...I make a decision?** → `decisions/` (detailed) + `DECISIONS.md` (index)
+**...I complete a milestone?** → `STATUS.md`
+**...I plan next steps?** → `TODO.md`
+**...I do profiling?** → New file in root, archive to `performance/` later
+**...I write design docs?** → `design/` subdirectory
 
-### Q: How often should I update docs?
+### Q: How are files organized?
 
-**Daily**: `TODO.md` (as tasks change)
-**Weekly**: `CURRENT_STATE.md` (progress updates)
-**Milestone**: `STATUS.md` (major achievements)
-**As Needed**: `DECISIONS.md`, `BUGS_AND_EDGE_CASES.md`
+**Active files** (root): Current work, read every session
+**Reference files** (subdirs): Detailed docs, loaded on demand
+**Archive pattern**: Start in root → move to subdir when complete
 
 ### Q: What's the difference between...
 
-**STATUS.md** vs **CURRENT_STATE.md**:
-- STATUS: Detailed history, all milestones, comprehensive
-- CURRENT_STATE: TL;DR, current focus, immediate priorities
+**STATUS.md** vs **TODO.md**:
+- STATUS: What we've done, current metrics
+- TODO: What we're doing next, active tasks
 
-**BUGS_AND_EDGE_CASES.md** vs **TODO.md**:
-- BUGS: All known issues (catalog)
-- TODO: Active tasks (work plan)
+**Session files** vs **Reference files**:
+- Session: Read every time (<500 lines)
+- Reference: Load when needed (can be large)
 
-**PRODUCTION_READINESS.md** vs **CURRENT_STATE.md**:
-- PRODUCTION_READINESS: 8-week roadmap (strategic)
-- CURRENT_STATE: This week's focus (tactical)
+**ai/ root** vs **subdirs**:
+- Root: Active, current work
+- Subdirs: Reference, historical, detailed
 
 ---
 
-**Last Updated**: November 8, 2025
-**Maintainer**: Primary developers
-**Next Cleanup**: November 15, 2025
+**Last Updated**: November 17, 2025
+**Next Cleanup**: December 1, 2025
