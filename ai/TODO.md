@@ -1,166 +1,173 @@
 # TODO - seerdb
 
-**Last Updated**: November 16, 2025
-**Current Sprint**: Feature Completeness (Snapshots + Convenience APIs)
-**Previous**: Feature audit revealed range queries WORK, snapshots missing
-**Timeline**: 4-6 weeks to 0.0.1
+**Last Updated**: November 17, 2025
+**Current Sprint**: Performance Optimization & Cloud Integration
+**Version**: 0.0.1-alpha (published to crates.io)
+**Timeline**: Ongoing feature development
 
 ---
 
-## ✅ COMPLETED: Snapshots (Nov 16, 2025)
+## 🔥 HIGHEST PRIORITY: Block Cache (omendb performance)
 
-**Commit**: `1ecaace` - feat: implement point-in-time snapshots
+**Impact**: 10-20x improvement for disk search (22 QPS → 200+ QPS)
 
-**Implementation**:
-- ✅ `db.snapshot()` - Lightweight snapshot (SSTable data only)
-- ✅ `db.snapshot_consistent()` - Full consistency (forces flush first)
-- ✅ `snapshot.get(key)` - Point lookup from snapshot
-- ✅ `snapshot.range(start, end)` - Range queries on snapshot
-- ✅ Captures SSTable paths at snapshot time (true point-in-time view)
-- ✅ L0 SSTables checked in reverse order (newest first)
-- ✅ 6 comprehensive tests passing
+**Problem**: seerdb caches SSTable metadata only, not data blocks. Every prefix scan hits disk.
 
-**API**:
-```rust
-// Lightweight snapshot (SSTable data only)
-let snap = db.snapshot();
+**Implementation** (see `ai/BLOCK_CACHE_OPTIMIZATION.md`):
+- [ ] Add `block_cache_capacity` to DBOptions (default: 64MB)
+- [ ] Add `block_cache` field to DB struct (Arc<Cache>)
+- [ ] Add `id` field to SSTable for cache key
+- [ ] Modify SSTable::read_block() to check cache first
+- [ ] Add cache hit/miss metrics to DBStats
+- [ ] Tests for cache behavior
+- [ ] Benchmark before/after
 
-// Full consistency (forces flush)
-let snap = db.snapshot_consistent()?;
-
-// Read from snapshot
-snap.get(key)?           // Point lookup
-snap.range(start, end)?  // Range scan
-snap.sequence_number()   // Sequence number
-```
+**Expected Outcome**:
+- Cache hit rate: >80% for hot workloads
+- Disk search: 22 QPS → 200+ QPS
+- Memory overhead: <10% over cache size
 
 ---
 
-## ✅ COMPLETED: Convenience APIs (Nov 16, 2025)
+## 📊 HIGH PRIORITY: Performance Profiling
 
-**Implementation**:
-- ✅ `db.iter()` - Full table iteration (wrapper around `range(&[], None)`)
-- ✅ `db.prefix(prefix)` - Prefix scan with `increment_bytes()` helper
-- ✅ Handles 0xFF overflow correctly (e.g., `[0xFF, 0xFF]` → unbounded)
-- ✅ 4 comprehensive tests passing
+**Goal**: Identify bottlenecks, optimize hot paths
 
-**API**:
-```rust
-// Full table iteration
-for (key, value) in db.iter()? {
-    println!("{:?} = {:?}", key, value);
-}
+- [ ] Profile with flamegraph (`cargo flamegraph`)
+- [ ] Identify allocation hotspots (`dhat` or `heaptrack`)
+- [ ] Measure cache hit rates (block cache, SSTable cache)
+- [ ] Compare with RocksDB/fjall on real workloads:
+  - [ ] omendb HNSW edge storage pattern
+  - [ ] Time series writes (sequential timestamps)
+  - [ ] Random key-value workload
+- [ ] Analyze SIMD vs non-SIMD performance
+- [ ] Profile lock contention (partitioned memtables)
 
-// Prefix scan (e.g., all keys starting with "user:")
-for (key, value) in db.prefix(b"user:")? {
-    println!("{:?} = {:?}", key, value);
-}
-```
-
-**Deferred to 0.0.2**:
-- `ReadOptions`/`WriteOptions` - Per-operation configuration
+**Specific omendb Targets**:
+- [ ] Prefix scan latency (current: 45ms per scan)
+- [ ] Graph edge storage pattern (key: node_id || level || neighbor_id)
+- [ ] Hot node access patterns (frequently visited nodes)
 
 ---
 
-## Current Priority: Stability Testing
+## ☁️ MEDIUM PRIORITY: Complete Cloud Storage Integration
+
+### Phase 1: Core Infrastructure ✅ COMPLETE
+- [x] ObjectStoreBackend with S3, GCS, Azure support
+- [x] Storage trait for pluggable backends
+- [x] StorageConfig in DBOptions
+- [x] Feature-gated: `--features object-store`
+- [x] 6 unit tests passing
+
+### Phase 2: Wire into DB (Next)
+- [ ] SSTableBuilder buffered writes (accumulate in memory)
+- [ ] Add Storage backend field to DB struct
+- [ ] Use Storage trait in flush path
+- [ ] Use Storage trait in compaction path
+- [ ] Integration tests with cloud backend
+
+**Note**: Buffered writes may improve local performance too (fewer syscalls).
 
 ---
 
-### Phase 3: Stability Testing (1-2 weeks) - REQUIRED
+## 🚀 COMPLETED RECENTLY
 
-**Why**: Ensure production reliability before 0.0.1 release
+### Published to crates.io ✅
+- Version: 0.0.1-alpha
+- Crate name locked down: `seerdb`
+- Tagged: `v0.0.1-alpha`
+- 115 files, 210.7KiB compressed
 
-1. **Long-Running Fuzzing** (24h+)
-   - All 4 fuzz targets (sstable_parse, wal_parse, vlog_parse, db_operations)
-   - Run overnight with crash detection
-   - Expand corpus with edge cases
+### Object Store Infrastructure ✅
+- ObjectStoreBackend (S3, GCS, Azure)
+- StorageConfig enum
+- Feature-gated compilation
+- 6 unit tests passing
 
-2. **Soak Tests** (72h+)
-   - Continuous read/write operations
-   - Memory stability (no leaks)
-   - Handle recovery (crash injection)
-   - File descriptor stability
+### Snapshots ✅
+- `db.snapshot()` - Point-in-time views
+- `db.snapshot_consistent()` - Full consistency
+- Range queries on snapshots
+- 6 tests passing
 
-3. **Chaos Testing**
-   - Random process kills during operations
-   - Disk full scenarios
-   - Network partitions (for future cloud backend)
+### Convenience APIs ✅
+- `db.iter()` - Full table iteration
+- `db.prefix()` - Prefix scan
+- Handles edge cases (0xFF overflow)
+- 4 tests passing
 
----
-
-### Phase 4: Documentation & Release (1 week)
-
-**Minimal docs for 0.0.1**:
-- API reference (rustdoc)
-- Quick start guide
-- Configuration options
-- 5+ usage examples
-
-**Release checklist**:
-- Version tagging (0.0.1)
-- CHANGELOG.md
-- GitHub release
-- crates.io publish (ask first)
+### Bug Fixes ✅
+- Bug #10: Merge iterator data loss (CRITICAL)
+- Bug #11: Empty SSTable flush (CRITICAL)
+- Batch atomicity, checksums, compaction safety
 
 ---
 
-## Quick Reference: What's Implemented vs Missing
+## 📅 Future Work (Lower Priority)
 
-### ✅ IMPLEMENTED (Working)
-- Point operations: get(), put(), delete(), batch()
-- Range queries: range(start, end) with k-way merge
-- **Snapshots**: snapshot(), snapshot_consistent() with get/range
-- **Convenience APIs**: iter(), prefix()
-- Durability: WAL with configurable sync (SyncAll/SyncData/None)
-- Observability: stats(), check_health(), 20+ metrics
-- Crash recovery: WAL replay, CRC32 checksums
-- Compaction: Leveled + adaptive (Dostoevsky)
-- Performance: 2.47x RocksDB writes, 2.07x reads
+### API Enhancements
+- [ ] `db.iter_rev()` - Reverse iteration
+- [ ] `db.compact()` - Manual compaction trigger
+- [ ] `ReadOptions`/`WriteOptions` - Per-operation configuration
+- [ ] Column families/namespaces
+- [ ] TTL/expiration
 
-### ❌ NOT IMPLEMENTED (Priority Order)
-1. **Column families** - Multiple namespaces (MEDIUM)
-2. **Transactions** - MVCC multi-key atomicity (MEDIUM)
-3. **Per-operation options** - ReadOptions/WriteOptions (LOW)
-4. **Reverse iteration** - iter_rev() (LOW)
-5. **TTL/Expiration** - Automatic key deletion (LOW)
-6. **Cloud storage** - S3/GCS backend (LOW for 0.0.1)
+### Advanced Features
+- [ ] MVCC transactions (multi-operation atomicity)
+- [ ] VLog garbage collection
+- [ ] Index optimization (bloom filter tuning)
+- [ ] Compression level configuration
 
----
-
-## CI Status
-
-**Latest fixes** (Nov 16, 2025):
-- ✅ Rust edition 2024 → 2021 (2024 doesn't exist)
-- ✅ Let-chain syntax converted to nested if-let
-- ✅ SIMD feature gates with fallbacks
-- ✅ 72 files reformatted with import ordering
-
-**Waiting**: CI run to complete and verify all passes
+### Testing & Stability
+- [ ] 72h+ soak tests
+- [ ] Chaos testing (crash injection)
+- [ ] Disk full scenarios
+- [ ] Long-running fuzzing campaigns
 
 ---
 
-## Next Session Tasks
+## 📈 Success Metrics
 
-1. ✅ **Snapshots implemented** - 6 tests passing
-2. ✅ **Convenience APIs implemented** - 4 tests passing (iter, prefix)
-3. **Long-running fuzzing** - 24h+ stability tests
-4. **Documentation** - Update README with snapshot/convenience API examples
-5. **0.0.1 release prep** - Version tagging, CHANGELOG
+### Performance Targets
+
+| Metric | Current | Target | Priority |
+|--------|---------|--------|----------|
+| Disk search | 22 QPS | 200+ QPS | HIGH |
+| Cache hit rate | N/A | >80% | HIGH |
+| Write amp | 1.01x | <1.5x | MEDIUM |
+| Memory overhead | ~40MB | <100MB | LOW |
+
+### Quality Targets
+
+| Metric | Current | Target |
+|--------|---------|--------|
+| Tests passing | 162 | All |
+| Coverage | 81.54% | >80% |
+| ASAN clean | ✅ | ✅ |
+| Thread safety | 50+ tests | All passing |
 
 ---
 
-## Deferred to 0.0.2+
+## Next Session Plan
 
-- VLog garbage collection (not implemented)
-- Column families (use key prefixes for now)
-- MVCC transactions (batch API is per-operation atomic)
-- ReadOptions/WriteOptions (per-operation configuration)
-- Cloud storage backend (local only for 0.0.1)
+**Priority 1**: Block cache implementation
+- Highest ROI for omendb
+- 1-2 days estimated
+- See `ai/BLOCK_CACHE_OPTIMIZATION.md`
+
+**Priority 2**: SSTableBuilder buffering
+- Enables cloud storage
+- May improve local perf
+- 1-2 days estimated
+
+**Priority 3**: Performance profiling
+- Flamegraph analysis
+- Identify other bottlenecks
+- Ongoing work
 
 ---
 
-**Status**: Snapshots + convenience APIs complete, ready for stability testing
-**Timeline**: 2-4 weeks to 0.0.1 (stability testing + docs)
-**Quality**: 156 tests passing, 81.54% coverage, ASAN clean
-**Performance**: 2.47x RocksDB writes, 2.07x reads 🏆
-**Updated**: November 16, 2025
+**Tests**: 162 passing (156 lib + 6 object-store)
+**Coverage**: 81.54%
+**Performance**: 2.47x RocksDB writes, 2.07x reads
+**Version**: 0.0.1-alpha (published)

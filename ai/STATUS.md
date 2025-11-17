@@ -1,246 +1,182 @@
 # STATUS - seerdb
 
-**Last Updated**: November 16, 2025
-**Current Phase**: Stability Testing (PRE-ALPHA)
-**Tests**: 165 tests passing (156 lib + 9 stress tests)
+**Last Updated**: November 17, 2025
+**Current Phase**: Feature Integration & Optimization
+**Version**: 0.0.1-alpha (published to crates.io)
+**Tests**: 162 tests passing (156 lib + 6 object-store)
 **Coverage**: 81.54%
-**Status**: CRITICAL BUG FIXED - snapshots + convenience APIs stable, fuzzing in progress
 
 ---
 
-## CRITICAL BUG FIXED (Nov 16, 2025) 🐛→✅
+## Recent Progress (Nov 17, 2025)
 
-### Bug #10: Merge Iterator Data Loss
-**Severity**: CRITICAL - Data loss during compaction
-**Status**: FIXED (commit `48fc172`)
+### Published to crates.io ✅
+- Version: `seerdb = "0.0.1-alpha"`
+- 115 files, 210.7KiB compressed
+- Locked down crate name for future releases
+- Tagged: `v0.0.1-alpha`
 
-**Problem**: MergeIterator was preserving OLDEST values instead of NEWEST when keys overlapped during L0→L1 compaction. This caused **data loss** - older values silently replaced newer ones.
+### Object Store Integration (Phase 1 Complete) ✅
+- `ObjectStoreBackend` - S3, GCS, Azure support
+- `StorageConfig` - User-configurable in DBOptions
+- Feature-gated: `--features object-store`
+- 6 unit tests passing with in-memory backend
+- Zero overhead when disabled
 
-**Root Cause**:
-- L0 SSTables ordered oldest→newest (higher index = newer)
-- Sort compared `a.2.cmp(&b.2)` (ascending) - WRONG
-- This kept lower source_id (older) values
-
-**Fix**:
+**What Works:**
 ```rust
-// BEFORE (WRONG):
-match a.0.cmp(&b.0) {
-    Ordering::Equal => a.2.cmp(&b.2)  // Lower first = OLDEST
-}
-
-// AFTER (CORRECT):
-match a.0.cmp(&b.0) {
-    Ordering::Equal => b.2.cmp(&a.2)  // Higher first = NEWEST
-}
+let backend = ObjectStoreBackend::s3("bucket", "us-west-2", None, "prefix".into())?;
+backend.write_sstable(Path::new("test.sst"), &data)?;
 ```
 
-**Files Fixed**:
-- `src/compaction/merge.rs:33-36` - Sort by descending source_id
-- `src/db.rs:1077-1082` - Check all levels in reverse order
-- `src/snapshot.rs:161-167` - Check all levels in reverse order
-
-**How Discovered**: Stress test `test_multiple_snapshots_under_load` caught it - snapshot 4 saw "v1" instead of "v4" after compaction.
+**Not Yet Wired**: SSTableBuilder needs buffered writes to upload directly to cloud
 
 ---
 
-## REALITY CHECK (Nov 16, 2025)
+## Current Priorities
 
-### Previous Concern (CORRECTED)
-- Previous session claimed "NO RANGE ITERATORS - blocks 70% of use cases"
-- **WRONG**: We DO have `db.range(start, end)` with k-way merge iterator
+### 1. **Block Cache** (HIGH - omendb performance)
+**Impact**: 10-20x improvement for disk search (22 QPS → 200+ QPS)
 
-### What's Actually True
-- **Performance**: Excellent (2.47x RocksDB writes, 2.07x reads)
-- **Bug fixes**: All critical data safety issues fixed (including merge iterator)
-- **Test coverage**: 81.54% (good)
-- **Range queries**: ✅ WORKING (k-way merge iterator)
-- **Snapshots**: ✅ IMPLEMENTED (point-in-time consistency)
-- **API completeness**: ✅ Core features complete, missing only MVCC transactions
+Currently caches SSTable metadata only, not data blocks. This causes:
+- Every prefix scan reads from disk
+- 27x slower than in-memory for omendb
 
-### Missing Features (Priority Order)
+See: `ai/BLOCK_CACHE_OPTIMIZATION.md` for full design
 
-| Feature | Impact | Priority |
-|---------|--------|----------|
-| **Convenience APIs** | iter(), prefix(), iter_rev() | MEDIUM |
-| **Column Families** | Single namespace only | MEDIUM |
-| **Transactions/MVCC** | No multi-operation atomicity | MEDIUM |
-| **TTL** | No automatic expiration | LOW |
+### 2. **SSTableBuilder Buffered Writes** (MEDIUM)
+**Impact**: Enables cloud storage, may improve local performance
 
-### What We Actually Have
+Currently streams writes to disk. Need to buffer in memory for:
+- Cloud storage uploads (PUT entire file)
+- Potentially fewer syscalls for local disk
 
+### 3. **Performance Profiling** (HIGH)
+**Impact**: Identify bottlenecks, optimize hot paths
+
+TODO:
+- [ ] Profile with flamegraph
+- [ ] Identify allocation hotspots
+- [ ] Measure cache hit rates
+- [ ] Compare with RocksDB/fjall on real workloads
+
+### 4. **Wire Object Store into DB** (MEDIUM)
+**Impact**: Complete cloud storage integration
+
+After SSTableBuilder buffering, need to:
+- Add Storage backend to DB struct
+- Use Storage trait in flush/compaction paths
+- Test with actual cloud backends
+
+---
+
+## Performance Baseline
+
+| Workload | seerdb | RocksDB | Speedup |
+|----------|--------|---------|---------|
+| **Writes** | 878K ops/sec | 356K ops/sec | **2.47x** |
+| **Reads** | 2,207K ops/sec | 1,065K ops/sec | **2.07x** |
+| **Mixed** | 718K ops/sec | 400K ops/sec | **1.79x** |
+| **Scans** | 19.6K scans/sec | 19.7K scans/sec | 0.99x |
+
+**Write Amplification**: 1.01x (4.82x better than traditional LSM)
+
+### omendb-specific Performance
+
+| Metric | Current | Target |
+|--------|---------|--------|
+| L0 Search | 597 QPS | (baseline) |
+| Disk Search | 22 QPS | 200+ QPS |
+| Gap | 27x slower | <3x slower |
+
+**Root Cause**: No block cache. Every prefix scan reads from disk.
+
+---
+
+## API Completeness
+
+### ✅ Implemented
 ```rust
-// ✅ IMPLEMENTED - Core Operations
 db.get(key)                  // Point lookup
 db.put(key, value)           // Write
 db.delete(key)               // Delete
 db.batch()                   // Atomic batch writes
-db.range(start, end)         // Range iteration (k-way merge)
-db.flush()                   // Sync to disk
-db.get_stats()               // Comprehensive observability
-db.check_health()            // 5 built-in health checks
-
-// ✅ NEWLY IMPLEMENTED - Snapshots
-db.snapshot()                // Point-in-time views (SSTable data only)
-db.snapshot_consistent()     // Full consistency (forces flush first)
-snapshot.get(key)            // Read from snapshot
-snapshot.range(start, end)   // Range scan on snapshot
-
-// ✅ NEWLY IMPLEMENTED - Convenience APIs
+db.range(start, end)         // Range iteration
 db.iter()                    // Full table iteration
-db.prefix(prefix)            // Prefix scan (e.g., db.prefix(b"user:"))
-
-// ❌ MISSING (important for some use cases)
-db.transaction()             // No MVCC
+db.prefix(prefix)            // Prefix scan
+db.flush()                   // Sync to disk
+db.snapshot()                // Point-in-time views
+db.snapshot_consistent()     // Full consistency
+db.get_stats()               // Observability
+db.check_health()            // Health checks
 ```
 
-**seerdb is usable for:**
-- Key-value storage with range queries
-- Time series (with manual range queries)
-- Analytics (scanning with range iterator)
-- Most embedded use cases that don't need snapshots
+### ❌ Not Implemented
+```rust
+db.transaction()             // MVCC transactions
+db.iter_rev()                // Reverse iteration
+db.compact()                 // Manual compaction
+```
+
+### 🆕 Cloud Storage (Feature-Gated)
+```rust
+// --features object-store
+StorageConfig::S3 { bucket, region, endpoint, prefix }
+StorageConfig::Gcs { bucket, service_account_path, prefix }
+StorageConfig::Azure { container, account, prefix }
+```
 
 ---
 
-## Performance (Still Valid)
+## Code Quality
 
-**Benchmark Results** (100K ops, jemalloc):
-- **Writes**: 878K ops/sec (2.47x RocksDB) 🏆
-- **Reads**: 2,207K ops/sec (2.07x RocksDB) 🏆
-- **Mixed**: 888K ops/sec (1.79x RocksDB)
-- **Write Amp**: 1.01x (4.82x better than traditional LSM) 🏆
+- **Tests**: 162 total (156 lib + 6 object-store), all passing
+- **Coverage**: 81.54%
+- **Memory Safety**: ASAN clean
+- **Thread Safety**: 50+ concurrent tests
+- **Fuzzing**: 10,898 runs, 0 crashes
 
-Performance claims are valid, but **feature completeness is not**.
-
----
-
-## Quality Status
-
-### Good
-- ✅ 156 tests passing
-- ✅ 81.54% coverage
-- ✅ ASAN clean (memory safety)
-- ✅ All critical bugs fixed
-- ✅ CI fixed (stable Rust 2021 edition)
-- ✅ Range iteration working (k-way merge)
-- ✅ Comprehensive observability
-- ✅ **Snapshots implemented** (point-in-time consistency)
-- ✅ **Convenience APIs** (iter(), prefix())
-
-### Needs Work
-- ⚠️ No MVCC transactions
-- ⚠️ Block cache not configurable (fixed 40MB)
-- ⚠️ No column families
+### Recent Bug Fixes ✅
+- Bug #10: Merge iterator data loss (CRITICAL)
+- Bug #11: Empty SSTable flush (CRITICAL)
+- Batch atomicity, checksums, compaction safety
 
 ---
 
-## Revised Roadmap
+## Next Steps (Priority Order)
 
-### Phase 1: Snapshots ✅ COMPLETE
-**Timeline**: Completed Nov 16, 2025
+1. **Block Cache Implementation** (1-2 days)
+   - Add `block_cache_capacity` to DBOptions
+   - Cache data blocks in quick_cache
+   - Track cache hit/miss metrics
+   - **Expected: 10x disk search improvement**
 
-- ✅ `db.snapshot()` - Point-in-time views (SSTable data only)
-- ✅ `db.snapshot_consistent()` - Full consistency (forces flush)
-- ✅ `snapshot.get()` and `snapshot.range()` - Read operations
-- ✅ 6 comprehensive tests passing
+2. **SSTableBuilder Buffering** (1-2 days)
+   - Buffer entire SSTable in memory
+   - Write once (fewer syscalls)
+   - Enable cloud storage uploads
 
-### Phase 2: Convenience APIs ✅ COMPLETE (Nov 16, 2025)
+3. **Wire Object Store** (0.5 days)
+   - Add Storage backend to DB struct
+   - Use Storage trait in flush/compaction
 
-- ✅ `db.iter()` - Full table iteration
-- ✅ `db.prefix(prefix)` - Prefix scan (with increment_bytes helper)
-- ✅ 4 comprehensive tests passing
-- ⏳ ReadOptions/WriteOptions per-operation (deferred to 0.0.2)
-
-### Phase 3: Stability Testing 🔄 IN PROGRESS
-**Timeline**: 1-2 weeks
-**Started**: November 16, 2025
-
-**Progress**:
-- ✅ Created 9 comprehensive stress tests (`tests/stress_new_apis.rs`)
-- ✅ Fixed CRITICAL merge iterator bug (Bug #10)
-- ✅ 165 tests passing (156 lib + 9 stress)
-- 🔄 1-hour fuzzing campaign running (627+ corpus, no crashes)
-
-**Fuzzing Results (ongoing)**:
-- 627+ corpus entries discovered
-- 0 crashes found
-- Covering snapshot, iter, prefix operations
-- ~40 minutes remaining in current campaign
-
-**Next**:
-- 24+ hour fuzzing campaigns
-- Long-running soak tests (72h+)
-- Chaos/fault injection
-- CI hardening
-
-### Phase 4: Documentation & Release
-**Timeline**: 1 week
-
-- Complete API docs (minimal)
-- Examples (5+)
-- Version tagging (0.0.1)
-
-**Total: 4-6 weeks to 0.0.1**
+4. **Performance Profiling** (ongoing)
+   - Flamegraph analysis
+   - Allocation profiling
+   - Cache effectiveness metrics
 
 ---
 
-## CI Status
+## Files to Monitor
 
-**Recent Fixes** (Nov 16, 2025):
-- ✅ Rust edition changed from "2024" to "2021"
-- ✅ Let-chain syntax converted to nested if-let
-- ✅ SIMD feature properly gated (nightly-only)
-- ✅ Fallback implementations for stable Rust
-- ✅ Clippy rules adjusted
-- ✅ Formatting applied
-
-**Current Status**: Waiting for CI run results
+| File | Purpose | Recent Changes |
+|------|---------|----------------|
+| `src/storage.rs` | Storage backend abstraction | +370 lines for ObjectStoreBackend |
+| `src/db.rs` | Main database | +StorageConfig, +DBError::ObjectStore |
+| `src/sstable/mod.rs` | SSTable format | Needs buffered writes |
+| `ai/BLOCK_CACHE_OPTIMIZATION.md` | Block cache design | Complete design doc |
+| `ai/design/OBJECT_STORE_INTEGRATION.md` | Cloud storage design | Implementation status |
 
 ---
 
-## Key Learnings
-
-### Nov 16, 2025 - Critical Bug Discovery 🐛
-- **Stress testing is ESSENTIAL** - found data loss bug in 9 tests
-- Bug #10 (merge iterator) would have caused silent data loss in production
-- L0 SSTable ordering is oldest→newest (higher index = newer)
-- Must check ALL levels in reverse order, not just L0
-- Testing only catches what exists, not what's missing
-
-### Nov 16, 2025 - Feature Audit
-- **Previous audit was WRONG about range iterators** - we have them!
-- `db.range()` with k-way merge iterator already implemented
-- Main gap is snapshots (point-in-time consistency), not range queries
-- Situation is better than initially thought
-
-### Nov 16, 2025 - CI Fixes
-- Rust 2024 edition doesn't exist yet (changed to 2021)
-- Let-chain syntax (`if let && condition`) is Rust 2024 only
-- SIMD features need nightly, must have fallbacks
-
-### Previous (Still Valid)
-- Library optimizations matter (LZ4: +34.7%)
-- Profile before optimizing
-- Research validation: ALEX +55% reads matches paper
-
----
-
-## Next Actions
-
-1. ✅ **Feature audit complete** - Range queries work
-2. ✅ **Implement snapshots** - Point-in-time consistency
-3. ✅ **Add convenience APIs** - iter(), prefix()
-4. ✅ **Create stress tests** - 9 comprehensive tests
-5. ✅ **Fix critical bug** - Merge iterator data loss
-6. 🔄 **Fuzzing campaign** - 1h campaign running (40 min remaining)
-7. ⏳ **Extended fuzzing** - 24h+ campaigns needed
-8. ⏳ **Long-running soak tests** - 72h+ stability validation
-9. ⏳ **0.0.1 release** - After stability validation
-
----
-
-**Status**: PRE-ALPHA → ALPHA (core features complete, stability testing in progress)
-**Usable For**: Key-value storage, range queries, time series, consistent snapshots
-**Not Ready For**: MVCC transactions, column families
-**Bugs Fixed**: 10 critical bugs (latest: merge iterator data loss)
-**Timeline**: 2-3 weeks to 0.0.1 (stability validation)
-**Updated**: November 16, 2025
+*Next session: Start with block cache implementation (highest ROI for omendb)*
