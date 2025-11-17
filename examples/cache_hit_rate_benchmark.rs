@@ -127,6 +127,21 @@ fn main() {
         stats.cache_hit_rate * 100.0
     );
     println!();
+
+    // Global block cache stats
+    println!("=== Global Block Cache Stats ===");
+    println!("Cache size (blocks): {}", stats.block_cache_size);
+    println!("Cache capacity (blocks): {}", stats.block_cache_capacity);
+    println!(
+        "Cache utilization: {:.2}%",
+        (stats.block_cache_size as f64 / stats.block_cache_capacity as f64) * 100.0
+    );
+    println!(
+        "Estimated memory usage: {:.2} MB",
+        (stats.block_cache_size * 4096) as f64 / 1024.0 / 1024.0
+    );
+    println!();
+
     println!("Expected behavior:");
     println!("- Sequential reads: Moderate hit rate (blocks loaded sequentially)");
     println!("- Random reads: Low hit rate (cache thrashing)");
@@ -135,3 +150,4 @@ fn main() {
     println!("If overall hit rate < 50%, cache is too small or eviction is poor");
     println!("If overall hit rate > 70%, cache is working well");
 }
+
