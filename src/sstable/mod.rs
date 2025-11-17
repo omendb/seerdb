@@ -48,6 +48,29 @@ pub const FLAG_INLINE: u8 = 0x00;
 pub const FLAG_POINTER: u8 = 0x01;
 pub const FLAG_TOMBSTONE: u8 = 0x02;
 
+/// Helper: Handle vLog separation logic (shared by both SSTableBuilder and BufferedSSTableBuilder)
+///
+/// Returns (encoded_value, flag):
+/// - If value is large (>threshold), appends to vLog and returns (pointer_bytes, FLAG_POINTER)
+/// - Otherwise, returns (value, FLAG_INLINE)
+fn handle_vlog_value(
+    key: &Bytes,
+    value: Bytes,
+    vlog: &mut VLog,
+    threshold: Option<usize>,
+) -> Result<(Bytes, u8)> {
+    if value.len() > threshold.unwrap_or(usize::MAX) {
+        // Large value: store in vLog and return pointer
+        let pointer = vlog.append(key, &value).map_err(|e| {
+            SSTableError::VLog(format!("Failed to append to vLog: {}", e))
+        })?;
+        Ok((pointer.to_bytes(), FLAG_POINTER))
+    } else {
+        // Small value: store inline
+        Ok((value, FLAG_INLINE))
+    }
+}
+
 /// Top-level index entry (loaded into RAM)
 #[derive(Debug, Clone)]
 struct TopLevelIndexEntry {
@@ -231,22 +254,8 @@ impl SSTableBuilder {
     pub fn add_with_vlog(&mut self, key: Bytes, value: Bytes, vlog: &mut VLog) -> Result<()> {
         self.bloom.insert(&key);
 
-        let (flag, data) = if let Some(threshold) = self.vlog_threshold {
-            if value.len() > threshold {
-                let pointer = vlog
-                    .append(&key, &value)
-                    .map_err(|e| SSTableError::VLog(e.to_string()))?;
-
-                let mut ptr_data = BytesMut::with_capacity(12);
-                ptr_data.extend_from_slice(&pointer.offset.to_le_bytes());
-                ptr_data.extend_from_slice(&pointer.length.to_le_bytes());
-                (FLAG_POINTER, ptr_data.freeze())
-            } else {
-                (FLAG_INLINE, value)
-            }
-        } else {
-            (FLAG_INLINE, value)
-        };
+        // Use shared helper for vLog handling
+        let (data, flag) = handle_vlog_value(&key, value, vlog, self.vlog_threshold)?;
 
         let entry = self.encode_entry(&key, flag, &data);
 
@@ -599,22 +608,8 @@ impl BufferedSSTableBuilder {
     pub fn add_with_vlog(&mut self, key: Bytes, value: Bytes, vlog: &mut VLog) -> Result<()> {
         self.bloom.insert(&key);
 
-        let (flag, data) = if let Some(threshold) = self.vlog_threshold {
-            if value.len() > threshold {
-                let pointer = vlog
-                    .append(&key, &value)
-                    .map_err(|e| SSTableError::VLog(e.to_string()))?;
-
-                let mut ptr_data = BytesMut::with_capacity(12);
-                ptr_data.extend_from_slice(&pointer.offset.to_le_bytes());
-                ptr_data.extend_from_slice(&pointer.length.to_le_bytes());
-                (FLAG_POINTER, ptr_data.freeze())
-            } else {
-                (FLAG_INLINE, value)
-            }
-        } else {
-            (FLAG_INLINE, value)
-        };
+        // Use shared helper for vLog handling
+        let (data, flag) = handle_vlog_value(&key, value, vlog, self.vlog_threshold)?;
 
         let entry = self.encode_entry(&key, flag, &data);
 

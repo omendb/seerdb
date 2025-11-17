@@ -1891,29 +1891,102 @@ impl DB {
 
         let mut vlog_guard = self.vlog.lock().expect("vLog mutex poisoned");
 
+        // Check if we're using cloud storage (feature-gated)
+        #[cfg(feature = "object-store")]
+        let use_cloud_storage = self.storage_backend.is_some();
+        #[cfg(not(feature = "object-store"))]
+        let use_cloud_storage = false;
+
         if let (Some(threshold), Some(ref mut vlog)) =
             (self.options.vlog_threshold, vlog_guard.as_mut())
         {
             // KV separation enabled - use vLog for large values
-            let mut builder = SSTableBuilder::create(sstable_path)?
-                .with_vlog_threshold(threshold)
-                .with_max_sequence(sequence);
+            #[cfg(feature = "object-store")]
+            {
+                if use_cloud_storage {
+                    // Cloud storage + vLog: use BufferedSSTableBuilder
+                    use crate::sstable::BufferedSSTableBuilder;
 
-            for (key, entry) in entries {
-                match entry {
-                    Entry::Value(value) => {
-                        builder.add_with_vlog(key.clone(), value.clone(), vlog)?;
+                    let mut builder = BufferedSSTableBuilder::new()
+                        .with_vlog_threshold(threshold)
+                        .with_max_sequence(sequence);
+
+                    for (key, entry) in entries {
+                        match entry {
+                            Entry::Value(value) => {
+                                builder.add_with_vlog(key.clone(), value.clone(), vlog)?;
+                            }
+                            Entry::Tombstone => {
+                                builder.add_tombstone(key.clone())?;
+                            }
+                        }
                     }
-                    Entry::Tombstone => {
-                        builder.add_tombstone(key.clone())?;
+
+                    // ALWAYS sync vLog after flush
+                    vlog.sync()?;
+
+                    // Build SSTable in memory
+                    let bytes = builder.finish_to_bytes()?;
+
+                    // Write to local disk (single syscall)
+                    std::fs::write(sstable_path, &bytes)?;
+
+                    // Upload to cloud storage
+                    if let Some(ref backend) = self.storage_backend {
+                        backend.write_sstable(sstable_path, &bytes)?;
+                        debug!(
+                            path = ?sstable_path,
+                            size_bytes = bytes.len(),
+                            "SSTable with vLog uploaded to cloud storage"
+                        );
                     }
+                } else {
+                    // No cloud storage + vLog: use traditional SSTableBuilder
+                    let mut builder = SSTableBuilder::create(sstable_path)?
+                        .with_vlog_threshold(threshold)
+                        .with_max_sequence(sequence);
+
+                    for (key, entry) in entries {
+                        match entry {
+                            Entry::Value(value) => {
+                                builder.add_with_vlog(key.clone(), value.clone(), vlog)?;
+                            }
+                            Entry::Tombstone => {
+                                builder.add_tombstone(key.clone())?;
+                            }
+                        }
+                    }
+
+                    builder.finish()?;
+
+                    // ALWAYS sync vLog after flush
+                    vlog.sync()?;
                 }
             }
 
-            builder.finish()?;
+            // When object-store feature is not enabled, always use traditional SSTableBuilder
+            #[cfg(not(feature = "object-store"))]
+            {
+                let mut builder = SSTableBuilder::create(sstable_path)?
+                    .with_vlog_threshold(threshold)
+                    .with_max_sequence(sequence);
 
-            // ALWAYS sync vLog after flush
-            vlog.sync()?;
+                for (key, entry) in entries {
+                    match entry {
+                        Entry::Value(value) => {
+                            builder.add_with_vlog(key.clone(), value.clone(), vlog)?;
+                        }
+                        Entry::Tombstone => {
+                            builder.add_tombstone(key.clone())?;
+                        }
+                    }
+                }
+
+                builder.finish()?;
+
+                // ALWAYS sync vLog after flush
+                vlog.sync()?;
+            }
         } else {
             // No KV separation - traditional flush
             drop(vlog_guard);
@@ -4427,7 +4500,7 @@ mod tests {
             data_dir: dir.path().to_path_buf(),
             memtable_capacity: 1000, // Small to trigger flushes
             storage_config: Some(StorageConfig::Custom(store.clone())),
-            vlog_threshold: None, // Disable vLog to use BufferedSSTableBuilder path
+            vlog_threshold: None, // Disable vLog to test non-vLog path
             ..Default::default()
         };
 
@@ -4467,6 +4540,77 @@ mod tests {
         assert!(
             listed > 0,
             "Object store should have at least one SSTable uploaded"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "object-store")]
+    fn test_db_cloud_storage_with_vlog() {
+        use object_store::{memory::InMemory, ObjectStore};
+
+        let dir = tempdir().unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        // Create in-memory object store for testing
+        let store = std::sync::Arc::new(InMemory::new());
+        let _guard = rt.enter();
+
+        let options = DBOptions {
+            data_dir: dir.path().to_path_buf(),
+            memtable_capacity: 1000, // Small to trigger flushes
+            storage_config: Some(StorageConfig::Custom(store.clone())),
+            vlog_threshold: Some(100), // Enable vLog for large values
+            ..Default::default()
+        };
+
+        let db = DB::open(options).unwrap();
+
+        // Write mixed data: small and large values
+        for i in 0..30 {
+            let key = format!("key_{:03}", i);
+            if i % 2 == 0 {
+                // Small values (inline)
+                let value = format!("small_{:03}", i);
+                db.put(key.as_bytes(), value.as_bytes()).unwrap();
+            } else {
+                // Large values (vLog)
+                let value = vec![b'X'; 200];
+                db.put(key.as_bytes(), &value).unwrap();
+            }
+        }
+
+        // Flush to trigger upload
+        db.flush().unwrap();
+
+        // Verify all data is readable
+        for i in 0..30 {
+            let key = format!("key_{:03}", i);
+            let value = db.get(key.as_bytes()).unwrap();
+            assert!(value.is_some(), "Key {} should exist", i);
+            if i % 2 == 0 {
+                assert_eq!(value.unwrap(), Bytes::from(format!("small_{:03}", i)));
+            } else {
+                assert_eq!(value.unwrap().len(), 200);
+            }
+        }
+
+        // Check that object store has SSTable data
+        let listed = rt.block_on(async {
+            use futures::TryStreamExt;
+            let mut count = 0;
+            let mut stream = store.list(None);
+            while let Some(meta) = stream.try_next().await.unwrap() {
+                if meta.location.to_string().ends_with(".sst") {
+                    count += 1;
+                }
+            }
+            count
+        });
+
+        // Should have at least one SSTable uploaded
+        assert!(
+            listed > 0,
+            "Object store should have at least one SSTable with vLog uploaded"
         );
     }
 }

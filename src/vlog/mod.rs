@@ -44,6 +44,18 @@ pub struct ValuePointer {
     pub length: u32,
 }
 
+impl ValuePointer {
+    /// Encode pointer to bytes for SSTable storage
+    ///
+    /// Format: [offset: u64][length: u32] = 12 bytes total
+    pub fn to_bytes(&self) -> Bytes {
+        let mut buf = bytes::BytesMut::with_capacity(12);
+        buf.extend_from_slice(&self.offset.to_le_bytes());
+        buf.extend_from_slice(&self.length.to_le_bytes());
+        buf.freeze()
+    }
+}
+
 /// Value Log record format:
 /// [key_len: u32][key: bytes][value_len: u32][value: bytes][crc: u32]
 ///

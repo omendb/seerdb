@@ -3,12 +3,23 @@
 **Last Updated**: November 17, 2025
 **Current Phase**: Feature Integration & Optimization
 **Version**: 0.0.1-alpha (published to crates.io)
-**Tests**: 174 tests passing (168 lib + 6 object-store)
+**Tests**: 175 tests passing (168 lib + 6 object-store + 1 cloud integration)
 **Coverage**: 81.54%
 
 ---
 
 ## Recent Progress (Nov 17, 2025)
+
+### ObjectStore Wired into DB ✅ **LATEST**
+- Added `storage_backend` field to DB struct (feature-gated)
+- Initialize from `StorageConfig` in `DB::open()`
+- Flush path uses `BufferedSSTableBuilder` when cloud storage configured
+- Compaction path uses `compact_sstables_buffered()` for cloud uploads
+- Automatic SSTable uploads to cloud storage (S3/GCS/Azure)
+- Background compaction stays local-only (simpler implementation)
+- Added cloud storage integration test (in-memory object store)
+- **175 tests passing** (168 lib + 6 object-store + 1 cloud integration)
+- **Cloud storage complete!** Ready for S3/GCS/Azure deployment
 
 ### BufferedSSTableBuilder IMPLEMENTED ✅
 - In-memory SSTable builder (buffers all data before writing)
@@ -17,7 +28,6 @@
 - Same API as SSTableBuilder: `add()`, `add_raw()`, `add_tombstone()`
 - 9 comprehensive tests added (168 total lib tests passing)
 - **Enables**: Cloud storage uploads (S3/GCS/Azure PUT), reduced local disk syscalls
-- **Next**: Wire into DB flush path for cloud storage integration
 
 ### Global Block Cache IMPLEMENTED ✅
 - Shared cache across all SSTables (vs per-SSTable isolated caches)
