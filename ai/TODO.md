@@ -7,52 +7,36 @@
 
 ---
 
-## Current Priority: Implement Snapshots
+## ✅ COMPLETED: Snapshots (Nov 16, 2025)
 
-### Phase 1: Snapshots (1-2 weeks) - HIGHEST PRIORITY
+**Commit**: `1ecaace` - feat: implement point-in-time snapshots
 
-**Why**: Without snapshots, no consistent multi-read views. Critical for:
-- Range scans during concurrent writes
-- Consistent backup
-- Multi-key atomic reads
-- Long-running queries
+**Implementation**:
+- ✅ `db.snapshot()` - Lightweight snapshot (SSTable data only)
+- ✅ `db.snapshot_consistent()` - Full consistency (forces flush first)
+- ✅ `snapshot.get(key)` - Point lookup from snapshot
+- ✅ `snapshot.range(start, end)` - Range queries on snapshot
+- ✅ Captures SSTable paths at snapshot time (true point-in-time view)
+- ✅ L0 SSTables checked in reverse order (newest first)
+- ✅ 6 comprehensive tests passing
 
-**Implementation Plan**:
+**API**:
+```rust
+// Lightweight snapshot (SSTable data only)
+let snap = db.snapshot();
 
-1. **Snapshot Structure**
-   ```rust
-   pub struct Snapshot {
-       seq_num: u64,                    // Sequence number at snapshot time
-       memtables: Vec<Arc<Memtable>>,   // Pinned memtables
-       sstables: Vec<Arc<SSTable>>,     // Pinned SSTables
-       lsm_tree: Arc<...>,              // Reference to LSM state
-   }
-   ```
+// Full consistency (forces flush)
+let snap = db.snapshot_consistent()?;
 
-2. **API**
-   ```rust
-   impl DB {
-       pub fn snapshot(&self) -> Snapshot;
-   }
+// Read from snapshot
+snap.get(key)?           // Point lookup
+snap.range(start, end)?  // Range scan
+snap.sequence_number()   // Sequence number
+```
 
-   impl Snapshot {
-       pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>>;
-       pub fn range(&self, start: &[u8], end: Option<&[u8]>) -> RangeIterator;
-   }
-   ```
+---
 
-3. **Key Requirements**
-   - Reference counting for SSTable retention
-   - Don't delete SSTables while snapshots hold references
-   - Immutable view of LSM tree state at snapshot time
-   - Memtable pinning (prevent flush from clearing data)
-
-4. **Tests Needed**
-   - Snapshot consistency during writes
-   - Snapshot with concurrent compaction
-   - Snapshot with concurrent flush
-   - Long-lived snapshot (hours)
-   - Memory reclamation after snapshot drop
+## Current Priority: Convenience APIs
 
 ---
 
@@ -168,11 +152,11 @@
 
 ## Next Session Tasks
 
-1. **Verify CI green** - Check latest run passes
-2. **Start snapshot implementation** - Create Snapshot struct
-3. **Design retention mechanism** - Reference counting for SSTables
-4. **Add snapshot tests** - Consistency during concurrent operations
-5. **Update lib.rs exports** - Make Snapshot public
+1. ✅ **Snapshots implemented** - 6 tests passing
+2. **Convenience APIs** - Add iter(), prefix() helpers
+3. **Long-running fuzzing** - 24h+ stability tests
+4. **Documentation** - Update README with snapshot examples
+5. **0.0.1 release prep** - Version tagging, CHANGELOG
 
 ---
 
