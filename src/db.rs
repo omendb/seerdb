@@ -628,6 +628,11 @@ pub struct DB {
     /// Key: (sstable_path_hash, block_offset), Value: Block data (raw bytes)
     /// Using path hash to avoid PathBuf cloning overhead
     global_block_cache: Arc<Cache<(u64, u64), Bytes>>,
+    /// Cloud storage backend (only available with --features object-store)
+    /// When Some, SSTables are written to cloud storage (S3/GCS/Azure)
+    /// WAL always remains on local disk for durability
+    #[cfg(feature = "object-store")]
+    storage_backend: Option<Arc<dyn crate::storage::Storage>>,
 }
 
 impl DB {
@@ -851,6 +856,54 @@ impl DB {
         let (wal_tx, wal_worker) =
             crate::background_workers::spawn_wal_writer(Arc::clone(&wal), Arc::clone(&wal_healthy));
 
+        // Create cloud storage backend if configured (feature-gated)
+        #[cfg(feature = "object-store")]
+        let storage_backend: Option<Arc<dyn crate::storage::Storage>> = {
+            if let Some(ref config) = options.storage_config {
+                let backend: Arc<dyn crate::storage::Storage> = match config {
+                    StorageConfig::S3 {
+                        bucket,
+                        region,
+                        endpoint,
+                        prefix,
+                    } => Arc::new(crate::storage::ObjectStoreBackend::s3(
+                        bucket,
+                        region,
+                        endpoint.as_deref(),
+                        prefix.clone(),
+                    )?),
+                    StorageConfig::Gcs {
+                        bucket,
+                        service_account_path,
+                        prefix,
+                    } => Arc::new(crate::storage::ObjectStoreBackend::gcs(
+                        bucket,
+                        service_account_path.as_deref(),
+                        prefix.clone(),
+                    )?),
+                    StorageConfig::Azure {
+                        container,
+                        account,
+                        prefix,
+                    } => Arc::new(crate::storage::ObjectStoreBackend::azure(
+                        container,
+                        account,
+                        prefix.clone(),
+                    )?),
+                    StorageConfig::Custom(store) => Arc::new(
+                        crate::storage::ObjectStoreBackend::new(Arc::clone(store), String::new()),
+                    ),
+                };
+                info!(
+                    storage = ?config,
+                    "Cloud storage backend configured"
+                );
+                Some(backend)
+            } else {
+                None
+            }
+        };
+
         let db = Self {
             options: options.clone(),
             wal,
@@ -881,6 +934,8 @@ impl DB {
             last_disk_check: Arc::new(AtomicU64::new(0)),
             cached_available_space: Arc::new(AtomicU64::new(u64::MAX)), // Start with "infinite" space
             global_block_cache: Arc::new(Cache::new(options.block_cache_capacity)),
+            #[cfg(feature = "object-store")]
+            storage_backend,
         };
 
         // Flush memtables if any partition filled up during recovery
@@ -1863,20 +1918,79 @@ impl DB {
             // No KV separation - traditional flush
             drop(vlog_guard);
 
-            let mut builder = SSTableBuilder::create(sstable_path)?.with_max_sequence(sequence);
+            // Use BufferedSSTableBuilder when cloud storage is enabled (fewer syscalls + upload)
+            #[cfg(feature = "object-store")]
+            {
+                if self.storage_backend.is_some() {
+                    use crate::sstable::BufferedSSTableBuilder;
 
-            for (key, entry) in entries {
-                match entry {
-                    Entry::Value(value) => {
-                        builder.add(key.clone(), value.clone())?;
+                    let mut builder = BufferedSSTableBuilder::new().with_max_sequence(sequence);
+
+                    for (key, entry) in entries {
+                        match entry {
+                            Entry::Value(value) => {
+                                builder.add(key.clone(), value.clone())?;
+                            }
+                            Entry::Tombstone => {
+                                builder.add_tombstone(key.clone())?;
+                            }
+                        }
                     }
-                    Entry::Tombstone => {
-                        builder.add_tombstone(key.clone())?;
+
+                    // Build SSTable in memory
+                    let bytes = builder.finish_to_bytes()?;
+
+                    // Write to local disk (single syscall)
+                    std::fs::write(sstable_path, &bytes)?;
+
+                    // Upload to cloud storage
+                    if let Some(ref backend) = self.storage_backend {
+                        backend.write_sstable(sstable_path, &bytes)?;
+                        debug!(
+                            path = ?sstable_path,
+                            size_bytes = bytes.len(),
+                            "SSTable uploaded to cloud storage"
+                        );
                     }
+                } else {
+                    // No cloud storage - use traditional SSTableBuilder
+                    let mut builder =
+                        SSTableBuilder::create(sstable_path)?.with_max_sequence(sequence);
+
+                    for (key, entry) in entries {
+                        match entry {
+                            Entry::Value(value) => {
+                                builder.add(key.clone(), value.clone())?;
+                            }
+                            Entry::Tombstone => {
+                                builder.add_tombstone(key.clone())?;
+                            }
+                        }
+                    }
+
+                    builder.finish()?;
                 }
             }
 
-            builder.finish()?;
+            // When object-store feature is not enabled, always use traditional SSTableBuilder
+            #[cfg(not(feature = "object-store"))]
+            {
+                let mut builder =
+                    SSTableBuilder::create(sstable_path)?.with_max_sequence(sequence);
+
+                for (key, entry) in entries {
+                    match entry {
+                        Entry::Value(value) => {
+                            builder.add(key.clone(), value.clone())?;
+                        }
+                        Entry::Tombstone => {
+                            builder.add_tombstone(key.clone())?;
+                        }
+                    }
+                }
+
+                builder.finish()?;
+            }
         }
 
         Ok(())
@@ -1927,19 +2041,37 @@ impl DB {
 
     /// Compact a level
     fn compact_level(&self, level_num: usize) -> Result<()> {
-        Self::do_compact_level(
-            &self.lsm,
-            &self.lsm_mutex,
-            &self.sstable_counter,
-            &self.options.data_dir,
-            level_num,
-            &self.metrics,
-            &self.max_flushed_seq,
-            &self.pending_deletions,
-        )
+        #[cfg(feature = "object-store")]
+        {
+            Self::do_compact_level(
+                &self.lsm,
+                &self.lsm_mutex,
+                &self.sstable_counter,
+                &self.options.data_dir,
+                level_num,
+                &self.metrics,
+                &self.max_flushed_seq,
+                &self.pending_deletions,
+                &self.storage_backend,
+            )
+        }
+        #[cfg(not(feature = "object-store"))]
+        {
+            Self::do_compact_level(
+                &self.lsm,
+                &self.lsm_mutex,
+                &self.sstable_counter,
+                &self.options.data_dir,
+                level_num,
+                &self.metrics,
+                &self.max_flushed_seq,
+                &self.pending_deletions,
+            )
+        }
     }
 
     /// Internal compaction implementation (shared by both sync and async paths)
+    #[cfg(feature = "object-store")]
     pub(crate) fn do_compact_level(
         lsm: &Arc<ArcSwap<LSMTree>>,
         lsm_mutex: &Arc<Mutex<()>>,
@@ -1949,6 +2081,57 @@ impl DB {
         metrics: &Arc<MetricsCollector>,
         max_flushed_seq: &Arc<AtomicU64>,
         pending_deletions: &Arc<Mutex<Vec<(PathBuf, std::time::Instant)>>>,
+        storage_backend: &Option<Arc<dyn crate::storage::Storage>>,
+    ) -> Result<()> {
+        Self::do_compact_level_impl(
+            lsm,
+            lsm_mutex,
+            sstable_counter,
+            data_dir,
+            level_num,
+            metrics,
+            max_flushed_seq,
+            pending_deletions,
+            storage_backend,
+        )
+    }
+
+    /// Internal compaction implementation (no cloud storage)
+    #[cfg(not(feature = "object-store"))]
+    pub(crate) fn do_compact_level(
+        lsm: &Arc<ArcSwap<LSMTree>>,
+        lsm_mutex: &Arc<Mutex<()>>,
+        sstable_counter: &Arc<Mutex<u64>>,
+        data_dir: &Path,
+        level_num: usize,
+        metrics: &Arc<MetricsCollector>,
+        max_flushed_seq: &Arc<AtomicU64>,
+        pending_deletions: &Arc<Mutex<Vec<(PathBuf, std::time::Instant)>>>,
+    ) -> Result<()> {
+        Self::do_compact_level_impl(
+            lsm,
+            lsm_mutex,
+            sstable_counter,
+            data_dir,
+            level_num,
+            metrics,
+            max_flushed_seq,
+            pending_deletions,
+        )
+    }
+
+    /// Internal compaction implementation with optional cloud storage support
+    #[cfg(feature = "object-store")]
+    fn do_compact_level_impl(
+        lsm: &Arc<ArcSwap<LSMTree>>,
+        lsm_mutex: &Arc<Mutex<()>>,
+        sstable_counter: &Arc<Mutex<u64>>,
+        data_dir: &Path,
+        level_num: usize,
+        metrics: &Arc<MetricsCollector>,
+        max_flushed_seq: &Arc<AtomicU64>,
+        pending_deletions: &Arc<Mutex<Vec<(PathBuf, std::time::Instant)>>>,
+        storage_backend: &Option<Arc<dyn crate::storage::Storage>>,
     ) -> Result<()> {
         let compaction_start = Instant::now();
 
@@ -2015,8 +2198,32 @@ impl DB {
 
         // Arc automatically dropped (lock-free!)
 
-        // Compact SSTables
-        let (result_path, size) = compact_sstables(&input_paths, &output_path)?;
+        // Compact SSTables (use buffered version when cloud storage is configured)
+        let (result_path, size) = if storage_backend.is_some() {
+            use crate::compaction::compact_sstables_buffered;
+
+            // Build SSTable in memory
+            let bytes = compact_sstables_buffered(&input_paths)?;
+            let size = bytes.len() as u64;
+
+            // Write to local disk (single syscall)
+            std::fs::write(&output_path, &bytes)?;
+
+            // Upload to cloud storage
+            if let Some(ref backend) = storage_backend {
+                backend.write_sstable(&output_path, &bytes)?;
+                debug!(
+                    path = ?output_path,
+                    size_bytes = size,
+                    "Compacted SSTable uploaded to cloud storage"
+                );
+            }
+
+            (output_path, size)
+        } else {
+            // No cloud storage - use traditional compaction
+            compact_sstables(&input_paths, &output_path)?
+        };
 
         // Track physical bytes written during compaction
         metrics.record_physical_bytes(size);
@@ -2049,6 +2256,117 @@ impl DB {
 
         // Clean up old pending deletions (files queued >5 seconds ago)
         crate::db_helpers::cleanup_old_deletions(&pending_deletions);
+
+        let compaction_duration_ms = compaction_start.elapsed().as_millis();
+        info!(
+            level = level_num,
+            input_sstables = input_count,
+            output_size_bytes = size,
+            duration_ms = compaction_duration_ms,
+            "Compaction complete"
+        );
+
+        Ok(())
+    }
+
+    /// Internal compaction implementation (no cloud storage support)
+    #[cfg(not(feature = "object-store"))]
+    fn do_compact_level_impl(
+        lsm: &Arc<ArcSwap<LSMTree>>,
+        lsm_mutex: &Arc<Mutex<()>>,
+        sstable_counter: &Arc<Mutex<u64>>,
+        data_dir: &Path,
+        level_num: usize,
+        metrics: &Arc<MetricsCollector>,
+        max_flushed_seq: &Arc<AtomicU64>,
+        pending_deletions: &Arc<Mutex<Vec<(PathBuf, std::time::Instant)>>>,
+    ) -> Result<()> {
+        let compaction_start = Instant::now();
+
+        // Load LSM tree (LOCK-FREE!)
+        let lsm_arc = lsm.load();
+
+        // Get SSTables to compact
+        let level = lsm_arc.level(level_num).ok_or(DBError::NotOpened)?;
+        let all_input_paths: Vec<PathBuf> = level.sstables().to_vec();
+
+        if all_input_paths.is_empty() {
+            return Ok(());
+        }
+
+        // **CRITICAL FIX**: Only compact SSTables with max_sequence <= max_flushed_seq
+        let safe_seq = max_flushed_seq.load(Ordering::SeqCst);
+        let mut input_paths = Vec::new();
+        let mut skipped_count = 0;
+
+        for path in all_input_paths {
+            if let Ok(sstable) = SSTable::open(&path) {
+                if sstable.max_sequence() <= safe_seq {
+                    input_paths.push(path);
+                } else {
+                    skipped_count += 1;
+                    debug!(
+                        path = ?path,
+                        sstable_seq = sstable.max_sequence(),
+                        safe_seq = safe_seq,
+                        "Skipping SSTable with sequence > max_flushed_seq"
+                    );
+                }
+            }
+        }
+
+        if input_paths.is_empty() {
+            debug!(
+                level = level_num,
+                skipped = skipped_count,
+                "No SSTables eligible for compaction"
+            );
+            return Ok(());
+        }
+
+        let input_count = input_paths.len();
+        debug!(
+            level = level_num,
+            input_sstables = input_count,
+            skipped_sstables = skipped_count,
+            safe_seq = safe_seq,
+            "Starting compaction"
+        );
+
+        // Generate output path
+        let mut counter = sstable_counter
+            .lock()
+            .expect("SSTable counter mutex poisoned");
+        let output_path = data_dir.join(format!("L{}_{:06}.sst", level_num + 1, *counter));
+        *counter += 1;
+        drop(counter);
+
+        // Compact SSTables
+        let (result_path, size) = compact_sstables(&input_paths, &output_path)?;
+
+        // Track physical bytes written during compaction
+        metrics.record_physical_bytes(size);
+
+        // CRITICAL FIX (Bug #7c): Serialize LSM tree updates
+        {
+            let _lsm_lock = lsm_mutex.lock().expect("LSM mutex poisoned");
+
+            let mut lsm_clone = (**lsm.load()).clone();
+            lsm_clone.add_to_level(level_num + 1, result_path, size);
+            lsm_clone.remove_sstables_from_level(level_num, &input_paths);
+            lsm.store(Arc::new(lsm_clone));
+        }
+
+        // PRODUCTION FIX (Bug #7b): Queue SSTables for delayed deletion
+        {
+            let mut pending = pending_deletions.lock().unwrap();
+            let now = std::time::Instant::now();
+            for path in input_paths {
+                pending.push((path, now));
+            }
+        }
+
+        crate::db_helpers::cleanup_old_deletions(pending_deletions);
 
         let compaction_duration_ms = compaction_start.elapsed().as_millis();
         info!(
@@ -4090,6 +4408,65 @@ mod tests {
             stats.cache_hits > 0,
             "Should have cache hits from repeated reads: hits={}",
             stats.cache_hits
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "object-store")]
+    fn test_db_with_cloud_storage_backend() {
+        use object_store::{memory::InMemory, ObjectStore};
+
+        let dir = tempdir().unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        // Create in-memory object store for testing
+        let store = std::sync::Arc::new(InMemory::new());
+        let _guard = rt.enter();
+
+        let options = DBOptions {
+            data_dir: dir.path().to_path_buf(),
+            memtable_capacity: 1000, // Small to trigger flushes
+            storage_config: Some(StorageConfig::Custom(store.clone())),
+            vlog_threshold: None, // Disable vLog to use BufferedSSTableBuilder path
+            ..Default::default()
+        };
+
+        let db = DB::open(options).unwrap();
+
+        // Write enough data to trigger flush
+        for i in 0..50 {
+            let key = format!("cloud_key_{:03}", i);
+            let value = format!("cloud_value_{:03}", i);
+            db.put(key.as_bytes(), value.as_bytes()).unwrap();
+        }
+
+        // Flush to trigger upload
+        db.flush().unwrap();
+
+        // Verify data is readable
+        for i in 0..50 {
+            let key = format!("cloud_key_{:03}", i);
+            let expected = format!("cloud_value_{:03}", i);
+            assert_eq!(db.get(key.as_bytes()).unwrap(), Some(Bytes::from(expected)));
+        }
+
+        // Check that object store has data
+        let listed = rt.block_on(async {
+            use futures::TryStreamExt;
+            let mut count = 0;
+            let mut stream = store.list(None);
+            while let Some(meta) = stream.try_next().await.unwrap() {
+                if meta.location.to_string().ends_with(".sst") {
+                    count += 1;
+                }
+            }
+            count
+        });
+
+        // Should have at least one SSTable uploaded
+        assert!(
+            listed > 0,
+            "Object store should have at least one SSTable uploaded"
         );
     }
 }

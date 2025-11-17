@@ -57,6 +57,10 @@ pub(crate) enum WALMessage {
 
 /// Static compaction method for background worker thread
 /// This is called from the worker thread without &self
+///
+/// NOTE: Background compaction does NOT upload to cloud storage yet.
+/// This keeps the background worker simple and avoids passing storage_backend through threads.
+/// Synchronous compaction and flush operations DO support cloud storage.
 pub(crate) fn run_compaction(
     lsm: &Arc<ArcSwap<LSMTree>>,
     lsm_mutex: &Arc<Mutex<()>>,
@@ -69,16 +73,38 @@ pub(crate) fn run_compaction(
 ) -> Result<()> {
     use crate::db::DB;
 
-    DB::do_compact_level(
-        lsm,
-        lsm_mutex,
-        sstable_counter,
-        data_dir,
-        level_num,
-        metrics,
-        max_flushed_seq,
-        pending_deletions,
-    )
+    // Background compaction uses local file-based approach (no cloud upload)
+    // This simplifies the implementation - cloud upload is supported in:
+    // - Synchronous compaction (compact_level)
+    // - Flush operations (build_sstable_from_entries)
+    #[cfg(feature = "object-store")]
+    {
+        DB::do_compact_level(
+            lsm,
+            lsm_mutex,
+            sstable_counter,
+            data_dir,
+            level_num,
+            metrics,
+            max_flushed_seq,
+            pending_deletions,
+            &None, // No cloud storage for background worker
+        )
+    }
+
+    #[cfg(not(feature = "object-store"))]
+    {
+        DB::do_compact_level(
+            lsm,
+            lsm_mutex,
+            sstable_counter,
+            data_dir,
+            level_num,
+            metrics,
+            max_flushed_seq,
+            pending_deletions,
+        )
+    }
 }
 
 /// Static flush method for background worker thread

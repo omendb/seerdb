@@ -3,7 +3,8 @@
 
 pub mod merge;
 
-use crate::sstable::{SSTable, SSTableBuilder};
+use crate::sstable::{BufferedSSTableBuilder, SSTable, SSTableBuilder};
+use bytes::Bytes;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
@@ -68,6 +69,49 @@ pub fn compact_sstables(
     let size = metadata.len();
 
     Ok((output_path, size))
+}
+
+/// Compact multiple SSTables into bytes (for cloud storage support)
+///
+/// Same as `compact_sstables` but buffers the output in memory and returns
+/// the complete SSTable as bytes. This enables:
+/// - Single-write local disk operations (fewer syscalls)
+/// - Cloud storage uploads (S3/GCS/Azure)
+///
+/// # Arguments
+/// * `input_paths` - Paths to SSTables to compact (newer first)
+///
+/// # Returns
+/// Complete SSTable as bytes (caller writes to file and/or uploads to cloud)
+pub fn compact_sstables_buffered(input_paths: &[PathBuf]) -> Result<Bytes> {
+    if input_paths.is_empty() {
+        return Err(CompactionError::NoInput);
+    }
+
+    // Open all input SSTables
+    let mut sstables = Vec::new();
+    for path in input_paths {
+        let sstable = SSTable::open(path)?;
+        sstables.push(sstable);
+    }
+
+    // Create merge iterator
+    let merge = MergeIterator::new(sstables)?;
+
+    // Build new SSTable in memory
+    let mut builder = BufferedSSTableBuilder::new();
+
+    for result in merge {
+        let (key, value) = result?;
+        // Use add_raw to preserve vlog pointers (FLAG_POINTER + data)
+        // without double-wrapping with FLAG_INLINE
+        builder.add_raw(key, value)?;
+    }
+
+    // Finish building and return bytes
+    let bytes = builder.finish_to_bytes()?;
+
+    Ok(bytes)
 }
 
 /// Represents a level in the LSM tree
