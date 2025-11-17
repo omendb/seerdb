@@ -3,18 +3,21 @@
 **Last Updated**: November 17, 2025
 **Current Phase**: Feature Integration & Optimization
 **Version**: 0.0.1-alpha (published to crates.io)
-**Tests**: 162 tests passing (156 lib + 6 object-store)
+**Tests**: 165 tests passing (159 lib + 6 object-store)
 **Coverage**: 81.54%
 
 ---
 
 ## Recent Progress (Nov 17, 2025)
 
-### Published to crates.io ✅
-- Version: `seerdb = "0.0.1-alpha"`
-- 115 files, 210.7KiB compressed
-- Locked down crate name for future releases
-- Tagged: `v0.0.1-alpha`
+### Global Block Cache IMPLEMENTED ✅
+- Shared cache across all SSTables (vs per-SSTable isolated caches)
+- `block_cache_capacity` in DBOptions (default: 16,384 blocks = 64MB)
+- Cache key: (path_hash, block_offset) for uniqueness
+- Metrics: block_cache_size, block_cache_capacity in DBStats
+- 3 comprehensive tests added (159 total lib tests passing)
+- **Expected**: 10-20x disk search improvement for omendb (22 QPS → 200+ QPS)
+- **Next**: Benchmark to validate performance gains
 
 ### Object Store Integration (Phase 1 Complete) ✅
 - `ObjectStoreBackend` - S3, GCS, Azure support
@@ -31,16 +34,23 @@ backend.write_sstable(Path::new("test.sst"), &data)?;
 
 **Not Yet Wired**: SSTableBuilder needs buffered writes to upload directly to cloud
 
+### Published to crates.io ✅
+- Version: `seerdb = "0.0.1-alpha"`
+- 115 files, 210.7KiB compressed
+- Locked down crate name for future releases
+- Tagged: `v0.0.1-alpha`
+
 ---
 
 ## Current Priorities
 
-### 1. **Block Cache** (HIGH - omendb performance)
-**Impact**: 10-20x improvement for disk search (22 QPS → 200+ QPS)
+### 1. **Benchmark Block Cache** (HIGH - validate gains)
+**Status**: IMPLEMENTED ✅ - Need to measure actual performance improvement
 
-Currently caches SSTable metadata only, not data blocks. This causes:
-- Every prefix scan reads from disk
-- 27x slower than in-memory for omendb
+Block cache is now live. Next steps:
+- Benchmark with omendb workload
+- Measure cache hit rate (target: >80%)
+- Validate 10-20x disk search improvement
 
 See: `ai/BLOCK_CACHE_OPTIMIZATION.md` for full design
 
@@ -89,7 +99,7 @@ After SSTableBuilder buffering, need to:
 | Disk Search | 22 QPS | 200+ QPS |
 | Gap | 27x slower | <3x slower |
 
-**Root Cause**: No block cache. Every prefix scan reads from disk.
+**Root Cause**: ~~No block cache. Every prefix scan reads from disk.~~ **ADDRESSED** - Global block cache implemented. Needs benchmarking to validate improvement.
 
 ---
 
@@ -130,7 +140,7 @@ StorageConfig::Azure { container, account, prefix }
 
 ## Code Quality
 
-- **Tests**: 162 total (156 lib + 6 object-store), all passing
+- **Tests**: 165 total (159 lib + 6 object-store), all passing
 - **Coverage**: 81.54%
 - **Memory Safety**: ASAN clean
 - **Thread Safety**: 50+ concurrent tests
@@ -145,11 +155,11 @@ StorageConfig::Azure { container, account, prefix }
 
 ## Next Steps (Priority Order)
 
-1. **Block Cache Implementation** (1-2 days)
-   - Add `block_cache_capacity` to DBOptions
-   - Cache data blocks in quick_cache
-   - Track cache hit/miss metrics
-   - **Expected: 10x disk search improvement**
+1. **Benchmark Block Cache** (0.5 days) ✅ IMPLEMENTED
+   - Block cache is live - needs performance validation
+   - Measure cache hit rates with omendb workload
+   - Validate 10-20x disk search improvement
+   - **Expected: 22 QPS → 200+ QPS**
 
 2. **SSTableBuilder Buffering** (1-2 days)
    - Buffer entire SSTable in memory
@@ -172,11 +182,12 @@ StorageConfig::Azure { container, account, prefix }
 | File | Purpose | Recent Changes |
 |------|---------|----------------|
 | `src/storage.rs` | Storage backend abstraction | +370 lines for ObjectStoreBackend |
-| `src/db.rs` | Main database | +StorageConfig, +DBError::ObjectStore |
-| `src/sstable/mod.rs` | SSTable format | Needs buffered writes |
+| `src/db.rs` | Main database | +global_block_cache, +block_cache_capacity |
+| `src/sstable/mod.rs` | SSTable format | +global cache support, +open_with_global_cache() |
+| `src/metrics.rs` | Observability | +block_cache_size, +block_cache_capacity |
 | `ai/BLOCK_CACHE_OPTIMIZATION.md` | Block cache design | Complete design doc |
 | `ai/design/OBJECT_STORE_INTEGRATION.md` | Cloud storage design | Implementation status |
 
 ---
 
-*Next session: Start with block cache implementation (highest ROI for omendb)*
+*Next session: Benchmark block cache to validate performance gains, then proceed with SSTableBuilder buffering*

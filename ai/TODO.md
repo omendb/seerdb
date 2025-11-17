@@ -7,25 +7,30 @@
 
 ---
 
-## 🔥 HIGHEST PRIORITY: Block Cache (omendb performance)
+## 🔥 HIGHEST PRIORITY: Benchmark Block Cache Performance
 
-**Impact**: 10-20x improvement for disk search (22 QPS → 200+ QPS)
+**Status**: Block cache IMPLEMENTED ✅ - Need to validate performance gains
 
-**Problem**: seerdb caches SSTable metadata only, not data blocks. Every prefix scan hits disk.
+**What Was Done**:
+- [x] Add `block_cache_capacity` to DBOptions (default: 16,384 blocks = 64MB)
+- [x] Add `global_block_cache` field to DB struct (Arc<Cache<(u64, u64), Bytes>>)
+- [x] Add `path_hash` field to SSTable for cache key uniqueness
+- [x] Modify SSTable::load_block() to check global cache first
+- [x] Add block_cache_size and block_cache_capacity metrics to DBStats
+- [x] Wire global cache into DB's SSTable operations (get, range)
+- [x] Tests for cache behavior (3 new tests, 159 total passing)
 
-**Implementation** (see `ai/BLOCK_CACHE_OPTIMIZATION.md`):
-- [ ] Add `block_cache_capacity` to DBOptions (default: 64MB)
-- [ ] Add `block_cache` field to DB struct (Arc<Cache>)
-- [ ] Add `id` field to SSTable for cache key
-- [ ] Modify SSTable::read_block() to check cache first
-- [ ] Add cache hit/miss metrics to DBStats
-- [ ] Tests for cache behavior
-- [ ] Benchmark before/after
+**Next Steps**:
+- [ ] **Benchmark before/after with omendb workload**
+- [ ] Measure actual cache hit rate improvement
+- [ ] Validate 10-20x disk search improvement (22 QPS → 200+ QPS expected)
+- [ ] Profile cache memory efficiency
 
-**Expected Outcome**:
-- Cache hit rate: >80% for hot workloads
-- Disk search: 22 QPS → 200+ QPS
-- Memory overhead: <10% over cache size
+**Implementation Details**:
+- Global shared cache across all SSTables (vs per-SSTable isolated caches before)
+- Cache key: (path_hash, block_offset) for uniqueness
+- LRU eviction via quick_cache (lock-free, concurrent-safe)
+- Default 64MB cache (16,384 blocks × 4KB average block size)
 
 ---
 
@@ -72,17 +77,25 @@
 
 ## 🚀 COMPLETED RECENTLY
 
-### Published to crates.io ✅
-- Version: 0.0.1-alpha
-- Crate name locked down: `seerdb`
-- Tagged: `v0.0.1-alpha`
-- 115 files, 210.7KiB compressed
+### Global Block Cache ✅ (November 17, 2025)
+- Shared cache across all SSTables (vs per-SSTable isolated caches)
+- `block_cache_capacity` in DBOptions (default: 64MB)
+- Cache key: (path_hash, block_offset) for uniqueness
+- Metrics: block_cache_size, block_cache_capacity in DBStats
+- 3 comprehensive tests added (159 total tests passing)
+- **Expected**: 10-20x disk search improvement for omendb
 
 ### Object Store Infrastructure ✅
 - ObjectStoreBackend (S3, GCS, Azure)
 - StorageConfig enum
 - Feature-gated compilation
 - 6 unit tests passing
+
+### Published to crates.io ✅
+- Version: 0.0.1-alpha
+- Crate name locked down: `seerdb`
+- Tagged: `v0.0.1-alpha`
+- 115 files, 210.7KiB compressed
 
 ### Snapshots ✅
 - `db.snapshot()` - Point-in-time views
@@ -141,7 +154,7 @@
 
 | Metric | Current | Target |
 |--------|---------|--------|
-| Tests passing | 162 | All |
+| Tests passing | 165 | All |
 | Coverage | 81.54% | >80% |
 | ASAN clean | ✅ | ✅ |
 | Thread safety | 50+ tests | All passing |
@@ -150,10 +163,11 @@
 
 ## Next Session Plan
 
-**Priority 1**: Block cache implementation
-- Highest ROI for omendb
-- 1-2 days estimated
-- See `ai/BLOCK_CACHE_OPTIMIZATION.md`
+**Priority 1**: Benchmark block cache performance
+- Validate expected 10-20x disk search improvement
+- Measure cache hit rates under omendb workload
+- Profile cache memory efficiency
+- 0.5 days estimated
 
 **Priority 2**: SSTableBuilder buffering
 - Enables cloud storage
@@ -167,7 +181,7 @@
 
 ---
 
-**Tests**: 162 passing (156 lib + 6 object-store)
+**Tests**: 165 passing (159 lib + 6 object-store)
 **Coverage**: 81.54%
 **Performance**: 2.47x RocksDB writes, 2.07x reads
 **Version**: 0.0.1-alpha (published)
