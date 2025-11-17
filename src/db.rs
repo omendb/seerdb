@@ -111,6 +111,9 @@ pub enum DBError {
 
     #[error("Background thread panic: {thread_name} - database may be in inconsistent state")]
     BackgroundThreadPanic { thread_name: String },
+
+    #[error("Object store error: {0}")]
+    ObjectStore(String),
 }
 
 pub type Result<T> = std::result::Result<T, DBError>;

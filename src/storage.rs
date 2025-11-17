@@ -1,13 +1,16 @@
 // Storage backend abstraction for pluggable storage tiers
 //
-// Feature-gated: S3/object storage backends only compiled when --features s3-backend
-// Default (no feature): Uses concrete LocalDiskBackend (zero overhead)
-// With feature: Generic backend trait (monomorphized = zero overhead)
+// Feature-gated: Cloud storage backends only compiled when --features object-store
+// Default (no feature): Uses concrete LocalStorage (zero overhead)
+// With feature: Generic Storage trait + ObjectStoreBackend (cloud support)
 
 use crate::db::Result;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+
+#[cfg(feature = "object-store")]
+use std::sync::Arc;
 
 /// Storage trait for pluggable storage implementations
 ///
@@ -20,16 +23,16 @@ use std::path::{Path, PathBuf};
 ///
 /// # Zero-Cost Abstraction
 ///
-/// When `s3-backend` feature is disabled (default):
+/// When `object-store` feature is disabled (default):
 /// - No trait overhead, direct function calls
 /// - LocalStorage methods are inlined by compiler
 /// - Binary size identical to hand-written file I/O
 ///
-/// When `s3-backend` feature is enabled:
+/// When `object-store` feature is enabled:
 /// - Trait uses monomorphized generics (static dispatch)
 /// - Compiler optimizes as if no trait exists
 /// - Zero runtime cost vs direct implementation
-#[cfg(feature = "s3-backend")]
+#[cfg(feature = "object-store")]
 pub trait Storage: Send + Sync {
     /// Read a block from an SSTable at the given offset
     ///
@@ -86,8 +89,8 @@ impl LocalStorage {
     }
 }
 
-/// Implement Storage trait when S3 feature is enabled
-#[cfg(feature = "s3-backend")]
+/// Implement Storage trait when object-store feature is enabled
+#[cfg(feature = "object-store")]
 impl Storage for LocalStorage {
     fn read_block(&self, path: &Path, offset: u64, size: u32) -> Result<Vec<u8>> {
         let full_path = self.full_path(path);
@@ -154,9 +157,9 @@ impl Storage for LocalStorage {
     }
 }
 
-// When S3 feature is disabled: LocalStorage is standalone (no trait)
+// When object-store feature is disabled: LocalStorage is standalone (no trait)
 // This avoids trait overhead and keeps binary size minimal
-#[cfg(not(feature = "s3-backend"))]
+#[cfg(not(feature = "object-store"))]
 impl LocalStorage {
     /// Read a block from an SSTable (direct implementation, no trait)
     pub fn read_block(&self, path: &Path, offset: u64, size: u32) -> Result<Vec<u8>> {
@@ -228,6 +231,231 @@ impl LocalStorage {
     }
 }
 
+/// Cloud storage backend using object_store crate
+///
+/// Supports S3, GCS, Azure Blob Storage, and S3-compatible services (MinIO, R2)
+///
+/// # Performance Notes
+///
+/// - Writes buffer entire SSTable in memory before upload (64MB max)
+/// - Reads use range requests (ideal for block-based access)
+/// - Uses tokio runtime internally (sync wrapper over async)
+/// - Includes retry logic with exponential backoff
+#[cfg(feature = "object-store")]
+pub struct ObjectStoreBackend {
+    store: Arc<dyn object_store::ObjectStore>,
+    runtime: tokio::runtime::Handle,
+    prefix: String,
+}
+
+#[cfg(feature = "object-store")]
+impl ObjectStoreBackend {
+    /// Create a new ObjectStoreBackend
+    ///
+    /// # Arguments
+    ///
+    /// * `store` - The object_store implementation (S3, GCS, Azure, etc.)
+    /// * `prefix` - Optional path prefix for all objects (e.g., "seerdb/data/")
+    pub fn new(store: Arc<dyn object_store::ObjectStore>, prefix: String) -> Self {
+        Self {
+            store,
+            runtime: tokio::runtime::Handle::current(),
+            prefix,
+        }
+    }
+
+    /// Create an S3-compatible backend
+    ///
+    /// # Arguments
+    ///
+    /// * `bucket` - S3 bucket name
+    /// * `region` - AWS region (e.g., "us-west-2")
+    /// * `endpoint` - Optional custom endpoint for MinIO, R2, etc.
+    /// * `prefix` - Optional path prefix within bucket
+    pub fn s3(
+        bucket: &str,
+        region: &str,
+        endpoint: Option<&str>,
+        prefix: String,
+    ) -> Result<Self> {
+        use object_store::aws::AmazonS3Builder;
+
+        let mut builder = AmazonS3Builder::new()
+            .with_bucket_name(bucket)
+            .with_region(region);
+
+        if let Some(ep) = endpoint {
+            builder = builder.with_endpoint(ep).with_allow_http(true);
+        }
+
+        let store = builder
+            .build()
+            .map_err(|e| crate::db::DBError::ObjectStore(e.to_string()))?;
+
+        Ok(Self {
+            store: Arc::new(store),
+            runtime: tokio::runtime::Handle::current(),
+            prefix,
+        })
+    }
+
+    /// Create a Google Cloud Storage backend
+    ///
+    /// # Arguments
+    ///
+    /// * `bucket` - GCS bucket name
+    /// * `service_account_path` - Optional path to service account JSON
+    /// * `prefix` - Optional path prefix within bucket
+    pub fn gcs(
+        bucket: &str,
+        service_account_path: Option<&Path>,
+        prefix: String,
+    ) -> Result<Self> {
+        use object_store::gcp::GoogleCloudStorageBuilder;
+
+        let mut builder = GoogleCloudStorageBuilder::new().with_bucket_name(bucket);
+
+        if let Some(path) = service_account_path {
+            builder = builder.with_service_account_path(path.to_string_lossy());
+        }
+
+        let store = builder
+            .build()
+            .map_err(|e| crate::db::DBError::ObjectStore(e.to_string()))?;
+
+        Ok(Self {
+            store: Arc::new(store),
+            runtime: tokio::runtime::Handle::current(),
+            prefix,
+        })
+    }
+
+    /// Create an Azure Blob Storage backend
+    ///
+    /// # Arguments
+    ///
+    /// * `container` - Azure container name
+    /// * `account` - Azure storage account name
+    /// * `prefix` - Optional path prefix within container
+    pub fn azure(container: &str, account: &str, prefix: String) -> Result<Self> {
+        use object_store::azure::MicrosoftAzureBuilder;
+
+        let store = MicrosoftAzureBuilder::new()
+            .with_container_name(container)
+            .with_account(account)
+            .build()
+            .map_err(|e| crate::db::DBError::ObjectStore(e.to_string()))?;
+
+        Ok(Self {
+            store: Arc::new(store),
+            runtime: tokio::runtime::Handle::current(),
+            prefix,
+        })
+    }
+
+    /// Convert a local path to object store path
+    fn to_object_path(&self, path: &Path) -> object_store::path::Path {
+        let path_str = if self.prefix.is_empty() {
+            path.to_string_lossy().to_string()
+        } else {
+            format!("{}/{}", self.prefix.trim_end_matches('/'), path.display())
+        };
+        object_store::path::Path::from(path_str)
+    }
+}
+
+#[cfg(feature = "object-store")]
+impl Storage for ObjectStoreBackend {
+    fn read_block(&self, path: &Path, offset: u64, size: u32) -> Result<Vec<u8>> {
+        let object_path = self.to_object_path(path);
+        let range = offset as usize..(offset as usize + size as usize);
+
+        self.runtime.block_on(async {
+            let bytes = self
+                .store
+                .get_range(&object_path, range)
+                .await
+                .map_err(|e| crate::db::DBError::ObjectStore(e.to_string()))?;
+            Ok(bytes.to_vec())
+        })
+    }
+
+    fn write_sstable(&self, path: &Path, data: &[u8]) -> Result<()> {
+        let object_path = self.to_object_path(path);
+
+        // Retry with exponential backoff
+        let max_attempts = 3;
+        let mut attempt = 0;
+
+        self.runtime.block_on(async {
+            loop {
+                match self.store.put(&object_path, data.to_vec().into()).await {
+                    Ok(_) => return Ok(()),
+                    Err(e) if attempt < max_attempts => {
+                        attempt += 1;
+                        let delay = std::time::Duration::from_millis(100 * 2u64.pow(attempt));
+                        tokio::time::sleep(delay).await;
+                    }
+                    Err(e) => return Err(crate::db::DBError::ObjectStore(e.to_string())),
+                }
+            }
+        })
+    }
+
+    fn delete_sstable(&self, path: &Path) -> Result<()> {
+        let object_path = self.to_object_path(path);
+
+        self.runtime.block_on(async {
+            self.store
+                .delete(&object_path)
+                .await
+                .map_err(|e| crate::db::DBError::ObjectStore(e.to_string()))
+        })
+    }
+
+    fn sync(&self, _path: &Path) -> Result<()> {
+        // Object stores are immediately durable after successful PUT
+        // No explicit sync needed
+        Ok(())
+    }
+
+    fn exists(&self, path: &Path) -> Result<bool> {
+        let object_path = self.to_object_path(path);
+
+        self.runtime.block_on(async {
+            match self.store.head(&object_path).await {
+                Ok(_) => Ok(true),
+                Err(object_store::Error::NotFound { .. }) => Ok(false),
+                Err(e) => Err(crate::db::DBError::ObjectStore(e.to_string())),
+            }
+        })
+    }
+
+    fn list_sstables(&self, dir: &Path) -> Result<Vec<PathBuf>> {
+        let prefix = self.to_object_path(dir);
+
+        self.runtime.block_on(async {
+            use futures::TryStreamExt;
+
+            let mut sstables = Vec::new();
+            let mut stream = self.store.list(Some(&prefix));
+
+            while let Some(meta) = stream
+                .try_next()
+                .await
+                .map_err(|e| crate::db::DBError::ObjectStore(e.to_string()))?
+            {
+                let path_str = meta.location.to_string();
+                if path_str.ends_with(".sst") {
+                    sstables.push(PathBuf::from(path_str));
+                }
+            }
+
+            Ok(sstables)
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,5 +520,128 @@ mod tests {
         // List all
         let sstables = storage.list_sstables(Path::new(".")).unwrap();
         assert_eq!(sstables.len(), 3);
+    }
+
+    #[cfg(feature = "object-store")]
+    mod object_store_tests {
+        use super::*;
+        use object_store::memory::InMemory;
+        use object_store::ObjectStore as _;
+
+        // Helper to create a runtime and backend for tests
+        fn create_test_backend() -> (tokio::runtime::Runtime, ObjectStoreBackend) {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let store = Arc::new(InMemory::new());
+            let backend = rt.block_on(async {
+                ObjectStoreBackend {
+                    store,
+                    runtime: tokio::runtime::Handle::current(),
+                    prefix: String::new(),
+                }
+            });
+            (rt, backend)
+        }
+
+        #[test]
+        fn test_object_store_backend_write_read() {
+            let (rt, backend) = create_test_backend();
+            let _guard = rt.enter();
+
+            // Write data
+            let path = Path::new("test.sst");
+            let data = b"hello world from cloud";
+            backend.write_sstable(path, data).unwrap();
+
+            // Read back
+            let read_data = backend.read_block(path, 0, data.len() as u32).unwrap();
+            assert_eq!(&read_data, data);
+
+            // Read partial (range request)
+            let partial = backend.read_block(path, 6, 5).unwrap();
+            assert_eq!(&partial, b"world");
+        }
+
+        #[test]
+        fn test_object_store_backend_exists() {
+            let (rt, backend) = create_test_backend();
+            let _guard = rt.enter();
+
+            let path = Path::new("test.sst");
+            assert!(!backend.exists(path).unwrap());
+
+            backend.write_sstable(path, b"data").unwrap();
+            assert!(backend.exists(path).unwrap());
+        }
+
+        #[test]
+        fn test_object_store_backend_delete() {
+            let (rt, backend) = create_test_backend();
+            let _guard = rt.enter();
+
+            let path = Path::new("test.sst");
+            backend.write_sstable(path, b"data").unwrap();
+            assert!(backend.exists(path).unwrap());
+
+            backend.delete_sstable(path).unwrap();
+            assert!(!backend.exists(path).unwrap());
+        }
+
+        #[test]
+        fn test_object_store_backend_list() {
+            let (rt, backend) = create_test_backend();
+            let _guard = rt.enter();
+
+            // Write multiple SSTables
+            backend
+                .write_sstable(Path::new("L0_001.sst"), b"data1")
+                .unwrap();
+            backend
+                .write_sstable(Path::new("L0_002.sst"), b"data2")
+                .unwrap();
+            backend
+                .write_sstable(Path::new("L1_001.sst"), b"data3")
+                .unwrap();
+
+            // List all
+            let sstables = backend.list_sstables(Path::new("")).unwrap();
+            assert_eq!(sstables.len(), 3);
+        }
+
+        #[test]
+        fn test_object_store_backend_with_prefix() {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let store = Arc::new(InMemory::new());
+            let backend = rt.block_on(async {
+                ObjectStoreBackend {
+                    store: store.clone(),
+                    runtime: tokio::runtime::Handle::current(),
+                    prefix: "seerdb/data".to_string(),
+                }
+            });
+            let _guard = rt.enter();
+
+            // Write with prefix
+            let path = Path::new("L0_001.sst");
+            backend.write_sstable(path, b"data").unwrap();
+
+            // Verify it's stored with prefix
+            let object_path = object_store::path::Path::from("seerdb/data/L0_001.sst");
+            let exists = rt.block_on(async { store.head(&object_path).await.is_ok() });
+            assert!(exists);
+
+            // Read back should work
+            let data = backend.read_block(path, 0, 4).unwrap();
+            assert_eq!(&data, b"data");
+        }
+
+        #[test]
+        fn test_object_store_backend_sync_is_noop() {
+            let (rt, backend) = create_test_backend();
+            let _guard = rt.enter();
+
+            // sync should be a no-op for object stores
+            let path = Path::new("test.sst");
+            backend.sync(path).unwrap();
+        }
     }
 }

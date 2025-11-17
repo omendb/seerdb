@@ -140,8 +140,8 @@ pub use snapshot::Snapshot;
 pub use metrics::DBStats;
 pub use sstable::{SSTable, SSTableBuilder};
 pub use storage::LocalStorage;
-#[cfg(feature = "s3-backend")]
-pub use storage::Storage;
+#[cfg(feature = "object-store")]
+pub use storage::{ObjectStoreBackend, Storage};
 pub use vlog::{VLog, ValuePointer};
 pub use wal::{Record, SyncPolicy, WAL};
 

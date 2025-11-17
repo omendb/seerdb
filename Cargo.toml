@@ -68,6 +68,11 @@ anyhow = "1.0.100"
 tikv-jemallocator = "0.6.1"
 varint-simd = { version = "0.4.1", optional = true }
 
+# Optional cloud storage support (S3, GCS, Azure)
+object_store = { version = "0.11", optional = true, default-features = false, features = ["aws", "gcp", "azure"] }
+url = { version = "2.5", optional = true }
+futures = { version = "0.3", optional = true }
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1.6"
@@ -82,10 +87,10 @@ hdrhistogram = "7.5"      # Accurate latency percentiles
 default = ["simd"]
 # SIMD optimizations using std::simd (requires nightly)
 simd = []
-# Enable S3/object storage backend support (adds generic trait overhead)
-# Default: LocalDiskBackend only (zero overhead)
-# With feature: StorageBackend trait + S3Backend (monomorphized generics)
-s3-backend = []
+# Enable cloud storage backend support (S3, GCS, Azure, R2, MinIO)
+# Default: LocalStorage only (zero overhead)
+# With feature: ObjectStoreBackend + cloud providers
+object-store = ["dep:object_store", "dep:url", "dep:futures"]
 # Enable baseline benchmark dependencies (RocksDB, sled, fjall)
 # Only needed when running comparative benchmarks, not for regular tests
 baseline-benchmarks = ["dep:rocksdb", "dep:sled", "dep:fjall"]
