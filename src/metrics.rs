@@ -49,6 +49,8 @@ pub struct DBStats {
     pub cache_hits: u64,
     pub cache_misses: u64,
     pub cache_hit_rate: f64,
+    pub block_cache_size: usize,     // Current number of cached blocks
+    pub block_cache_capacity: usize, // Maximum blocks in cache
 
     // LSM tree structure
     pub sstables_per_level: Vec<usize>,

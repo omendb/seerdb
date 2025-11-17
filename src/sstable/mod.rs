@@ -517,11 +517,37 @@ pub struct SSTable {
     // Cache performance metrics (Arc for sharing with iterators)
     cache_hits: Arc<AtomicU64>,
     cache_misses: Arc<AtomicU64>,
+    /// Optional global block cache shared across all SSTables
+    /// Key: (path_hash, block_offset), Value: raw block data
+    global_cache: Option<Arc<Cache<(u64, u64), Bytes>>>,
+    /// Hash of this SSTable's path for global cache key
+    path_hash: u64,
 }
 
 impl SSTable {
+    /// Hash a path to a u64 for use as cache key
+    fn hash_path(path: &Path) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        path.hash(&mut hasher);
+        hasher.finish()
+    }
+
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        Self::open_with_global_cache(path, None)
+    }
+
+    /// Open SSTable with optional global block cache
+    ///
+    /// When a global cache is provided, blocks are cached there with key (path_hash, offset).
+    /// This allows hot blocks to be shared across all SSTables, improving cache hit rates.
+    pub fn open_with_global_cache(
+        path: impl AsRef<Path>,
+        global_cache: Option<Arc<Cache<(u64, u64), Bytes>>>,
+    ) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
+        let path_hash = Self::hash_path(&path);
 
         // Open file once and keep handle for the lifetime of this SSTable
         // This eliminates repeated open/close overhead (7.1x faster than opening per read)
@@ -551,7 +577,7 @@ impl SSTable {
         };
 
         // Create LRU block cache with capacity for 10,000 blocks (~40MB at 4KB/block)
-        // This prevents unbounded memory growth and OOM issues
+        // This is a local fallback cache if global cache is not provided
         let block_cache = Arc::new(Cache::new(10_000));
 
         Ok(Self {
@@ -568,6 +594,8 @@ impl SSTable {
             max_sequence,
             cache_hits: Arc::new(AtomicU64::new(0)),
             cache_misses: Arc::new(AtomicU64::new(0)),
+            global_cache,
+            path_hash,
         })
     }
 
@@ -769,9 +797,21 @@ impl SSTable {
     }
 
     fn load_block(&self, offset: u64, size: u32) -> Result<Block> {
-        // Fast path: check cache first (quick_cache is lock-free!)
+        // Fast path 1: Check global cache first (shared across all SSTables)
+        if let Some(ref global) = self.global_cache {
+            let cache_key = (self.path_hash, offset);
+            if let Some(block_data) = global.get(&cache_key) {
+                // Global cache hit!
+                self.cache_hits.fetch_add(1, Ordering::Relaxed);
+                // Parse the cached bytes into a Block (no CRC check needed - already verified)
+                return Block::new(block_data)
+                    .map_err(|e| SSTableError::Io(std::io::Error::other(e)));
+            }
+        }
+
+        // Fast path 2: Check local cache (per-SSTable fallback)
         if let Some(block) = self.block_cache.get(&offset) {
-            // Cache hit!
+            // Local cache hit!
             self.cache_hits.fetch_add(1, Ordering::Relaxed);
             return Ok(block);
         }
@@ -790,9 +830,15 @@ impl SSTable {
         drop(file); // Release lock before CRC verification
 
         // Parse and verify block (CRC check happens here)
-        let block = Block::new(block_data)?;
+        let block = Block::new(block_data.clone())?;
 
-        // Cache the verified block (automatic LRU eviction when full)
+        // Cache the verified block in global cache (if available)
+        if let Some(ref global) = self.global_cache {
+            let cache_key = (self.path_hash, offset);
+            global.insert(cache_key, block_data);
+        }
+
+        // Also cache in local cache (automatic LRU eviction when full)
         self.block_cache.insert(offset, block.clone());
 
         Ok(block)
