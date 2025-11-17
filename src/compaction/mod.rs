@@ -572,30 +572,30 @@ mod tests {
 
         let dir = tempdir().unwrap();
 
-        // Build newer SSTable
+        // Build older SSTable (like first in L0)
         let path1 = dir.path().join("input1.sst");
         let mut builder1 = SSTableBuilder::create(&path1).unwrap();
         builder1
-            .add(Bytes::from("key1"), Bytes::from("new_value"))
+            .add(Bytes::from("key1"), Bytes::from("old_value"))
+            .unwrap();
+        builder1
+            .add(Bytes::from("key2"), Bytes::from("value2"))
             .unwrap();
         builder1.finish().unwrap();
 
-        // Build older SSTable
+        // Build newer SSTable (like second in L0)
         let path2 = dir.path().join("input2.sst");
         let mut builder2 = SSTableBuilder::create(&path2).unwrap();
         builder2
-            .add(Bytes::from("key1"), Bytes::from("old_value"))
-            .unwrap();
-        builder2
-            .add(Bytes::from("key2"), Bytes::from("value2"))
+            .add(Bytes::from("key1"), Bytes::from("new_value"))
             .unwrap();
         builder2.finish().unwrap();
 
-        // Compact (newer first)
+        // Compact (older first, newer second - like L0 order)
         let output_path = dir.path().join("output.sst");
         compact_sstables(&[path1, path2], &output_path).unwrap();
 
-        // Verify output has newer value
+        // Verify output has newer value (from higher source_id)
         let mut output_sst = SSTable::open(&output_path).unwrap();
         assert_eq!(output_sst.len(), 2);
 

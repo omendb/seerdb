@@ -13,7 +13,8 @@ impl MergeIterator {
     /// Create a new merge iterator from multiple SSTables
     ///
     /// Collects all entries, sorts by key, and deduplicates (keeps newest).
-    /// For compaction, "newest" means from lower source_id (earlier in vector).
+    /// For L0 compaction, "newest" means from HIGHER source_id (later in vector).
+    /// L0 SSTables are ordered oldest→newest, so higher index = newer data.
     pub fn new(mut sstables: Vec<SSTable>) -> Result<Self, SSTableError> {
         let mut all_entries = Vec::new();
 
@@ -27,15 +28,16 @@ impl MergeIterator {
             }
         }
 
-        // Sort by key first, then by source_id (lower = newer)
+        // Sort by key first, then by source_id DESCENDING (higher = newer)
+        // CRITICAL FIX: Higher source_id means newer SSTable in L0
         all_entries.sort_by(|a, b| {
             match a.0.cmp(&b.0) {
-                std::cmp::Ordering::Equal => a.2.cmp(&b.2), // Lower source_id first
+                std::cmp::Ordering::Equal => b.2.cmp(&a.2), // Higher source_id first (NEWEST)
                 other => other,
             }
         });
 
-        // Deduplicate: keep first occurrence of each key (lowest source_id = newest)
+        // Deduplicate: keep first occurrence of each key (highest source_id = newest)
         let mut deduplicated = Vec::new();
         let mut last_key: Option<Bytes> = None;
 
@@ -157,31 +159,31 @@ mod tests {
     fn test_merge_with_duplicates() {
         let dir = tempdir().unwrap();
 
-        // Build first SSTable (newer)
+        // Build first SSTable (older - like L0 order: older SSTables come first)
         let path1 = dir.path().join("test1.sst");
         let mut builder1 = SSTableBuilder::create(&path1).unwrap();
         builder1
-            .add(Bytes::from("key1"), Bytes::from("new_value1"))
+            .add(Bytes::from("key1"), Bytes::from("old_value1"))
             .unwrap();
         builder1
-            .add(Bytes::from("key2"), Bytes::from("new_value2"))
+            .add(Bytes::from("key3"), Bytes::from("value3"))
             .unwrap();
         builder1.finish().unwrap();
         let sstable1 = SSTable::open(&path1).unwrap();
 
-        // Build second SSTable (older)
+        // Build second SSTable (newer - later in L0, higher index)
         let path2 = dir.path().join("test2.sst");
         let mut builder2 = SSTableBuilder::create(&path2).unwrap();
         builder2
-            .add(Bytes::from("key1"), Bytes::from("old_value1"))
+            .add(Bytes::from("key1"), Bytes::from("new_value1"))
             .unwrap();
         builder2
-            .add(Bytes::from("key3"), Bytes::from("value3"))
+            .add(Bytes::from("key2"), Bytes::from("new_value2"))
             .unwrap();
         builder2.finish().unwrap();
         let sstable2 = SSTable::open(&path2).unwrap();
 
-        // Merge (newer first)
+        // Merge (older first, newer second - like L0 order)
         let mut merge = MergeIterator::new(vec![sstable1, sstable2]).unwrap();
 
         let entries: Vec<_> = std::iter::from_fn(|| merge.next())
@@ -192,7 +194,7 @@ mod tests {
         assert_eq!(entries[0].0, Bytes::from("key1"));
         // MergeIterator returns FLAG-prefixed values (for compaction)
         assert_eq!(entries[0].1[0], crate::sstable::FLAG_INLINE);
-        assert_eq!(&entries[0].1[1..], b"new_value1"); // Keeps newer
+        assert_eq!(&entries[0].1[1..], b"new_value1"); // Keeps newer (higher source_id)
         assert_eq!(entries[1].0, Bytes::from("key2"));
         assert_eq!(entries[2].0, Bytes::from("key3"));
     }

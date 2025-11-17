@@ -1074,13 +1074,12 @@ impl DB {
         let lsm_arc = self.lsm.load();
         for level_num in 0..lsm_arc.num_levels() {
             if let Some(level) = lsm_arc.level(level_num) {
-                // L0 has overlapping SSTables - check newest first (reverse order)
-                // L1+ have non-overlapping SSTables - check in forward order
-                let sstables: Vec<_> = if level_num == 0 {
-                    level.sstables().iter().rev().collect()
-                } else {
-                    level.sstables().iter().collect()
-                };
+                // IMPORTANT: Check all levels in reverse order (newest first)
+                // L0 has overlapping SSTables - check newest first
+                // L1+ may also have overlapping SSTables due to our simple compaction strategy
+                // (we add new merged SSTables without re-merging with existing L1 SSTables)
+                // So we check reverse order to get the latest value
+                let sstables: Vec<_> = level.sstables().iter().rev().collect();
 
                 // Check each SSTable in this level
                 for sstable_path in sstables {

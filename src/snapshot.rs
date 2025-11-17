@@ -159,13 +159,12 @@ impl Snapshot {
         let vlog_path = self.vlog_path.as_ref().map(|p| p.join("values.vlog"));
 
         for (level_idx, level_sstables) in self.sstable_paths.iter().enumerate() {
-            // L0 has overlapping SSTables - check newest first (reverse order)
-            // L1+ have non-overlapping SSTables - check in forward order
-            let sstables: Vec<_> = if level_idx == 0 {
-                level_sstables.iter().rev().collect()
-            } else {
-                level_sstables.iter().collect()
-            };
+            // IMPORTANT: Check all levels in reverse order (newest first)
+            // L0 has overlapping SSTables - check newest first
+            // L1+ may also have overlapping SSTables due to our simple compaction strategy
+            // (we add new merged SSTables without re-merging with existing L1 SSTables)
+            // So we check reverse order to get the latest value
+            let sstables: Vec<_> = level_sstables.iter().rev().collect();
 
             for sstable_path in sstables {
                 // Use cache for efficient SSTable access
