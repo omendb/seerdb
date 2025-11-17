@@ -1,182 +1,167 @@
 # STATUS - seerdb
 
-**Last Updated**: November 14, 2025
-**Current Phase**: Testing Complete → Documentation (0.0.1 Preparation)
-**Tests**: 271 tests passing (0 failures) ✅
-**Coverage**: 81.54% (exceeded 80% goal) ✅
-**Data Integrity**: 100% ✅
+**Last Updated**: November 16, 2025
+**Current Phase**: API Completeness Assessment (PRE-ALPHA)
+**Tests**: 271 tests passing (0 failures)
+**Coverage**: 81.54%
+**Critical Issue**: MISSING fundamental features (range iterators, snapshots)
 
 ---
 
-## Current State
+## REALITY CHECK (Nov 16, 2025)
 
-### Recent Work: Database Refactoring (Nov 14, 2025) ✅
+### What We Thought
+- "Testing Complete - Ready for Documentation"
+- "4-5 weeks to 0.0.1 release"
 
-**Completed**:
-- Extracted background workers into dedicated module (477 lines)
-- Extracted utility helpers into dedicated module (143 lines)
-- Reduced `src/db.rs` from 3,654 to 3,141 lines (-14.0%)
-- Simplified `DB::open()` initialization by 47%
-- All 146 tests passing, zero functional changes
-- Better code organization and maintainability
+### What's Actually True
+- **Performance**: Excellent (2.47x RocksDB writes, 2.07x reads)
+- **Bug fixes**: All critical data safety issues fixed
+- **Test coverage**: 81.54% (good)
+- **API completeness**: **INCOMPLETE** - missing fundamental features
 
-**Branch**: `claude/seerdb-extract-background-workers-01H58mQr9RbAq7QcRSUGgriE` (ready to merge)
+### Critical Missing Features
 
-**Documentation**:
-- See `CONTEXT.md` for full refactoring summary
-- See `ai/REFACTORING_SUMMARY.md` for detailed technical analysis
+| Feature | Impact | Competitors Have It? |
+|---------|--------|---------------------|
+| **Range Iterators** | BLOCKS 70% OF USE CASES | ✅ All (RocksDB, fjall, sled) |
+| **Prefix Scans** | Can't do key prefix queries | ✅ All |
+| **Snapshots** | No consistent multi-read views | ✅ RocksDB, fjall |
+| **Transactions** | No MVCC atomicity | ✅ RocksDB, fjall |
 
----
+### What We Actually Have
 
-### All Critical Bugs Fixed (Nov 9-10, 2025) ✅
+```rust
+// ✅ IMPLEMENTED
+db.get(key)           // Point lookup
+db.put(key, value)    // Write
+db.delete(key)        // Delete
+db.batch()            // Atomic batch writes
+db.flush()            // Sync to disk
+db.get_stats()        // Observability
+db.check_health()     // Health checks
 
-1. ✅ Block cache unbounded (FIXED - quick_cache LRU, 10K blocks, ~40MB limit)
-2. ✅ Batch API non-atomic (FIXED - single WAL batch record, atomic recovery)
-3. ✅ No checksums (FIXED - SSTable footer checksum validated on read)
-4. ✅ No magic numbers (FIXED - WAL/VLog have magic numbers + version)
-5. ✅ Iterator invalidation (FIXED - memtables collected before SSTables)
-6. ⏸️ VLog GC race (DEFERRED - GC not implemented yet, will be done correctly in 0.0.2+)
-7. ✅ Compaction can delete live keys (FIXED - delayed deletion queue)
-8. ✅ WAL recovery race (FIXED - barrier synchronization + file cursor seek)
-9. ✅ Tombstone handling in SSTables (FIXED - SSTable.contains() distinguishes tombstone from miss)
+// ❌ MISSING (standard in competitors)
+db.range(start..end)  // CRITICAL - NO RANGE QUERIES
+db.iter()             // NO ITERATION
+db.prefix(prefix)     // NO PREFIX SCANS
+db.snapshot()         // NO CONSISTENT READS
+db.transaction()      // NO MVCC
+```
 
-**Result**: Zero data loss, production-ready safety guarantees
-
----
-
-### Testing Phase Complete (Nov 10, 2025) ✅
-
-**Coverage Achievement**: 81.54% (exceeded 80% goal)
-- ALEX tests: 20 tests, 462 LOC
-- VLog tests: 24 tests, 631 LOC
-- Total: 271 tests, 0 failures
-
-**Memory Safety**: ASAN clean (no memory issues)
-**Thread Safety**: 50+ concurrent tests passing
-**Crash Recovery**: All atomicity tests passing
-
-**Status**: Ready for documentation phase
-
----
-
-## Performance (Nov 8, 2025 - Latest Benchmark)
-
-**Baseline Benchmark Results** (100K ops, jemalloc + SOTA libs):
-
-| Workload | seerdb | RocksDB | fjall | vs RocksDB | vs fjall | Status |
-|----------|--------|---------|-------|------------|----------|--------|
-| **Writes** | **878K** | 360K | 411K | **2.47x** ✅ | **2.09x** ✅ | **#1** 🏆 |
-| **Reads** | **2,207K** | 1,096K | 1,114K | **2.07x** ✅ | **1.90x** ✅ | **#1** 🏆 |
-| **Mixed** | **888K** | 404K | 824K | **1.79x** ✅ | **1.08x** ✅ | **#1** 🏆 |
-| **Scans** | **19.6K** | 20.0K | 19.8K | **0.99x** ✅ | **1.02x** ✅ | **#1** 🏆 |
-
-**Write Amplification**: 1.01x (4.82x better than traditional LSM) 🏆
-
-**Key Optimizations** (Implemented):
-- ✅ LZ4 block compression (+34.7% writes)
-- ✅ jemalloc allocator (+17-21% all workloads)
-- ✅ ArcSwap lock-free structures (+1-4%)
-- ✅ SIMD key comparison (+3-4% reads)
-- ✅ ALEX learned index (+55% reads)
-- ✅ Lock-free WAL (+23-64% all workloads)
-- ✅ Batch API (+24% mixed workload)
-
-**Status**: **#1 on ALL 4 workloads** vs RocksDB and fjall 🏆
+**Without range iterators, seerdb is only useful for point lookups. This blocks:**
+- Time series queries (by time range)
+- Analytics (scanning data)
+- Pagination (iterating results)
+- Queue patterns (ordered dequeue)
+- Secondary indexes
 
 ---
 
-## Roadmap to 0.0.1 (4-5 Weeks Remaining)
+## Performance (Still Valid)
 
-### Completed Phases ✅
+**Benchmark Results** (100K ops, jemalloc):
+- **Writes**: 878K ops/sec (2.47x RocksDB) 🏆
+- **Reads**: 2,207K ops/sec (2.07x RocksDB) 🏆
+- **Mixed**: 888K ops/sec (1.79x RocksDB)
+- **Write Amp**: 1.01x (4.82x better than traditional LSM) 🏆
 
-**Weeks 1-2: Critical Bugs** (COMPLETE)
-- All data safety issues fixed
-- Block cache, checksums, magic numbers, atomicity
-
-**Weeks 3-4: Production Hardening** (COMPLETE)
-- Memory budgets, disk space checks, file descriptor limits
-- Background panic handling, compaction safety
-
-**Weeks 5-6: Comprehensive Testing** (COMPLETE - Days 1-5)
-- 81.54% coverage achieved (exceeded 80% goal)
-- ASAN clean, 271 tests passing
-- Memory/thread safety validated
+Performance claims are valid, but **feature completeness is not**.
 
 ---
 
-### Remaining Work
+## Quality Status
 
-**Week 6-7: Documentation** 📚 (Next Priority)
-- Complete API documentation
+### Good
+- ✅ 271 tests passing
+- ✅ 81.54% coverage
+- ✅ ASAN clean (memory safety)
+- ✅ All critical bugs fixed
+- ✅ CI fixed (stable Rust compatible)
+
+### Bad
+- ❌ Missing range iterators (fundamental API gap)
+- ❌ Missing snapshots (consistency guarantees)
+- ❌ No cloud storage backend
+- ❌ Claimed "ready" when incomplete
+
+---
+
+## Revised Roadmap
+
+### Phase 1: Feature Completeness (CURRENT PRIORITY)
+**Timeline**: TBD (need full audit first)
+
+1. **Range Iterators** - CRITICAL
+   - `db.range(start..end)` - range queries
+   - `db.iter()` - full iteration
+   - `db.prefix(prefix)` - prefix scans
+   - `db.iter_rev()` - reverse iteration
+
+2. **Snapshots** - HIGH
+   - `db.snapshot()` - point-in-time views
+   - Consistent multi-read operations
+
+3. **Cloud Storage** - HIGH
+   - S3/GCS backend via object_store crate
+   - Hybrid: local memtable + cloud SSTables
+
+4. **Transactions** - MEDIUM
+   - MVCC for multi-key atomicity
+   - Full ACID guarantees
+
+### Phase 2: Stability Testing
+- 24+ hour fuzzing campaigns
+- Long-running soak tests
+- Chaos/fault injection
+
+### Phase 3: Documentation & Release
+- Complete API docs
 - Architecture guide
 - Performance tuning guide
-- Examples (5+)
-- **Timeline**: 1 week
-- **Status**: Not started
+- Examples
 
-**Week 7-8: Buffer & Release** 🚀
-- Full validation
-- Long-running stability tests (optional)
-- Release notes
-- Version tagging (0.0.1)
-- **Timeline**: 1 week
-- **Status**: Not started
+**No release until features are complete and stable.**
 
 ---
 
-## Deferred to 0.0.2+ (Post-Release)
+## CI Status
 
-**Performance Optimizations**:
-- rkyv zero-copy (only +3% benefit, high complexity)
-- Multi-tier caching (needs production workload data)
-- Close fjall mixed gap (already 1.79x faster than RocksDB)
+**Recent Fixes** (Nov 16, 2025):
+- ✅ SIMD feature properly gated (nightly-only)
+- ✅ Fallback implementations for stable Rust
+- ✅ Clippy rules adjusted
+- ✅ API mismatch fixed (batch.commit() not batch.write())
 
-**Advanced Features**:
-- MVCC/Snapshot API (Read Committed sufficient for 0.0.1)
-- VLog GC (GC not implemented yet, will be done correctly)
-- Advanced learned components
-
-**Rationale**: Correctness > optimization, ship functional core first
+**Still Failing**: Need to verify after push
 
 ---
 
-## Recent Learnings
+## Key Learnings
 
-### Code Quality (Nov 14, 2025)
-- Refactoring large files (3,654 lines) improves maintainability
-- Extract cohesive modules (background workers, utilities)
-- Test coverage proves refactoring safety (zero regressions)
+### Nov 16, 2025 - API Audit
+- **Performance benchmarks ≠ feature completeness**
+- Focused too much on optimization, missed fundamental API gaps
+- "Testing complete" was premature - only tested what exists
+- Competitor analysis revealed major feature gaps
 
-### Testing Strategy (Nov 10, 2025)
-- Data-driven coverage achieves goals efficiently
-- Target modules with low coverage (ALEX, VLog)
-- ASAN catches memory issues early
-- 80% coverage is good balance (diminishing returns after)
-
-### Performance Optimization (Nov 7-8, 2025)
-- Profile before optimizing ("measure, don't guess")
-- Library wins often > algorithm wins (LZ4: +34.7% in one day)
-- Fair benchmarking critical (batch API revealed true performance)
-- Research validation: ALEX +55% reads matches paper predictions
+### Previous (Still Valid)
+- Library optimizations matter (LZ4: +34.7%)
+- Profile before optimizing
+- Research validation: ALEX +55% reads matches paper
 
 ---
 
-## Next Actions
+## Next Actions (Post-Compaction)
 
-**Immediate**: Documentation phase (Week 6-7)
-- API documentation
-- Architecture guide
-- Performance tuning guide
-- Examples (large values, queue, time series, basic KV)
-
-**After Documentation**: Final validation (Week 7-8)
-- Long-running stability tests (optional)
-- Release notes
-- Version tagging (0.0.1)
+1. **Full feature audit** - What else is missing?
+2. **API design** - Design range iterator API matching competitors
+3. **Implementation plan** - Estimate effort for missing features
+4. **Revised timeline** - Realistic estimate for 0.0.1
 
 ---
 
-**Status**: Testing complete (0.0.0 pre-alpha) → Documentation (0.0.1)
-**Timeline**: 4-5 weeks to 0.0.1
-**Next**: Documentation or declare testing complete
-**Updated**: November 14, 2025
+**Status**: PRE-ALPHA (missing fundamental features)
+**Not Ready For**: Any release
+**Ready For**: Implementation of missing features
+**Updated**: November 16, 2025
