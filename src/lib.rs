@@ -121,6 +121,7 @@ pub mod memtable;
 pub mod metrics;
 pub mod range;
 pub mod range_merge;
+pub mod snapshot;
 #[cfg(feature = "simd")]
 pub mod simd;
 pub mod sstable;
@@ -135,6 +136,7 @@ pub use bloom::{BloomFilter, LearnedBloomFilter};
 pub use db::{DBError, DBOptions, DB};
 pub use health::{CheckStatus, HealthCheck, HealthStatus};
 pub use memtable::Memtable;
+pub use snapshot::Snapshot;
 pub use metrics::DBStats;
 pub use sstable::{SSTable, SSTableBuilder};
 pub use storage::LocalStorage;

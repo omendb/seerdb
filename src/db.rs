@@ -2598,6 +2598,121 @@ impl DB {
         // Create range iterator with all memtable partitions
         RangeIterator::new(start_key, end_key, &partition_refs, sstables)
     }
+
+    /// Create a point-in-time consistent snapshot of the database
+    ///
+    /// Snapshots provide isolation for reads - writes after the snapshot
+    /// is created are not visible to the snapshot. This is essential for:
+    /// - Consistent multi-read operations
+    /// - Backup operations
+    /// - Long-running analytical queries
+    ///
+    /// # Implementation Note
+    ///
+    /// This is a lightweight snapshot that captures the current LSM tree state.
+    /// Due to the current architecture (mutable memtables), this snapshot only
+    /// provides isolation for data that has been flushed to SSTables.
+    ///
+    /// For fully consistent snapshots that include in-memory data, use
+    /// `snapshot_consistent()` which forces a flush first.
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is lock-free and can be called concurrently with writes.
+    /// The returned snapshot is fully thread-safe.
+    ///
+    /// # Memory Management
+    ///
+    /// Snapshots hold references to the LSM tree state.
+    /// Long-lived snapshots can increase memory usage. Drop snapshots
+    /// when no longer needed to allow garbage collection.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use seerdb::{DB, DBOptions};
+    ///
+    /// let db = DB::open(DBOptions::default()).unwrap();
+    /// db.put(b"key", b"value1").unwrap();
+    /// db.flush().unwrap(); // Flush to ensure data is in snapshot
+    ///
+    /// // Create snapshot
+    /// let snapshot = db.snapshot();
+    ///
+    /// // Write after snapshot
+    /// db.put(b"key", b"value2").unwrap();
+    ///
+    /// // Snapshot sees old value (from SSTable)
+    /// assert_eq!(snapshot.get(b"key").unwrap().unwrap().as_ref(), b"value1");
+    /// ```
+    pub fn snapshot(&self) -> crate::snapshot::Snapshot {
+        // Capture current sequence number
+        let seq_num = self.next_seq.load(Ordering::Acquire);
+
+        // Capture SSTable paths at snapshot time (lock-free via ArcSwap)
+        // This creates a point-in-time view of the LSM tree structure
+        let lsm_arc = self.lsm.load();
+        let mut sstable_paths = Vec::new();
+        for level_idx in 0..lsm_arc.num_levels() {
+            if let Some(level) = lsm_arc.level(level_idx) {
+                sstable_paths.push(level.sstables().to_vec());
+            } else {
+                sstable_paths.push(Vec::new());
+            }
+        }
+
+        // Get vLog path if enabled
+        let has_vlog = self.has_vlog.load(Ordering::Relaxed);
+        let vlog_path = if has_vlog {
+            Some(self.options.data_dir.clone())
+        } else {
+            None
+        };
+
+        crate::snapshot::Snapshot::new(
+            Vec::new(), // No memtables - only SSTable data is consistent
+            None,       // No immutable memtables
+            sstable_paths,
+            self.sstable_cache.clone(),
+            vlog_path,
+            has_vlog,
+            seq_num,
+        )
+    }
+
+    /// Create a fully consistent point-in-time snapshot
+    ///
+    /// This method flushes all in-memory data to disk before creating the
+    /// snapshot, ensuring complete consistency. This is more expensive than
+    /// `snapshot()` but provides true isolation for all data.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use seerdb::{DB, DBOptions};
+    ///
+    /// let db = DB::open(DBOptions::default()).unwrap();
+    /// db.put(b"key", b"value1").unwrap();
+    ///
+    /// // Create consistent snapshot (flushes first)
+    /// let snapshot = db.snapshot_consistent().unwrap();
+    ///
+    /// // Write after snapshot
+    /// db.put(b"key", b"value2").unwrap();
+    ///
+    /// // Snapshot sees old value
+    /// assert_eq!(snapshot.get(b"key").unwrap().unwrap().as_ref(), b"value1");
+    ///
+    /// // DB sees new value
+    /// assert_eq!(db.get(b"key").unwrap().unwrap().as_ref(), b"value2");
+    /// ```
+    pub fn snapshot_consistent(&self) -> Result<crate::snapshot::Snapshot> {
+        // Flush all memtables to ensure data is in immutable SSTables
+        self.flush()?;
+
+        // Now create snapshot with guaranteed consistency
+        Ok(self.snapshot())
+    }
 }
 
 /// Graceful shutdown: signal compaction thread to stop and wait for it
@@ -3255,4 +3370,236 @@ mod tests {
             "Memory should increase after writes"
         );
     }
+
+    #[test]
+    fn test_snapshot_basic_isolation() {
+        let dir = tempdir().unwrap();
+        let options = DBOptions {
+            data_dir: dir.path().to_path_buf(),
+            ..Default::default()
+        };
+
+        let db = DB::open(options).unwrap();
+
+        // Write initial data
+        db.put(b"key1", b"value1").unwrap();
+        db.put(b"key2", b"value2").unwrap();
+
+        // Create consistent snapshot (forces flush)
+        let snapshot = db.snapshot_consistent().unwrap();
+
+        // Write after snapshot
+        db.put(b"key1", b"modified").unwrap();
+        db.put(b"key3", b"value3").unwrap();
+        db.delete(b"key2").unwrap();
+
+        // Snapshot sees old values
+        assert_eq!(snapshot.get(b"key1").unwrap(), Some(Bytes::from("value1")));
+        assert_eq!(snapshot.get(b"key2").unwrap(), Some(Bytes::from("value2")));
+        assert_eq!(snapshot.get(b"key3").unwrap(), None); // Didn't exist at snapshot time
+
+        // DB sees new values
+        assert_eq!(db.get(b"key1").unwrap(), Some(Bytes::from("modified")));
+        assert_eq!(db.get(b"key2").unwrap(), None); // Deleted
+        assert_eq!(db.get(b"key3").unwrap(), Some(Bytes::from("value3")));
+    }
+
+    #[test]
+    fn test_snapshot_range_isolation() {
+        let dir = tempdir().unwrap();
+        let options = DBOptions {
+            data_dir: dir.path().to_path_buf(),
+            ..Default::default()
+        };
+
+        let db = DB::open(options).unwrap();
+
+        // Write initial data
+        db.put(b"a", b"1").unwrap();
+        db.put(b"b", b"2").unwrap();
+        db.put(b"c", b"3").unwrap();
+
+        // Create consistent snapshot (forces flush)
+        let snapshot = db.snapshot_consistent().unwrap();
+
+        // Modify after snapshot
+        db.put(b"b", b"modified").unwrap();
+        db.delete(b"c").unwrap();
+        db.put(b"d", b"4").unwrap();
+
+        // Snapshot range sees original values
+        let snap_results: Vec<_> = snapshot
+            .range(b"a", Some(b"z"))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(snap_results.len(), 3); // a, b, c
+        assert_eq!(snap_results[0].1.as_ref(), b"1");
+        assert_eq!(snap_results[1].1.as_ref(), b"2");
+        assert_eq!(snap_results[2].1.as_ref(), b"3");
+
+        // DB range sees new values
+        let db_results: Vec<_> = db
+            .range(b"a", Some(b"z"))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(db_results.len(), 3); // a, b, d (c deleted)
+        assert_eq!(db_results[0].1.as_ref(), b"1");
+        assert_eq!(db_results[1].1.as_ref(), b"modified");
+        assert_eq!(db_results[2].1.as_ref(), b"4");
+    }
+
+    #[test]
+    fn test_snapshot_during_concurrent_writes() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let dir = tempdir().unwrap();
+        let options = DBOptions {
+            data_dir: dir.path().to_path_buf(),
+            ..Default::default()
+        };
+
+        let db = Arc::new(DB::open(options).unwrap());
+
+        // Write initial data
+        for i in 0..100 {
+            let key = format!("key_{:03}", i);
+            let value = format!("initial_{:03}", i);
+            db.put(key.as_bytes(), value.as_bytes()).unwrap();
+        }
+
+        // Create consistent snapshot (forces flush)
+        let snapshot = db.snapshot_consistent().unwrap();
+
+        // Spawn writer thread that modifies data concurrently
+        let db_clone = Arc::clone(&db);
+        let writer = thread::spawn(move || {
+            for i in 0..100 {
+                let key = format!("key_{:03}", i);
+                let value = format!("modified_{:03}", i);
+                db_clone.put(key.as_bytes(), value.as_bytes()).unwrap();
+            }
+        });
+
+        // While writes are happening, snapshot still sees original data
+        for i in 0..100 {
+            let key = format!("key_{:03}", i);
+            let expected = format!("initial_{:03}", i);
+            let actual = snapshot.get(key.as_bytes()).unwrap();
+            assert_eq!(actual, Some(Bytes::from(expected)));
+        }
+
+        writer.join().unwrap();
+
+        // After writes complete, snapshot still sees original data
+        for i in 0..100 {
+            let key = format!("key_{:03}", i);
+            let expected = format!("initial_{:03}", i);
+            let actual = snapshot.get(key.as_bytes()).unwrap();
+            assert_eq!(actual, Some(Bytes::from(expected)));
+        }
+
+        // But DB sees modified data
+        for i in 0..100 {
+            let key = format!("key_{:03}", i);
+            let expected = format!("modified_{:03}", i);
+            let actual = db.get(key.as_bytes()).unwrap();
+            assert_eq!(actual, Some(Bytes::from(expected)));
+        }
+    }
+
+    #[test]
+    fn test_snapshot_sequence_number() {
+        let dir = tempdir().unwrap();
+        let options = DBOptions {
+            data_dir: dir.path().to_path_buf(),
+            ..Default::default()
+        };
+
+        let db = DB::open(options).unwrap();
+
+        db.put(b"key1", b"value1").unwrap();
+        db.flush().unwrap(); // Force flush to increment sequence
+        let snap1 = db.snapshot();
+
+        db.put(b"key2", b"value2").unwrap();
+        db.flush().unwrap(); // Force flush to increment sequence
+        let snap2 = db.snapshot();
+
+        // Snap2 should have higher sequence number (after more writes)
+        assert!(snap2.sequence_number() >= snap1.sequence_number());
+
+        // Debug output works
+        let _debug = format!("{:?}", snap1);
+    }
+
+    #[test]
+    fn test_multiple_snapshots() {
+        let dir = tempdir().unwrap();
+        let options = DBOptions {
+            data_dir: dir.path().to_path_buf(),
+            ..Default::default()
+        };
+
+        let db = DB::open(options).unwrap();
+
+        // Initial state
+        db.put(b"key", b"v1").unwrap();
+        let snap1 = db.snapshot_consistent().unwrap();
+
+        // Second state
+        db.put(b"key", b"v2").unwrap();
+        let snap2 = db.snapshot_consistent().unwrap();
+
+        // Third state
+        db.put(b"key", b"v3").unwrap();
+        let snap3 = db.snapshot_consistent().unwrap();
+
+        // Current state
+        db.put(b"key", b"v4").unwrap();
+
+        // Each snapshot sees its point-in-time value
+        assert_eq!(snap1.get(b"key").unwrap(), Some(Bytes::from("v1")));
+        assert_eq!(snap2.get(b"key").unwrap(), Some(Bytes::from("v2")));
+        assert_eq!(snap3.get(b"key").unwrap(), Some(Bytes::from("v3")));
+        assert_eq!(db.get(b"key").unwrap(), Some(Bytes::from("v4")));
+
+        // Drop early snapshots, late ones still work
+        drop(snap1);
+        drop(snap2);
+        assert_eq!(snap3.get(b"key").unwrap(), Some(Bytes::from("v3")));
+    }
+
+    #[test]
+    fn test_snapshot_with_tombstones() {
+        let dir = tempdir().unwrap();
+        let options = DBOptions {
+            data_dir: dir.path().to_path_buf(),
+            ..Default::default()
+        };
+
+        let db = DB::open(options).unwrap();
+
+        // Write and delete
+        db.put(b"key1", b"value1").unwrap();
+        db.put(b"key2", b"value2").unwrap();
+        db.delete(b"key1").unwrap();
+
+        // Snapshot sees key1 as deleted (after flush)
+        let snap = db.snapshot_consistent().unwrap();
+        assert_eq!(snap.get(b"key1").unwrap(), None);
+        assert_eq!(snap.get(b"key2").unwrap(), Some(Bytes::from("value2")));
+
+        // Re-insert key1
+        db.put(b"key1", b"resurrected").unwrap();
+
+        // Snapshot still sees key1 as deleted
+        assert_eq!(snap.get(b"key1").unwrap(), None);
+
+        // DB sees resurrected value
+        assert_eq!(db.get(b"key1").unwrap(), Some(Bytes::from("resurrected")));
+    }
 }
+
