@@ -1,11 +1,23 @@
 [package]
 name = "seerdb"
-version = "0.0.0"
+version = "0.0.1-alpha"
 edition = "2021"
 license = "Apache-2.0"
 authors = ["seerdb contributors"]
 description = "Research-grade storage engine with learned data structures"
 repository = "https://github.com/omendb/seerdb"
+readme = "README.md"
+keywords = ["database", "lsm", "storage", "learned-index", "embedded"]
+categories = ["database-implementations", "data-structures"]
+exclude = [
+    "ai/",
+    ".github/",
+    "fuzz/",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "CONTEXT.md",
+    "storage-engine-research.md",
+]
 
 [dependencies]
 # Core dependencies
