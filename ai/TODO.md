@@ -41,20 +41,32 @@
 
 **Goal**: Identify bottlenecks, optimize hot paths
 
-- [ ] Profile with flamegraph (`cargo flamegraph`)
-- [ ] Identify allocation hotspots (`dhat` or `heaptrack`)
-- [ ] Measure cache hit rates (block cache, SSTable cache)
-- [ ] Compare with RocksDB/fjall on real workloads:
-  - [ ] omendb HNSW edge storage pattern
-  - [ ] Time series writes (sequential timestamps)
-  - [ ] Random key-value workload
-- [ ] Analyze SIMD vs non-SIMD performance
-- [ ] Profile lock contention (partitioned memtables)
+**Phase 1: Flamegraph Analysis** ✅ **COMPLETE**
+- [x] Profile with flamegraph (`cargo flamegraph`)
+- [x] Measure cache hit rates (block cache, SSTable cache)
+- [x] omendb HNSW edge storage pattern benchmark
+- [x] Prefix scan latency validated: **30,943 scans/sec** (1,406x improvement!)
+- [x] Cache hit rate: **97.38%** (exceeds 80% target)
+- [x] Results documented: `ai/PROFILING_RESULTS.md`
 
-**Specific omendb Targets**:
-- [ ] Prefix scan latency (current: 45ms per scan)
-- [ ] Graph edge storage pattern (key: node_id || level || neighbor_id)
-- [ ] Hot node access patterns (frequently visited nodes)
+**Phase 2: Allocation Profiling** (NEXT)
+- [ ] Install dhat-rs or heaptrack
+- [ ] Profile write-heavy workload
+- [ ] Profile scan-heavy workload
+- [ ] Identify allocation hotspots
+- [ ] Document memory optimization opportunities
+
+**Phase 3: Lock Contention Analysis**
+- [ ] Run concurrent write benchmark
+- [ ] Use cargo-instruments Thread State profile
+- [ ] Measure memtable lock wait time
+- [ ] Profile lock-free structures (WAL, cache)
+
+**Phase 4: Real Workload Comparisons**
+- [ ] Compare with RocksDB/fjall on omendb workload
+- [ ] Time series writes (sequential timestamps)
+- [ ] Random key-value workload
+- [ ] Analyze SIMD vs non-SIMD performance
 
 ---
 

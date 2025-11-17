@@ -10,7 +10,15 @@
 
 ## Recent Progress (Nov 17, 2025)
 
-### ObjectStore Wired into DB ✅ **LATEST**
+### Performance Profiling - Phase 1 Complete ✅ **LATEST**
+- Flamegraph analysis of CPU hotspots (memtable, WAL, SSTable I/O)
+- omendb prefix scan benchmark: **30,943 scans/sec** (1,406x improvement!)
+- Cache hit rate validated: **97.38%** (exceeds 80% target)
+- Results documented in `ai/PROFILING_RESULTS.md`
+- Identified optimization opportunities: allocation profiling, lock contention
+- **Next**: Allocation profiling (dhat-rs/heaptrack)
+
+### ObjectStore Wired into DB ✅
 - Added `storage_backend` field to DB struct (feature-gated)
 - Initialize from `StorageConfig` in `DB::open()`
 - Flush path uses `BufferedSSTableBuilder` for cloud uploads
@@ -87,14 +95,17 @@ Completed:
 - ✅ vLog support with shared helper function
 - ✅ 2 cloud integration tests passing
 
-### 4. **Performance Profiling** (HIGH)
-**Impact**: Identify bottlenecks, optimize hot paths
+### 4. ✅ **Performance Profiling - Phase 1** - COMPLETE
+**Impact**: Identified CPU hotspots and cache performance
 
-TODO:
-- [ ] Profile with flamegraph
-- [ ] Identify allocation hotspots
-- [ ] Measure cache hit rates
-- [ ] Compare with RocksDB/fjall on real workloads
+Completed:
+- ✅ Flamegraph profiling (2 benchmarks)
+- ✅ Cache hit rate measured: 97.38%
+- ✅ omendb benchmark: 30,943 scans/sec
+- ✅ CPU hotspots identified
+- ✅ Results documented
+
+**Next Phase**: Allocation profiling (dhat-rs)
 
 ---
 
@@ -192,10 +203,12 @@ StorageConfig::Azure { container, account, prefix }
    - Automatic uploads via ObjectStoreBackend
    - vLog support with shared helper (DRY)
 
-4. **Performance Profiling** (ongoing)
-   - Flamegraph analysis
-   - Allocation profiling
-   - Cache is working excellently - look for other bottlenecks
+4. ✅ **Performance Profiling - Phase 1 COMPLETE!**
+   - Flamegraph analysis done (2 benchmarks)
+   - omendb: 30,943 scans/sec (1,406x improvement!)
+   - Cache: 97.38% hit rate
+   - CPU hotspots identified
+   - **Next**: Allocation profiling (dhat-rs)
 
 ---
 
@@ -203,13 +216,14 @@ StorageConfig::Azure { container, account, prefix }
 
 | File | Purpose | Recent Changes |
 |------|---------|----------------|
-| `src/storage.rs` | Storage backend abstraction | +370 lines for ObjectStoreBackend |
+| `ai/PROFILING_RESULTS.md` | Profiling analysis | **NEW**: Flamegraph results, CPU hotspots |
+| `examples/omendb_prefix_scan_benchmark.rs` | Performance validation | 30,943 scans/sec (1,406x improvement) |
+| `examples/profiling_benchmark.rs` | Profiling harness | WIP: Realistic workload benchmark |
+| `src/storage.rs` | Storage backend abstraction | ObjectStoreBackend (S3/GCS/Azure) |
 | `src/db.rs` | Main database | +storage_backend, cloud integration |
-| `src/sstable/mod.rs` | SSTable format | +BufferedSSTableBuilder, +handle_vlog_value() helper |
+| `src/sstable/mod.rs` | SSTable format | +BufferedSSTableBuilder, +handle_vlog_value() |
 | `src/vlog/mod.rs` | Value log | +ValuePointer::to_bytes() encapsulation |
-| `src/compaction/mod.rs` | Compaction | +compact_sstables_buffered() for cloud |
-| `examples/omendb_prefix_scan_benchmark.rs` | Performance validation | 1,442x improvement |
 
 ---
 
-*Next session: Performance profiling (flamegraph, allocation analysis, cache metrics)*
+*Next session: Allocation profiling (dhat-rs/heaptrack), lock contention analysis*
