@@ -140,7 +140,7 @@ pub use health::{CheckStatus, HealthCheck, HealthStatus};
 pub use memtable::Memtable;
 pub use snapshot::Snapshot;
 pub use metrics::DBStats;
-pub use sstable::{SSTable, SSTableBuilder};
+pub use sstable::{BufferedSSTableBuilder, SSTable, SSTableBuilder};
 pub use storage::LocalStorage;
 #[cfg(feature = "object-store")]
 pub use storage::{ObjectStoreBackend, Storage};
