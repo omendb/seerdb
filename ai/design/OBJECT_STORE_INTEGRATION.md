@@ -538,6 +538,89 @@ Phase 4 (VLog cloud) deferred to post-0.0.1.
 
 ---
 
+## Implementation Status (November 17, 2025)
+
+### Phase 1: Core Infrastructure ✅ **COMPLETE**
+
+**Implemented:**
+1. ✅ `ObjectStoreBackend` with S3, GCS, Azure support
+2. ✅ `Storage` trait for pluggable backends
+3. ✅ `StorageConfig` enum in DBOptions
+4. ✅ `DBError::ObjectStore` variant
+5. ✅ Feature-gated: `--features object-store`
+6. ✅ 6 unit tests with in-memory backend (all passing)
+7. ✅ Zero overhead when feature disabled
+
+**Files Modified:**
+- `Cargo.toml` - Added object_store, url, futures dependencies
+- `src/storage.rs` - Added ObjectStoreBackend (+370 lines)
+- `src/db.rs` - Added StorageConfig, DBError::ObjectStore
+- `src/lib.rs` - Export ObjectStoreBackend, Storage, StorageConfig
+
+**What Works:**
+```rust
+use seerdb::{ObjectStoreBackend, StorageConfig};
+
+// Create backend (works independently)
+let backend = ObjectStoreBackend::s3("bucket", "us-west-2", None, "prefix".into())?;
+backend.write_sstable(Path::new("test.sst"), &data)?;
+let block = backend.read_block(Path::new("test.sst"), 0, 4096)?;
+```
+
+### Phase 2: SSTable Integration 🚧 **IN PROGRESS**
+
+**What's Ready:**
+- StorageConfig can be configured in DBOptions
+- ObjectStoreBackend is fully functional
+- All infrastructure in place
+
+**What's Missing:**
+1. ❌ SSTableBuilder buffered writes (currently streams to disk)
+2. ❌ Wire Storage backend into DB struct
+3. ❌ Update background workers to use Storage trait
+4. ❌ Integration with actual flush/compaction paths
+
+**Why Not Complete:**
+- SSTableBuilder streams writes to disk (needs rewrite to buffer)
+- Changing flush/compaction paths is invasive
+- Risk of introducing bugs in critical data paths
+- Need comprehensive testing with cloud backends
+
+### Next Steps to Complete
+
+**Option A: Write-Through Cache (Simpler)**
+```
+1. Write SSTable to local disk (current behavior)
+2. Upload to cloud storage after success
+3. Delete local copy (or keep as cache)
+```
+- Requires local disk space (defeats purpose)
+- Simpler to implement, lower risk
+
+**Option B: Full Buffer (Better Performance)**
+```
+1. Modify SSTableBuilder to buffer in memory
+2. Upload directly to cloud storage
+3. No local disk needed for SSTables
+```
+- Requires SSTableBuilder rewrite
+- Higher memory usage (64MB per SSTable)
+- Better for cloud-native deployments
+
+**Recommended: Option B** for true cloud-native support
+
+### Effort Remaining
+
+| Task | Effort | Risk |
+|------|--------|------|
+| SSTableBuilder buffered writes | 1-2 days | Medium |
+| Wire Storage into DB | 0.5 days | Low |
+| Update background workers | 0.5 days | Medium |
+| Integration testing | 1-2 days | Low |
+| **Total** | **3-5 days** | **Medium** |
+
+---
+
 ## Open Questions
 
 1. **Should VLog support cloud in v1?** - Leaning no (defer)
