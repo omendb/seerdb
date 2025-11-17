@@ -134,6 +134,8 @@ pub use alex::AlexTree;
 pub use batch::Batch;
 pub use bloom::{BloomFilter, LearnedBloomFilter};
 pub use db::{DBError, DBOptions, DB};
+#[cfg(feature = "object-store")]
+pub use db::StorageConfig;
 pub use health::{CheckStatus, HealthCheck, HealthStatus};
 pub use memtable::Memtable;
 pub use snapshot::Snapshot;

@@ -357,6 +357,89 @@ pub struct DBOptions {
     /// **Recommended**: Set to at least 2-3x your expected write burst size to ensure
     /// writes can complete even if disk space runs low.
     pub min_disk_space_bytes: Option<u64>,
+
+    /// Cloud storage backend configuration (optional)
+    ///
+    /// When enabled, SSTables are stored in cloud object storage (S3, GCS, Azure).
+    /// WAL and VLog remain on local disk for performance.
+    ///
+    /// Default: `None` (local disk only)
+    ///
+    /// Requires: `--features object-store`
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use seerdb::{DBOptions, StorageConfig};
+    ///
+    /// // Store SSTables in S3
+    /// let opts = DBOptions {
+    ///     storage_config: Some(StorageConfig::S3 {
+    ///         bucket: "my-seerdb-data".to_string(),
+    ///         region: "us-west-2".to_string(),
+    ///         endpoint: None, // Use AWS default
+    ///         prefix: "production/".to_string(),
+    ///     }),
+    ///     ..Default::default()
+    /// };
+    /// ```
+    #[cfg(feature = "object-store")]
+    pub storage_config: Option<StorageConfig>,
+}
+
+/// Cloud storage backend configuration
+///
+/// Configures where SSTables are stored (local disk or cloud object storage).
+///
+/// # Supported Backends
+///
+/// - **S3**: Amazon S3, MinIO, Cloudflare R2, DigitalOcean Spaces
+/// - **GCS**: Google Cloud Storage
+/// - **Azure**: Azure Blob Storage
+///
+/// # Performance Notes
+///
+/// - WAL always remains on local disk (durability requirements)
+/// - Cloud storage adds latency (~100ms for uploads)
+/// - Block cache absorbs most read latency
+/// - Ideal for large datasets that exceed local disk capacity
+#[cfg(feature = "object-store")]
+#[derive(Debug, Clone)]
+pub enum StorageConfig {
+    /// Amazon S3 or S3-compatible storage
+    S3 {
+        /// S3 bucket name
+        bucket: String,
+        /// AWS region (e.g., "us-west-2")
+        region: String,
+        /// Optional custom endpoint for MinIO, R2, etc.
+        endpoint: Option<String>,
+        /// Path prefix within bucket (e.g., "myapp/data/")
+        prefix: String,
+    },
+
+    /// Google Cloud Storage
+    Gcs {
+        /// GCS bucket name
+        bucket: String,
+        /// Optional path to service account JSON
+        service_account_path: Option<PathBuf>,
+        /// Path prefix within bucket
+        prefix: String,
+    },
+
+    /// Azure Blob Storage
+    Azure {
+        /// Azure container name
+        container: String,
+        /// Azure storage account name
+        account: String,
+        /// Path prefix within container
+        prefix: String,
+    },
+
+    /// Custom object_store implementation
+    Custom(std::sync::Arc<dyn object_store::ObjectStore>),
 }
 
 impl Default for DBOptions {
@@ -374,6 +457,8 @@ impl Default for DBOptions {
             adaptive_compaction: false, // Disabled by default - enable for mixed workloads
             max_memory_bytes: None,     // No global memory limit by default
             min_disk_space_bytes: None, // No disk space check by default
+            #[cfg(feature = "object-store")]
+            storage_config: None, // Local disk only by default
         }
     }
 }
