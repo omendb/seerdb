@@ -68,25 +68,34 @@
 - [x] 6 unit tests passing
 
 ### Phase 2: Wire into DB (Next)
-- [ ] SSTableBuilder buffered writes (accumulate in memory)
+- [x] SSTableBuilder buffered writes ✅ **COMPLETE** (BufferedSSTableBuilder)
 - [ ] Add Storage backend field to DB struct
-- [ ] Use Storage trait in flush path
-- [ ] Use Storage trait in compaction path
+- [ ] Use BufferedSSTableBuilder in flush path
+- [ ] Use BufferedSSTableBuilder in compaction path
+- [ ] Upload via ObjectStoreBackend
 - [ ] Integration tests with cloud backend
 
-**Note**: Buffered writes may improve local performance too (fewer syscalls).
+**Note**: BufferedSSTableBuilder implemented - buffers in memory, single write/upload.
 
 ---
 
 ## 🚀 COMPLETED RECENTLY
+
+### BufferedSSTableBuilder ✅ (November 17, 2025)
+- In-memory SSTable builder (buffers all data)
+- `finish_to_bytes()` for cloud uploads (S3/GCS/Azure)
+- `finish_to_file()` for local disk (single write)
+- Same API as SSTableBuilder
+- 9 comprehensive tests added (168 total lib tests)
+- **Enables**: Cloud storage uploads, fewer syscalls
 
 ### Global Block Cache ✅ (November 17, 2025)
 - Shared cache across all SSTables (vs per-SSTable isolated caches)
 - `block_cache_capacity` in DBOptions (default: 64MB)
 - Cache key: (path_hash, block_offset) for uniqueness
 - Metrics: block_cache_size, block_cache_capacity in DBStats
-- 3 comprehensive tests added (159 total tests passing)
-- **Expected**: 10-20x disk search improvement for omendb
+- 3 comprehensive tests added
+- **Validated**: 1,442x improvement for omendb (22 QPS → 31,728 QPS)
 
 ### Object Store Infrastructure ✅
 - ObjectStoreBackend (S3, GCS, Azure)
@@ -166,25 +175,26 @@
 
 ## Next Session Plan
 
-**Priority 1**: SSTableBuilder buffering ✅ **READY TO START**
-- Enables cloud storage uploads
-- May improve local perf (fewer syscalls)
-- 1-2 days estimated
-- Enables Phase 2 of cloud storage integration
+**Priority 1**: Wire Object Store into DB ✅ **READY TO START**
+- BufferedSSTableBuilder is complete (prerequisite done!)
+- Add Storage backend to DB struct
+- Use BufferedSSTableBuilder in flush/compaction paths
+- Upload via ObjectStoreBackend (S3/GCS/Azure)
+- 0.5 days estimated
 
 **Priority 2**: Performance profiling
 - Flamegraph analysis
 - Identify other bottlenecks (block cache is not the issue now!)
 - Ongoing work
 
-**Priority 3**: Wire Object Store into DB
-- After SSTableBuilder buffering is complete
-- Add Storage backend to DB struct
-- Use Storage trait in flush/compaction paths
+**Priority 3**: Test with actual cloud backends
+- Integration tests with S3 (localstack or real)
+- Verify upload/download cycle
+- Performance comparison
 
 ---
 
-**Tests**: 165 passing (159 lib + 6 object-store)
+**Tests**: 174 passing (168 lib + 6 object-store)
 **Coverage**: 81.54%
 **Performance**: 2.47x RocksDB writes, 2.07x reads, **1,442x prefix scans (with cache)**
 **Version**: 0.0.1-alpha (published)

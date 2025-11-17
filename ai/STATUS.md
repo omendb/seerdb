@@ -3,21 +3,29 @@
 **Last Updated**: November 17, 2025
 **Current Phase**: Feature Integration & Optimization
 **Version**: 0.0.1-alpha (published to crates.io)
-**Tests**: 165 tests passing (159 lib + 6 object-store)
+**Tests**: 174 tests passing (168 lib + 6 object-store)
 **Coverage**: 81.54%
 
 ---
 
 ## Recent Progress (Nov 17, 2025)
 
+### BufferedSSTableBuilder IMPLEMENTED ✅
+- In-memory SSTable builder (buffers all data before writing)
+- `finish_to_bytes()` returns complete SSTable as `Bytes` (for cloud uploads)
+- `finish_to_file()` writes buffer to file in single operation (fewer syscalls)
+- Same API as SSTableBuilder: `add()`, `add_raw()`, `add_tombstone()`
+- 9 comprehensive tests added (168 total lib tests passing)
+- **Enables**: Cloud storage uploads (S3/GCS/Azure PUT), reduced local disk syscalls
+- **Next**: Wire into DB flush path for cloud storage integration
+
 ### Global Block Cache IMPLEMENTED ✅
 - Shared cache across all SSTables (vs per-SSTable isolated caches)
 - `block_cache_capacity` in DBOptions (default: 16,384 blocks = 64MB)
 - Cache key: (path_hash, block_offset) for uniqueness
 - Metrics: block_cache_size, block_cache_capacity in DBStats
-- 3 comprehensive tests added (159 total lib tests passing)
-- **Expected**: 10-20x disk search improvement for omendb (22 QPS → 200+ QPS)
-- **Next**: Benchmark to validate performance gains
+- 3 comprehensive tests added
+- **Validated**: 1,442x improvement for omendb (22 QPS → 31,728 QPS)
 
 ### Object Store Integration (Phase 1 Complete) ✅
 - `ObjectStoreBackend` - S3, GCS, Azure support
@@ -55,14 +63,25 @@ Benchmark results:
 
 See: `examples/omendb_prefix_scan_benchmark.rs` for benchmark
 
-### 2. **SSTableBuilder Buffered Writes** (MEDIUM) **NEXT**
-**Impact**: Enables cloud storage, may improve local performance
+### 2. ✅ **SSTableBuilder Buffered Writes** - COMPLETE
+**Impact**: Enables cloud storage, reduces syscalls
 
-Currently streams writes to disk. Need to buffer in memory for:
-- Cloud storage uploads (PUT entire file)
-- Potentially fewer syscalls for local disk
+BufferedSSTableBuilder implemented:
+- Buffers entire SSTable in memory (BytesMut)
+- `finish_to_bytes()` for cloud storage uploads
+- `finish_to_file()` for local disk (single write)
+- 9 tests, same API as file-based builder
 
-### 3. **Performance Profiling** (HIGH)
+### 3. **Wire Object Store into DB** (MEDIUM) **NEXT**
+**Impact**: Complete cloud storage integration
+
+Now that BufferedSSTableBuilder is complete:
+- Add Storage backend to DB struct
+- Use BufferedSSTableBuilder in flush/compaction paths
+- Upload via ObjectStoreBackend (S3/GCS/Azure)
+- Test with actual cloud backends
+
+### 4. **Performance Profiling** (HIGH)
 **Impact**: Identify bottlenecks, optimize hot paths
 
 TODO:
@@ -70,14 +89,6 @@ TODO:
 - [ ] Identify allocation hotspots
 - [ ] Measure cache hit rates
 - [ ] Compare with RocksDB/fjall on real workloads
-
-### 4. **Wire Object Store into DB** (MEDIUM)
-**Impact**: Complete cloud storage integration
-
-After SSTableBuilder buffering, need to:
-- Add Storage backend to DB struct
-- Use Storage trait in flush/compaction paths
-- Test with actual cloud backends
 
 ---
 
@@ -142,7 +153,7 @@ StorageConfig::Azure { container, account, prefix }
 
 ## Code Quality
 
-- **Tests**: 165 total (159 lib + 6 object-store), all passing
+- **Tests**: 174 total (168 lib + 6 object-store), all passing
 - **Coverage**: 81.54%
 - **Memory Safety**: ASAN clean
 - **Thread Safety**: 50+ concurrent tests
@@ -163,14 +174,16 @@ StorageConfig::Azure { container, account, prefix }
    - Cold cache: 8,980 QPS, Hot cache: 31,728 QPS
    - Added `examples/omendb_prefix_scan_benchmark.rs`
 
-2. **SSTableBuilder Buffering** (1-2 days) **NEXT**
-   - Buffer entire SSTable in memory
-   - Write once (fewer syscalls)
-   - Enable cloud storage uploads
+2. ✅ **SSTableBuilder Buffering - COMPLETE!**
+   - BufferedSSTableBuilder implemented (620+ lines)
+   - `finish_to_bytes()` for cloud uploads
+   - `finish_to_file()` for local disk (single write)
+   - 9 comprehensive tests added (168 total lib tests)
 
-3. **Wire Object Store** (0.5 days)
+3. **Wire Object Store** (0.5 days) **NEXT**
    - Add Storage backend to DB struct
-   - Use Storage trait in flush/compaction
+   - Use BufferedSSTableBuilder in flush/compaction
+   - Upload via ObjectStoreBackend
 
 4. **Performance Profiling** (ongoing)
    - Flamegraph analysis
@@ -185,11 +198,11 @@ StorageConfig::Azure { container, account, prefix }
 |------|---------|----------------|
 | `src/storage.rs` | Storage backend abstraction | +370 lines for ObjectStoreBackend |
 | `src/db.rs` | Main database | +global_block_cache, +block_cache_capacity |
-| `src/sstable/mod.rs` | SSTable format | +global cache support, +open_with_global_cache() |
+| `src/sstable/mod.rs` | SSTable format | **+BufferedSSTableBuilder (620 lines)**, +global cache |
 | `src/metrics.rs` | Observability | +block_cache_size, +block_cache_capacity |
-| `examples/omendb_prefix_scan_benchmark.rs` | Performance validation | **NEW** - 1,442x improvement |
-| `ai/BLOCK_CACHE_OPTIMIZATION.md` | Block cache design | Complete design doc |
+| `src/lib.rs` | Public API | +BufferedSSTableBuilder export |
+| `examples/omendb_prefix_scan_benchmark.rs` | Performance validation | 1,442x improvement |
 
 ---
 
-*Next session: SSTableBuilder buffering to enable cloud storage uploads*
+*Next session: Wire ObjectStoreBackend into DB flush/compaction paths*
