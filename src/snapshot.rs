@@ -158,7 +158,7 @@ impl Snapshot {
         // SSTables handle VLog references internally via with_vlog()
         let vlog_path = self.vlog_path.as_ref().map(|p| p.join("values.vlog"));
 
-        for (level_idx, level_sstables) in self.sstable_paths.iter().enumerate() {
+        for (_level_idx, level_sstables) in self.sstable_paths.iter().enumerate() {
             // IMPORTANT: Check all levels in reverse order (newest first)
             // L0 has overlapping SSTables - check newest first
             // L1+ may also have overlapping SSTables due to our simple compaction strategy

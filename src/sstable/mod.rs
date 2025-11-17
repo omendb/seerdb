@@ -503,6 +503,7 @@ pub struct SSTable {
     file: Arc<Mutex<File>>, // File handle kept open for zero-overhead reads
     path: PathBuf,
     top_level_index: Vec<TopLevelIndexEntry>,
+    #[allow(dead_code)] // Disabled due to key collision issues (Bug #9), binary search used instead
     alex_index: Option<AlexTree>, // ALEX learned index for faster lookups
     bloom: BloomFilter,
     num_entries: u64,

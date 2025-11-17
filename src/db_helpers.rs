@@ -115,6 +115,7 @@ pub(crate) fn cleanup_old_deletions(
 /// containing the data directory has at least that much space available.
 ///
 /// Returns an error if disk space is insufficient.
+#[allow(dead_code)] // Reserved for future disk space monitoring
 pub(crate) fn check_disk_space(options: &DBOptions) -> Result<()> {
     if let Some(min_space) = options.min_disk_space_bytes {
         use sysinfo::{DiskExt, System, SystemExt};

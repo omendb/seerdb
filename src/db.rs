@@ -10,19 +10,19 @@ use crate::metrics::{DBStats, MetricsCollector};
 use crate::range::RangeIterator;
 use crate::sstable::SSTable;
 use crate::vlog::VLog;
-use crate::wal::{Record, SyncPolicy, WALReader, WAL};
+use crate::wal::{Record, SyncPolicy, WAL};
 use arc_swap::ArcSwap;
 use bytes::Bytes;
-use crossbeam_channel::{bounded, unbounded, Sender as CrossbeamSender};
+use crossbeam_channel::{bounded, Sender as CrossbeamSender};
 use foldhash::fast::FixedState;
 use quick_cache::sync::Cache;
 use std::hash::BuildHasher;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::Sender;
 use std::sync::LazyLock;
 use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
+use std::thread::JoinHandle;
 use std::time::Instant;
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
@@ -504,8 +504,10 @@ pub struct DB {
     /// Health status of background WAL writer thread (true = healthy, false = panicked)
     wal_healthy: Arc<AtomicBool>,
     /// Health status of background flush worker thread (true = healthy, false = panicked)
+    #[allow(dead_code)] // Reserved for future health monitoring API
     flush_healthy: Arc<AtomicBool>,
     /// Health status of background compaction worker thread (true = healthy, false = panicked)
+    #[allow(dead_code)] // Reserved for future health monitoring API
     compaction_healthy: Arc<AtomicBool>,
     /// Pending SSTable file deletions (path, timestamp when queued)
     /// Files are queued here after compaction updates LSM tree, then deleted after a safe delay
