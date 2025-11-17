@@ -93,7 +93,7 @@ fn test_many_batches() {
             batch.put(key.as_bytes(), value.as_bytes());
         }
 
-        batch.write().unwrap();
+        batch.commit().unwrap();
 
         if batch_id % 2_000 == 0 && batch_id > 0 {
             println!("  Completed {} batches", batch_id);

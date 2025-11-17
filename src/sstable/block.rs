@@ -36,7 +36,16 @@ fn write_varint(buf: &mut BytesMut, value: u64) {
     buf.extend_from_slice(&temp);
 }
 
+// Use SIMD-accelerated comparison when available, fallback to standard otherwise
+#[cfg(feature = "simd")]
 use crate::simd;
+
+#[cfg(not(feature = "simd"))]
+mod simd {
+    pub fn shared_prefix_len(a: &[u8], b: &[u8]) -> usize {
+        a.iter().zip(b.iter()).take_while(|(x, y)| x == y).count()
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum BlockError {

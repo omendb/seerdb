@@ -1,10 +1,21 @@
 // K-way merge iterator for range scans
 // Merges sorted iterators from memtable + multiple SSTable levels using a min-heap
 
-use crate::simd;
 use bytes::Bytes;
 use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
+
+// Use SIMD-accelerated comparison when available, fallback to standard otherwise
+#[cfg(feature = "simd")]
+use crate::simd;
+
+#[cfg(not(feature = "simd"))]
+mod simd {
+    use std::cmp::Ordering;
+    pub fn compare_keys(a: &[u8], b: &[u8]) -> Ordering {
+        a.cmp(b)
+    }
+}
 
 /// Entry in the min-heap for k-way merge
 struct HeapEntry<I>
@@ -126,10 +137,8 @@ where
             }
 
             // Deduplicate: skip if same key as last (LSM: first = newest)
-            if let Some(ref last) = self.last_key {
-                if &entry.key == last {
-                    continue; // Duplicate, get next
-                }
+            if self.last_key.as_ref().is_some_and(|last| &entry.key == last) {
+                continue; // Duplicate, get next
             }
 
             self.last_key = Some(entry.key.clone());

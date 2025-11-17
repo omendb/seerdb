@@ -1,7 +1,7 @@
 // Comprehensive benchmark of all SOTA optimization attempts
 // Summarizes wins and losses for learned data structures
 
-use seerdb::{AlexTree, BloomFilter, LearnedBloomFilter, SimdBloomFilter};
+use seerdb::{AlexTree, BloomFilter, LearnedBloomFilter};
 use std::time::Instant;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -73,40 +73,6 @@ fn benchmark_bloom_filters() -> Result<(), Box<dyn std::error::Error>> {
         standard_lookup.as_nanos() as f64 / num_keys as f64
     );
     println!("  Memory:  {} bytes\n", standard.size_bytes());
-
-    // SIMD bloom
-    let mut simd = SimdBloomFilter::new(num_keys, 0.01);
-    let start = Instant::now();
-    for key in &keys {
-        simd.insert(key);
-    }
-    let simd_insert = start.elapsed();
-
-    let start = Instant::now();
-    for key in &keys {
-        assert!(simd.contains(key));
-    }
-    let simd_lookup = start.elapsed();
-
-    println!("SIMD Bloom Filter (double hashing):");
-    println!(
-        "  Insert:  {:?} ({:.0} ns/op)",
-        simd_insert,
-        simd_insert.as_nanos() as f64 / num_keys as f64
-    );
-    println!(
-        "  Lookup:  {:?} ({:.0} ns/op)",
-        simd_lookup,
-        simd_lookup.as_nanos() as f64 / num_keys as f64
-    );
-    println!("  Memory:  {} bytes", simd.size_bytes());
-
-    let insert_speedup = standard_insert.as_nanos() as f64 / simd_insert.as_nanos() as f64;
-    let lookup_speedup = standard_lookup.as_nanos() as f64 / simd_lookup.as_nanos() as f64;
-    println!(
-        "  Speedup: {:.2}x inserts, {:.2}x lookups\n",
-        insert_speedup, lookup_speedup
-    );
 
     // Learned bloom
     let positive: Vec<String> = (0..10_000).map(|i| format!("key_{:010}", i)).collect();

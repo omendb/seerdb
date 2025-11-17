@@ -104,6 +104,11 @@ harness = false
 name = "varint_comparison"
 harness = false
 
+# Examples that require optional features
+[[example]]
+name = "baseline_benchmark"
+required-features = ["baseline-benchmarks"]
+
 [profile.release]
 opt-level = 3
 lto = true

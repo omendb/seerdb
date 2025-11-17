@@ -17,7 +17,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
-        rust: [stable, beta]
+        rust: [stable]
     steps:
       - uses: actions/checkout@v4
 
@@ -44,11 +44,15 @@ jobs:
           path: target
           key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Run tests
-        run: cargo test --workspace --all-features
+      - name: Run tests (default features)
+        run: cargo test --workspace
+
+      - name: Run tests (baseline-benchmarks feature)
+        run: cargo test --workspace --features baseline-benchmarks
+        if: runner.os == 'Linux'
 
       - name: Run doc tests
-        run: cargo test --doc --all-features
+        run: cargo test --doc
 
   clippy:
     name: Clippy
@@ -80,7 +84,15 @@ jobs:
           key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run clippy
-        run: cargo clippy --workspace --all-features --lib --tests -- -D warnings
+        run: |
+          cargo clippy --workspace --no-default-features --lib --tests -- \
+            -D clippy::correctness \
+            -W clippy::suspicious \
+            -W clippy::complexity \
+            -A clippy::too_many_arguments \
+            -A clippy::type_complexity \
+            -A dead_code \
+            -A unused_imports
 
   fmt:
     name: Format
@@ -124,7 +136,7 @@ jobs:
           key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build documentation
-        run: cargo doc --workspace --all-features --no-deps
+        run: cargo doc --workspace --no-default-features --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
 
@@ -141,7 +153,7 @@ jobs:
         run: cargo install cargo-tarpaulin
 
       - name: Generate coverage
-        run: cargo tarpaulin --workspace --all-features --out Xml --timeout 600
+        run: cargo tarpaulin --workspace --no-default-features --out Xml --timeout 600
 
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v4

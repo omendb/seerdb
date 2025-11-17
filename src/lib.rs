@@ -1,4 +1,4 @@
-#![feature(portable_simd)] // SIMD optimizations for key comparison, bloom filters, etc.
+#![cfg_attr(feature = "simd", feature(portable_simd))] // SIMD optimizations (nightly-only)
 
 //! seerdb - Research-grade embedded storage engine
 //!
@@ -121,6 +121,7 @@ pub mod memtable;
 pub mod metrics;
 pub mod range;
 pub mod range_merge;
+#[cfg(feature = "simd")]
 pub mod simd;
 pub mod sstable;
 pub mod storage;
