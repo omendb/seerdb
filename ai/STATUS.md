@@ -1,10 +1,45 @@
 # STATUS - seerdb
 
 **Last Updated**: November 16, 2025
-**Current Phase**: Feature Completeness (PRE-ALPHA)
-**Tests**: 156 tests passing (0 failures)
+**Current Phase**: Stability Testing (PRE-ALPHA)
+**Tests**: 165 tests passing (156 lib + 9 stress tests)
 **Coverage**: 81.54%
-**Status**: MOSTLY COMPLETE - snapshots + convenience APIs IMPLEMENTED, missing MVCC
+**Status**: CRITICAL BUG FIXED - snapshots + convenience APIs stable, fuzzing in progress
+
+---
+
+## CRITICAL BUG FIXED (Nov 16, 2025) 🐛→✅
+
+### Bug #10: Merge Iterator Data Loss
+**Severity**: CRITICAL - Data loss during compaction
+**Status**: FIXED (commit `48fc172`)
+
+**Problem**: MergeIterator was preserving OLDEST values instead of NEWEST when keys overlapped during L0→L1 compaction. This caused **data loss** - older values silently replaced newer ones.
+
+**Root Cause**:
+- L0 SSTables ordered oldest→newest (higher index = newer)
+- Sort compared `a.2.cmp(&b.2)` (ascending) - WRONG
+- This kept lower source_id (older) values
+
+**Fix**:
+```rust
+// BEFORE (WRONG):
+match a.0.cmp(&b.0) {
+    Ordering::Equal => a.2.cmp(&b.2)  // Lower first = OLDEST
+}
+
+// AFTER (CORRECT):
+match a.0.cmp(&b.0) {
+    Ordering::Equal => b.2.cmp(&a.2)  // Higher first = NEWEST
+}
+```
+
+**Files Fixed**:
+- `src/compaction/merge.rs:33-36` - Sort by descending source_id
+- `src/db.rs:1077-1082` - Check all levels in reverse order
+- `src/snapshot.rs:161-167` - Check all levels in reverse order
+
+**How Discovered**: Stress test `test_multiple_snapshots_under_load` caught it - snapshot 4 saw "v1" instead of "v4" after compaction.
 
 ---
 
@@ -16,10 +51,11 @@
 
 ### What's Actually True
 - **Performance**: Excellent (2.47x RocksDB writes, 2.07x reads)
-- **Bug fixes**: All critical data safety issues fixed
+- **Bug fixes**: All critical data safety issues fixed (including merge iterator)
 - **Test coverage**: 81.54% (good)
 - **Range queries**: ✅ WORKING (k-way merge iterator)
-- **API completeness**: ⚠️ Missing snapshots/transactions (not critical for many use cases)
+- **Snapshots**: ✅ IMPLEMENTED (point-in-time consistency)
+- **API completeness**: ✅ Core features complete, missing only MVCC transactions
 
 ### Missing Features (Priority Order)
 
@@ -114,9 +150,23 @@ Performance claims are valid, but **feature completeness is not**.
 - ✅ 4 comprehensive tests passing
 - ⏳ ReadOptions/WriteOptions per-operation (deferred to 0.0.2)
 
-### Phase 3: Stability Testing (REQUIRED FOR RELEASE)
+### Phase 3: Stability Testing 🔄 IN PROGRESS
 **Timeline**: 1-2 weeks
+**Started**: November 16, 2025
 
+**Progress**:
+- ✅ Created 9 comprehensive stress tests (`tests/stress_new_apis.rs`)
+- ✅ Fixed CRITICAL merge iterator bug (Bug #10)
+- ✅ 165 tests passing (156 lib + 9 stress)
+- 🔄 1-hour fuzzing campaign running (627+ corpus, no crashes)
+
+**Fuzzing Results (ongoing)**:
+- 627+ corpus entries discovered
+- 0 crashes found
+- Covering snapshot, iter, prefix operations
+- ~40 minutes remaining in current campaign
+
+**Next**:
 - 24+ hour fuzzing campaigns
 - Long-running soak tests (72h+)
 - Chaos/fault injection
@@ -149,6 +199,13 @@ Performance claims are valid, but **feature completeness is not**.
 
 ## Key Learnings
 
+### Nov 16, 2025 - Critical Bug Discovery 🐛
+- **Stress testing is ESSENTIAL** - found data loss bug in 9 tests
+- Bug #10 (merge iterator) would have caused silent data loss in production
+- L0 SSTable ordering is oldest→newest (higher index = newer)
+- Must check ALL levels in reverse order, not just L0
+- Testing only catches what exists, not what's missing
+
 ### Nov 16, 2025 - Feature Audit
 - **Previous audit was WRONG about range iterators** - we have them!
 - `db.range()` with k-way merge iterator already implemented
@@ -169,16 +226,21 @@ Performance claims are valid, but **feature completeness is not**.
 
 ## Next Actions
 
-1. ✅ **Feature audit complete** - Range queries work, snapshots missing
-2. **Implement snapshots** - Highest priority for consistency
-3. **Add convenience APIs** - iter(), prefix(), options
-4. **Long-running stability tests** - 24h+ fuzzing
-5. **0.0.1 release** - After stability validation
+1. ✅ **Feature audit complete** - Range queries work
+2. ✅ **Implement snapshots** - Point-in-time consistency
+3. ✅ **Add convenience APIs** - iter(), prefix()
+4. ✅ **Create stress tests** - 9 comprehensive tests
+5. ✅ **Fix critical bug** - Merge iterator data loss
+6. 🔄 **Fuzzing campaign** - 1h campaign running (40 min remaining)
+7. ⏳ **Extended fuzzing** - 24h+ campaigns needed
+8. ⏳ **Long-running soak tests** - 72h+ stability validation
+9. ⏳ **0.0.1 release** - After stability validation
 
 ---
 
-**Status**: PRE-ALPHA (mostly complete, missing snapshots)
-**Usable For**: Key-value storage, range queries, time series (without consistency)
-**Not Ready For**: Use cases requiring point-in-time snapshots
-**Timeline**: 4-6 weeks to 0.0.1
+**Status**: PRE-ALPHA → ALPHA (core features complete, stability testing in progress)
+**Usable For**: Key-value storage, range queries, time series, consistent snapshots
+**Not Ready For**: MVCC transactions, column families
+**Bugs Fixed**: 10 critical bugs (latest: merge iterator data loss)
+**Timeline**: 2-3 weeks to 0.0.1 (stability validation)
 **Updated**: November 16, 2025

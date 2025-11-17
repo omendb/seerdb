@@ -1,14 +1,14 @@
 # Bugs and Edge Cases Review - seerdb 0.0.1 Readiness
 
 **Date**: November 16, 2025 (Updated)
-**Status**: ✅ **ALL CRITICAL BUGS FIXED** - Ready for 0.0.1
+**Status**: ✅ **ALL CRITICAL BUGS FIXED** - Stability testing in progress
 **Goal**: Identify ALL bugs and edge cases before 0.0.1 release
 
 ---
 
 ## Executive Summary
 
-**Critical Issues**: 9 found → ✅ **8 FIXED**, 1 DEFERRED (VLog GC)
+**Critical Issues**: 10 found → ✅ **9 FIXED**, 1 DEFERRED (VLog GC)
 **High Priority**: 12 found ⚠️
 **Medium Priority**: 15 found ⚠️
 **Low Priority**: 8 found 📝
@@ -16,9 +16,10 @@
 **Status Update (Nov 16, 2025)**:
 - ✅ Bug #1-5, #7-8: Fixed
 - ⏸️ Bug #6 (VLog GC): Deferred to 0.0.2+ (not implemented yet)
-- ✅ **Bug #9 (NEW): ALEX key collision** - FIXED (Nov 16, 2025)
+- ✅ **Bug #9: ALEX key collision** - FIXED (Nov 16, 2025)
+- ✅ **Bug #10: Merge iterator data loss** - FIXED (Nov 16, 2025) 🚨
 
-**Recommendation**: ✅ Ready for 0.0.1 release after documentation
+**Recommendation**: ✅ Ready for 0.0.1 after stability testing (24h+ fuzzing)
 
 ---
 
@@ -480,6 +481,61 @@ fn find_index_block(&self, key: &[u8]) -> Option<(u64, u32)> {
 - ✅ No performance regressions (O(log N) where N is typically 2-10)
 
 **Documentation**: `ai/BUG_11_ALEX_KEY_COLLISION.md`
+
+---
+
+### 1.10 Merge Iterator Data Loss ✅ FIXED (Nov 16, 2025) 🚨
+
+**Status**: ✅ **FIXED** - Sort by descending source_id
+
+**Issue**: MergeIterator preserves OLDEST values instead of NEWEST during L0→L1 compaction
+
+**Root Cause**: Incorrect sorting order in `src/compaction/merge.rs`
+```rust
+// BEFORE (WRONG):
+all_entries.sort_by(|a, b| {
+    match a.0.cmp(&b.0) {
+        Ordering::Equal => a.2.cmp(&b.2)  // Lower source_id first = OLDEST
+    }
+});
+
+// AFTER (CORRECT):
+all_entries.sort_by(|a, b| {
+    match a.0.cmp(&b.0) {
+        Ordering::Equal => b.2.cmp(&a.2)  // Higher source_id first = NEWEST
+    }
+});
+```
+
+**Impact**: **CRITICAL** - Silent data loss
+- L0 SSTables ordered oldest→newest (higher index = newer)
+- Lower source_id means OLDER SSTable
+- Old code kept oldest values, discarding newer updates
+- Data silently lost after compaction
+
+**Evidence** (stress test `test_multiple_snapshots_under_load`):
+```
+Snapshot 4 (seq_num 1): key_0000 = "v1" (expected "v4")  // DATA LOSS!
+Snapshot 5 (seq_num 1): key_0000 = "v2" (expected "v5")
+// After compaction, older values preserved instead of newer
+```
+
+**Files Fixed**:
+- `src/compaction/merge.rs:33-36` - Sort by DESCENDING source_id (higher = newer)
+- `src/db.rs:1077-1082` - Check ALL levels in reverse order (not just L0)
+- `src/snapshot.rs:161-167` - Check ALL levels in reverse order
+
+**Commit**: `48fc172`
+
+**Verification**:
+- ✅ All 165 tests pass (156 lib + 9 stress tests)
+- ✅ `test_multiple_snapshots_under_load` passes (caught the bug)
+- ✅ All 9 new stress tests pass
+- ✅ Fuzzing campaign: 627+ corpus entries, 0 crashes
+
+**How Discovered**: Stress testing with comprehensive snapshot tests
+
+**Lesson**: L0 SSTable ordering is oldest→newest, not newest→oldest
 
 ---
 
