@@ -36,45 +36,33 @@ snap.sequence_number()   // Sequence number
 
 ---
 
-## Current Priority: Convenience APIs
+## ✅ COMPLETED: Convenience APIs (Nov 16, 2025)
+
+**Implementation**:
+- ✅ `db.iter()` - Full table iteration (wrapper around `range(&[], None)`)
+- ✅ `db.prefix(prefix)` - Prefix scan with `increment_bytes()` helper
+- ✅ Handles 0xFF overflow correctly (e.g., `[0xFF, 0xFF]` → unbounded)
+- ✅ 4 comprehensive tests passing
+
+**API**:
+```rust
+// Full table iteration
+for (key, value) in db.iter()? {
+    println!("{:?} = {:?}", key, value);
+}
+
+// Prefix scan (e.g., all keys starting with "user:")
+for (key, value) in db.prefix(b"user:")? {
+    println!("{:?} = {:?}", key, value);
+}
+```
+
+**Deferred to 0.0.2**:
+- `ReadOptions`/`WriteOptions` - Per-operation configuration
 
 ---
 
-### Phase 2: Convenience APIs (1 week) - MEDIUM PRIORITY
-
-**Why**: Make common patterns easier, match competitor APIs
-
-1. **Full Table Iterator**
-   ```rust
-   impl DB {
-       pub fn iter(&self) -> RangeIterator {
-           self.range(&[], None)  // All keys
-       }
-   }
-   ```
-
-2. **Prefix Scan**
-   ```rust
-   impl DB {
-       pub fn prefix(&self, prefix: &[u8]) -> RangeIterator {
-           let end = increment_prefix(prefix);
-           self.range(prefix, Some(&end))
-       }
-   }
-   ```
-
-3. **Per-Operation Options**
-   ```rust
-   pub struct ReadOptions {
-       verify_checksums: bool,  // Default: true
-       fill_cache: bool,        // Default: true
-       snapshot: Option<Snapshot>,
-   }
-
-   pub struct WriteOptions {
-       sync: bool,  // Override WAL sync policy
-   }
-   ```
+## Current Priority: Stability Testing
 
 ---
 
@@ -121,6 +109,8 @@ snap.sequence_number()   // Sequence number
 ### ✅ IMPLEMENTED (Working)
 - Point operations: get(), put(), delete(), batch()
 - Range queries: range(start, end) with k-way merge
+- **Snapshots**: snapshot(), snapshot_consistent() with get/range
+- **Convenience APIs**: iter(), prefix()
 - Durability: WAL with configurable sync (SyncAll/SyncData/None)
 - Observability: stats(), check_health(), 20+ metrics
 - Crash recovery: WAL replay, CRC32 checksums
@@ -128,13 +118,12 @@ snap.sequence_number()   // Sequence number
 - Performance: 2.47x RocksDB writes, 2.07x reads
 
 ### ❌ NOT IMPLEMENTED (Priority Order)
-1. **Snapshots** - Point-in-time consistent views (HIGH)
-2. **Convenience APIs** - iter(), prefix(), options (MEDIUM)
-3. **Column families** - Multiple namespaces (MEDIUM)
-4. **Transactions** - MVCC multi-key atomicity (MEDIUM)
-5. **Reverse iteration** - iter_rev() (LOW)
-6. **TTL/Expiration** - Automatic key deletion (LOW)
-7. **Cloud storage** - S3/GCS backend (LOW for 0.0.1)
+1. **Column families** - Multiple namespaces (MEDIUM)
+2. **Transactions** - MVCC multi-key atomicity (MEDIUM)
+3. **Per-operation options** - ReadOptions/WriteOptions (LOW)
+4. **Reverse iteration** - iter_rev() (LOW)
+5. **TTL/Expiration** - Automatic key deletion (LOW)
+6. **Cloud storage** - S3/GCS backend (LOW for 0.0.1)
 
 ---
 
@@ -153,9 +142,9 @@ snap.sequence_number()   // Sequence number
 ## Next Session Tasks
 
 1. ✅ **Snapshots implemented** - 6 tests passing
-2. **Convenience APIs** - Add iter(), prefix() helpers
+2. ✅ **Convenience APIs implemented** - 4 tests passing (iter, prefix)
 3. **Long-running fuzzing** - 24h+ stability tests
-4. **Documentation** - Update README with snapshot examples
+4. **Documentation** - Update README with snapshot/convenience API examples
 5. **0.0.1 release prep** - Version tagging, CHANGELOG
 
 ---
@@ -165,12 +154,13 @@ snap.sequence_number()   // Sequence number
 - VLog garbage collection (not implemented)
 - Column families (use key prefixes for now)
 - MVCC transactions (batch API is per-operation atomic)
+- ReadOptions/WriteOptions (per-operation configuration)
 - Cloud storage backend (local only for 0.0.1)
 
 ---
 
-**Status**: Feature audit complete, snapshots highest priority
-**Timeline**: 4-6 weeks to 0.0.1
-**Quality**: 271 tests passing, 81.54% coverage, ASAN clean
+**Status**: Snapshots + convenience APIs complete, ready for stability testing
+**Timeline**: 2-4 weeks to 0.0.1 (stability testing + docs)
+**Quality**: 156 tests passing, 81.54% coverage, ASAN clean
 **Performance**: 2.47x RocksDB writes, 2.07x reads 🏆
 **Updated**: November 16, 2025

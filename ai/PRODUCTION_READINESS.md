@@ -23,9 +23,9 @@
 - ✅ Performance: 2.47x RocksDB writes, 2.07x reads
 
 **What's Missing**:
-- ❌ Snapshots (point-in-time consistent views)
+- ✅ ~~Snapshots~~ IMPLEMENTED (Nov 16, 2025)
+- ✅ ~~Convenience APIs~~ IMPLEMENTED (Nov 16, 2025)
 - ❌ MVCC transactions
-- ❌ Convenience APIs (iter(), prefix())
 - ❌ Column families
 - ❌ Per-operation options (ReadOptions, WriteOptions)
 
@@ -116,11 +116,24 @@ impl Snapshot {
 - ✅ L0 reverse order (newest first)
 - ✅ 6 comprehensive tests passing
 
-### Week 3: Convenience APIs
+### Week 3: Convenience APIs ✅ COMPLETE (Nov 16, 2025)
 
-- `db.iter()` - Full table iteration
-- `db.prefix(prefix)` - Prefix scans
-- `ReadOptions`/`WriteOptions` - Per-operation config
+**Implementation**:
+```rust
+impl DB {
+    pub fn iter(&self) -> Result<RangeIterator>;        // Full table iteration
+    pub fn prefix(&self, prefix: &[u8]) -> Result<RangeIterator>; // Prefix scan
+}
+
+// Helper function
+fn increment_bytes(bytes: &[u8]) -> Option<Vec<u8>>;   // Handles 0xFF overflow
+```
+
+**Delivered**:
+- ✅ `db.iter()` - Full table iteration
+- ✅ `db.prefix(prefix)` - Prefix scans with byte increment helper
+- ✅ 4 comprehensive tests passing
+- ⏳ `ReadOptions`/`WriteOptions` - Deferred to 0.0.2
 
 ### Week 4-5: Stability Testing
 
@@ -175,28 +188,30 @@ impl Snapshot {
 ## Quality Metrics
 
 **Current**:
-- Tests: 152 passing (0 failures)
+- Tests: 156 passing (0 failures)
 - Coverage: 81.54% (exceeds 80% goal)
 - Memory: ASAN clean
 - Thread safety: 50+ concurrent tests
 - Performance: 2.47x RocksDB writes, 2.07x reads
 - ✅ **Snapshot tests: 6 passing**
+- ✅ **Convenience API tests: 4 passing**
 
 **Needed for 0.0.1**:
 - 24h+ fuzzing with no crashes
 - 72h+ soak test stable
 - ✅ All snapshot tests passing
+- ✅ All convenience API tests passing
 - CI green on all platforms
 
 ---
 
 ## Summary
 
-**seerdb is closer to production than previously thought**. Snapshots implemented on Nov 16, 2025. Main remaining gap is MVCC transactions.
+**seerdb is ready for stability testing**. Snapshots and convenience APIs implemented on Nov 16, 2025. Main remaining gap is MVCC transactions (deferred to 0.0.2).
 
-**Timeline**: 3-5 weeks (snapshots complete, convenience APIs + stability testing remaining)
-**Priority**: Convenience APIs, then stability testing
-**Status**: ✅ Snapshots complete, ready for convenience APIs and fuzzing
+**Timeline**: 2-4 weeks (convenience APIs complete, stability testing + docs remaining)
+**Priority**: Long-running fuzzing, then documentation
+**Status**: ✅ Snapshots + convenience APIs complete, ready for fuzzing
 
 ---
 

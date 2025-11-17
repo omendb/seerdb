@@ -56,6 +56,36 @@ pub(crate) fn partition_for_key(key: &[u8]) -> usize {
     (hash % NUM_PARTITIONS as u64) as usize
 }
 
+/// Increment a byte slice to create an exclusive upper bound for prefix scans
+///
+/// Returns None if the input is all 0xFF bytes (can't increment further).
+/// Used by prefix() to create a range [prefix, prefix+1).
+///
+/// # Examples
+/// - `b"user"` → `Some(b"uses")`
+/// - `b"user\xff"` → `Some(b"usesxx00")`
+/// - `b"\xff\xff"` → `None`
+fn increment_bytes(bytes: &[u8]) -> Option<Vec<u8>> {
+    if bytes.is_empty() {
+        return None;
+    }
+
+    let mut result = bytes.to_vec();
+
+    // Increment from the rightmost byte, carrying over as needed
+    for i in (0..result.len()).rev() {
+        if result[i] < 0xFF {
+            result[i] += 1;
+            return Some(result);
+        }
+        // This byte is 0xFF, set to 0 and continue to carry
+        result[i] = 0;
+    }
+
+    // All bytes were 0xFF, can't increment
+    None
+}
+
 #[derive(Debug, Error)]
 pub enum DBError {
     #[error("IO error: {0}")]
@@ -2599,6 +2629,64 @@ impl DB {
         RangeIterator::new(start_key, end_key, &partition_refs, sstables)
     }
 
+    /// Iterate over all keys in the database
+    ///
+    /// This is a convenience method equivalent to `range(&[], None)`.
+    /// Returns an iterator over all key-value pairs in sorted order.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use seerdb::{DB, DBOptions};
+    ///
+    /// let db = DB::open(DBOptions::default()).unwrap();
+    /// db.put(b"a", b"1").unwrap();
+    /// db.put(b"b", b"2").unwrap();
+    /// db.put(b"c", b"3").unwrap();
+    ///
+    /// // Iterate over all keys
+    /// for result in db.iter().unwrap() {
+    ///     let (key, value) = result.unwrap();
+    ///     println!("{:?} => {:?}", key, value);
+    /// }
+    /// ```
+    pub fn iter(&self) -> Result<RangeIterator> {
+        self.range(&[], None)
+    }
+
+    /// Iterate over keys with a given prefix
+    ///
+    /// This is a convenience method for prefix scans. Returns an iterator
+    /// over all key-value pairs where the key starts with the given prefix.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use seerdb::{DB, DBOptions};
+    ///
+    /// let db = DB::open(DBOptions::default()).unwrap();
+    /// db.put(b"user:1", b"alice").unwrap();
+    /// db.put(b"user:2", b"bob").unwrap();
+    /// db.put(b"user:3", b"charlie").unwrap();
+    /// db.put(b"post:1", b"hello").unwrap();
+    ///
+    /// // Iterate over all user keys
+    /// for result in db.prefix(b"user:").unwrap() {
+    ///     let (key, value) = result.unwrap();
+    ///     println!("{:?} => {:?}", key, value);
+    /// }
+    /// // Output: user:1, user:2, user:3
+    /// ```
+    pub fn prefix(&self, prefix: &[u8]) -> Result<RangeIterator> {
+        // Calculate the end key by incrementing the prefix
+        // This creates a range [prefix, prefix+1) that captures all keys with the prefix
+        let end_key = increment_bytes(prefix);
+        match end_key {
+            Some(end) => self.range(prefix, Some(&end)),
+            None => self.range(prefix, None), // Prefix is all 0xFF, scan to end
+        }
+    }
+
     /// Create a point-in-time consistent snapshot of the database
     ///
     /// Snapshots provide isolation for reads - writes after the snapshot
@@ -3601,5 +3689,146 @@ mod tests {
         // DB sees resurrected value
         assert_eq!(db.get(b"key1").unwrap(), Some(Bytes::from("resurrected")));
     }
+
+    #[test]
+    fn test_iter_all_keys() {
+        let dir = tempdir().unwrap();
+        let options = DBOptions {
+            data_dir: dir.path().to_path_buf(),
+            ..Default::default()
+        };
+
+        let db = DB::open(options).unwrap();
+
+        // Write some keys
+        db.put(b"a", b"1").unwrap();
+        db.put(b"b", b"2").unwrap();
+        db.put(b"c", b"3").unwrap();
+        db.put(b"d", b"4").unwrap();
+        db.put(b"e", b"5").unwrap();
+
+        // Iterate over all keys
+        let results: Vec<_> = db.iter().unwrap().map(|r| r.unwrap()).collect();
+
+        assert_eq!(results.len(), 5);
+        assert_eq!(results[0].0.as_ref(), b"a");
+        assert_eq!(results[1].0.as_ref(), b"b");
+        assert_eq!(results[2].0.as_ref(), b"c");
+        assert_eq!(results[3].0.as_ref(), b"d");
+        assert_eq!(results[4].0.as_ref(), b"e");
+    }
+
+    #[test]
+    fn test_prefix_scan() {
+        let dir = tempdir().unwrap();
+        let options = DBOptions {
+            data_dir: dir.path().to_path_buf(),
+            ..Default::default()
+        };
+
+        let db = DB::open(options).unwrap();
+
+        // Write keys with different prefixes
+        db.put(b"user:1", b"alice").unwrap();
+        db.put(b"user:2", b"bob").unwrap();
+        db.put(b"user:3", b"charlie").unwrap();
+        db.put(b"post:1", b"hello").unwrap();
+        db.put(b"post:2", b"world").unwrap();
+        db.put(b"tag:rust", b"lang").unwrap();
+
+        // Scan user: prefix
+        let user_results: Vec<_> = db
+            .prefix(b"user:")
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(user_results.len(), 3);
+        assert_eq!(user_results[0].0.as_ref(), b"user:1");
+        assert_eq!(user_results[1].0.as_ref(), b"user:2");
+        assert_eq!(user_results[2].0.as_ref(), b"user:3");
+
+        // Scan post: prefix
+        let post_results: Vec<_> = db
+            .prefix(b"post:")
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(post_results.len(), 2);
+        assert_eq!(post_results[0].0.as_ref(), b"post:1");
+        assert_eq!(post_results[1].0.as_ref(), b"post:2");
+
+        // Scan tag: prefix (single result)
+        let tag_results: Vec<_> = db.prefix(b"tag:").unwrap().map(|r| r.unwrap()).collect();
+        assert_eq!(tag_results.len(), 1);
+        assert_eq!(tag_results[0].0.as_ref(), b"tag:rust");
+
+        // Scan non-existent prefix
+        let empty_results: Vec<_> = db
+            .prefix(b"missing:")
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(empty_results.len(), 0);
+    }
+
+    #[test]
+    fn test_increment_bytes_helper() {
+        // Normal case
+        assert_eq!(increment_bytes(b"user"), Some(b"uses".to_vec()));
+
+        // With 0xFF at end
+        assert_eq!(increment_bytes(b"user\xff"), Some(b"uses\x00".to_vec()));
+
+        // Multiple 0xFF at end
+        assert_eq!(
+            increment_bytes(b"a\xff\xff"),
+            Some(b"b\x00\x00".to_vec())
+        );
+
+        // All 0xFF
+        assert_eq!(increment_bytes(b"\xff\xff"), None);
+
+        // Single byte
+        assert_eq!(increment_bytes(b"a"), Some(b"b".to_vec()));
+        assert_eq!(increment_bytes(b"\xff"), None);
+
+        // Empty
+        assert_eq!(increment_bytes(b""), None);
+    }
+
+    #[test]
+    fn test_prefix_with_sstables() {
+        let dir = tempdir().unwrap();
+        let mut opts = DBOptions::default();
+        opts.data_dir = dir.path().to_path_buf();
+        opts.memtable_capacity = 1024; // Small memtable to force flush
+
+        let db = DB::open(opts).unwrap();
+
+        // Write enough data to trigger flush
+        for i in 0..20 {
+            let key = format!("key:{:02}", i);
+            let value = format!("value_{}", i);
+            db.put(key.as_bytes(), value.as_bytes()).unwrap();
+        }
+
+        // Force flush to ensure data is in SSTables
+        db.flush().unwrap();
+
+        // Add some more data in memtable
+        db.put(b"key:20", b"value_20").unwrap();
+        db.put(b"key:21", b"value_21").unwrap();
+
+        // Prefix scan should find all keys (memtable + SSTables)
+        let results: Vec<_> = db.prefix(b"key:").unwrap().map(|r| r.unwrap()).collect();
+        assert_eq!(results.len(), 22);
+
+        // Verify ordering
+        for i in 0..22 {
+            let expected_key = format!("key:{:02}", i);
+            assert_eq!(results[i].0.as_ref(), expected_key.as_bytes());
+        }
+    }
 }
+
 

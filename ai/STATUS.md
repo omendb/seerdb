@@ -2,9 +2,9 @@
 
 **Last Updated**: November 16, 2025
 **Current Phase**: Feature Completeness (PRE-ALPHA)
-**Tests**: 152 tests passing (0 failures)
+**Tests**: 156 tests passing (0 failures)
 **Coverage**: 81.54%
-**Status**: MOSTLY COMPLETE - snapshots IMPLEMENTED, missing transactions
+**Status**: MOSTLY COMPLETE - snapshots + convenience APIs IMPLEMENTED, missing MVCC
 
 ---
 
@@ -49,10 +49,12 @@ db.snapshot_consistent()     // Full consistency (forces flush first)
 snapshot.get(key)            // Read from snapshot
 snapshot.range(start, end)   // Range scan on snapshot
 
+// ✅ NEWLY IMPLEMENTED - Convenience APIs
+db.iter()                    // Full table iteration
+db.prefix(prefix)            // Prefix scan (e.g., db.prefix(b"user:"))
+
 // ❌ MISSING (important for some use cases)
 db.transaction()             // No MVCC
-db.iter()                    // No full table iterator (use range(b"", None))
-db.prefix(prefix)            // No prefix scan helper (use range manually)
 ```
 
 **seerdb is usable for:**
@@ -78,7 +80,7 @@ Performance claims are valid, but **feature completeness is not**.
 ## Quality Status
 
 ### Good
-- ✅ 152 tests passing
+- ✅ 156 tests passing
 - ✅ 81.54% coverage
 - ✅ ASAN clean (memory safety)
 - ✅ All critical bugs fixed
@@ -86,6 +88,7 @@ Performance claims are valid, but **feature completeness is not**.
 - ✅ Range iteration working (k-way merge)
 - ✅ Comprehensive observability
 - ✅ **Snapshots implemented** (point-in-time consistency)
+- ✅ **Convenience APIs** (iter(), prefix())
 
 ### Needs Work
 - ⚠️ No MVCC transactions
@@ -104,12 +107,12 @@ Performance claims are valid, but **feature completeness is not**.
 - ✅ `snapshot.get()` and `snapshot.range()` - Read operations
 - ✅ 6 comprehensive tests passing
 
-### Phase 2: Convenience APIs (MEDIUM PRIORITY)
-**Timeline**: 1 week
+### Phase 2: Convenience APIs ✅ COMPLETE (Nov 16, 2025)
 
-- `db.iter()` - Full table iteration helper
-- `db.prefix(prefix)` - Prefix scan helper
-- ReadOptions/WriteOptions per-operation
+- ✅ `db.iter()` - Full table iteration
+- ✅ `db.prefix(prefix)` - Prefix scan (with increment_bytes helper)
+- ✅ 4 comprehensive tests passing
+- ⏳ ReadOptions/WriteOptions per-operation (deferred to 0.0.2)
 
 ### Phase 3: Stability Testing (REQUIRED FOR RELEASE)
 **Timeline**: 1-2 weeks
