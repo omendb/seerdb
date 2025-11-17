@@ -10,10 +10,60 @@ Modern embedded storage engine integrating learned indexes (ALEX), key-value sep
 
 ## Features
 
-- Learned indexes (ALEX) for faster lookups
-- Key-value separation (WiscKey vLog) for lower write amplification
-- Workload-aware LSM compaction (Dostoevsky)
+- **Learned indexes** (ALEX) for faster lookups
+- **Key-value separation** (WiscKey vLog) for lower write amplification
+- **Workload-aware compaction** (Dostoevsky)
+- **Point-in-time snapshots** for consistent reads
+- **Range queries** with k-way merge iterator
+- **Prefix scans** for namespace queries
 - Modern optimizations: LZ4 compression, jemalloc, SIMD, lock-free structures
+
+## Quick Start
+
+```rust
+use seerdb::{DB, DBOptions};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let db = DB::open(DBOptions::default())?;
+
+    // Basic operations
+    db.put(b"key1", b"value1")?;
+    let val = db.get(b"key1")?;
+    db.delete(b"key1")?;
+
+    // Batch writes (atomic)
+    let mut batch = db.batch();
+    batch.put(b"user:1", b"alice");
+    batch.put(b"user:2", b"bob");
+    batch.commit()?;
+
+    // Range queries
+    for result in db.range(b"user:", Some(b"user:~"))? {
+        let (key, value) = result?;
+        println!("{:?} = {:?}", key, value);
+    }
+
+    // Prefix scans
+    for result in db.prefix(b"user:")? {
+        let (key, value) = result?;
+        println!("{:?} = {:?}", key, value);
+    }
+
+    // Point-in-time snapshots
+    let snapshot = db.snapshot();
+    db.put(b"key1", b"new_value")?;
+    // Snapshot still sees old state
+    let old_val = snapshot.get(b"key1")?;
+
+    // Full table iteration
+    for result in db.iter()? {
+        let (key, value) = result?;
+        println!("{:?} = {:?}", key, value);
+    }
+
+    Ok(())
+}
+```
 
 ## Performance
 
@@ -48,10 +98,11 @@ cargo run --release --example write_amplification
 
 ## Testing
 
-- 271 tests (unit, integration, stress)
+- 165 tests (156 lib + 9 stress tests)
 - 81.54% test coverage
 - Memory safety validated (ASAN clean)
 - Thread safety validated (50+ concurrent tests)
+- Fuzzing: 10,898 runs, 0 crashes
 
 ## Architecture
 
