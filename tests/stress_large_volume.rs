@@ -63,10 +63,7 @@ fn test_500k_sequential_operations() {
     assert_eq!(found, write_count, "All keys should be found");
     assert_eq!(not_found, 0, "No keys should be missing");
 
-    println!(
-        "Large volume test completed: {} operations verified",
-        found
-    );
+    println!("Large volume test completed: {} operations verified", found);
 }
 
 #[test]

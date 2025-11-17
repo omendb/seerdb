@@ -76,7 +76,16 @@ fn bytes_to_i64(bytes: &[u8]) -> i64 {
     } else {
         // Long keys: sample bytes at multiple positions to capture structure
         // This provides better collision resistance than first/last only
-        let positions = [0, 2, 4, 6, 8.min(len-1), 10.min(len-1), 12.min(len-1), len-1];
+        let positions = [
+            0,
+            2,
+            4,
+            6,
+            8.min(len - 1),
+            10.min(len - 1),
+            12.min(len - 1),
+            len - 1,
+        ];
         let mut buf = [0u8; 8];
         for (i, &pos) in positions.iter().enumerate() {
             if pos < len {

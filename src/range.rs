@@ -111,8 +111,7 @@ impl RangeIterator {
         }
 
         // Create k-way merge iterator
-        let merge = KWayMergeIterator::new(iterators)
-            .map_err(|e| std::io::Error::other(e))?;
+        let merge = KWayMergeIterator::new(iterators).map_err(|e| std::io::Error::other(e))?;
 
         Ok(RangeIterator { inner: merge })
     }

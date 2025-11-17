@@ -137,7 +137,11 @@ where
             }
 
             // Deduplicate: skip if same key as last (LSM: first = newest)
-            if self.last_key.as_ref().is_some_and(|last| &entry.key == last) {
+            if self
+                .last_key
+                .as_ref()
+                .is_some_and(|last| &entry.key == last)
+            {
                 continue; // Duplicate, get next
             }
 

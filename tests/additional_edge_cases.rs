@@ -31,7 +31,11 @@ fn test_large_keys() {
         db.put(&large_key, value).unwrap();
 
         let retrieved = db.get(&large_key).unwrap();
-        assert!(retrieved.is_some(), "Large key ({} bytes) should be retrievable", size);
+        assert!(
+            retrieved.is_some(),
+            "Large key ({} bytes) should be retrievable",
+            size
+        );
         assert_eq!(retrieved.unwrap().as_ref(), value);
     }
 }
@@ -58,7 +62,11 @@ fn test_large_values() {
         db.put(key.as_bytes(), &large_value).unwrap();
 
         let retrieved = db.get(key.as_bytes()).unwrap();
-        assert!(retrieved.is_some(), "Large value ({} bytes) should be retrievable", size);
+        assert!(
+            retrieved.is_some(),
+            "Large value ({} bytes) should be retrievable",
+            size
+        );
         assert_eq!(retrieved.unwrap().len(), size);
     }
 }

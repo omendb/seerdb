@@ -68,7 +68,10 @@ fn test_memory_pressure_80_percent_trigger() {
     println!("\n=== DB Stats after flush ===");
     println!("Total flushes: {}", stats.total_flushes);
     println!("Total puts: {}", stats.total_puts);
-    println!("Memory usage: {} MB", db.estimate_memory_usage() / 1024 / 1024);
+    println!(
+        "Memory usage: {} MB",
+        db.estimate_memory_usage() / 1024 / 1024
+    );
 
     // Debug: Check SSTable files on disk
     println!("\n=== SSTable files on disk ===");
@@ -93,10 +96,18 @@ fn test_memory_pressure_80_percent_trigger() {
         match SSTable::open(sst_path) {
             Ok(mut sst) => {
                 let contains = sst.contains(b"key_0000000000").unwrap_or(false);
-                println!("  {:?}: {}", sst_path.file_name().unwrap(), if contains { "FOUND" } else { "NOT FOUND" });
+                println!(
+                    "  {:?}: {}",
+                    sst_path.file_name().unwrap(),
+                    if contains { "FOUND" } else { "NOT FOUND" }
+                );
             }
             Err(e) => {
-                println!("  {:?}: ERROR opening - {}", sst_path.file_name().unwrap(), e);
+                println!(
+                    "  {:?}: ERROR opening - {}",
+                    sst_path.file_name().unwrap(),
+                    e
+                );
             }
         }
     }
@@ -108,10 +119,18 @@ fn test_memory_pressure_80_percent_trigger() {
         if result.is_none() {
             println!("\n=== MISSING KEY: {} (write #{}) ===", key, i);
             // Try adjacent keys to see pattern
-            for j in (i.saturating_sub(5))..=(i+5) {
+            for j in (i.saturating_sub(5))..=(i + 5) {
                 let test_key = format!("key_{:010}", j);
                 let test_result = db.get(test_key.as_bytes()).unwrap();
-                println!("  key_{:010}: {}", j, if test_result.is_some() { "FOUND" } else { "MISSING" });
+                println!(
+                    "  key_{:010}: {}",
+                    j,
+                    if test_result.is_some() {
+                        "FOUND"
+                    } else {
+                        "MISSING"
+                    }
+                );
             }
         }
         assert!(
