@@ -167,31 +167,33 @@
 
 ---
 
-## Next Steps (Priority Order)
+## Profiling Phases Complete ✅
 
-### Priority 1: Allocation Profiling
-- Install dhat-rs or heaptrack
-- Profile write-heavy workload
-- Profile scan-heavy workload
-- Identify allocation hotspots
-- **Timeline**: 2-4 hours
+### Phase 1: CPU Profiling (Flamegraph) ✅ **COMPLETE**
+- Memtable-only: 1.89M writes/sec, 3.46M reads/sec
+- Realistic workload: 553K writes/sec, 30K scans/sec
+- Cache hit rate: 97.38%
+- **Results**: This document
 
-### Priority 2: Lock Contention Analysis
-- Run concurrent write benchmark
-- Use cargo-instruments Thread State profile
-- Measure memtable lock wait time
-- **Timeline**: 2-4 hours
+### Phase 2: Allocation Profiling (dhat) ✅ **COMPLETE** (Nov 17, 2025)
+- Write workload: 121 MB total, 30 MB peak, 2.1M allocations
+- Scan workload: 373 MB total, 31 MB peak, 2.1M allocations
+- Cache hit rate: 99.84%
+- Peak memory excellent (30-32 MB), no leaks detected
+- **Results**: `ai/ALLOCATION_PROFILING.md`
 
-### Priority 3: SIMD Performance Analysis
-- Benchmark with SIMD features on/off
-- Measure impact on read throughput
-- Validate ALEX index SIMD usage
-- **Timeline**: 2-3 hours
+### Phase 3: Lock Contention Analysis ✅ **COMPLETE** (Nov 17, 2025)
+- Critical finding: WAL Mutex bottleneck (28.7% parallel efficiency)
+- Thread time variance: 30.8x (extreme serialization)
+- Lock-free structures validated: Memtables ✅, Cache ✅, LSM tree ✅
+- Optimization path: WAL pipelining (RocksDB pattern, 3-5x expected)
+- **Results**: `ai/LOCK_CONTENTION_ANALYSIS.md`
 
-### Priority 4: Real Workload Benchmarks
+### Phase 4: Real Workload Comparisons (NEXT)
 - Compare with RocksDB/fjall on omendb workload
 - Test time series pattern (sequential timestamps)
 - Test random key-value workload
+- Analyze SIMD vs non-SIMD performance
 - **Timeline**: 4-8 hours
 
 ---
@@ -203,11 +205,14 @@
 - Block cache delivers 1,406x improvement (vs 22 QPS baseline)
 - Write amplification: 1.01x (best-in-class)
 
+**Completed Profiling** (Nov 17, 2025):
+- ✅ Phase 1: CPU profiling (flamegraph) - This document
+- ✅ Phase 2: Allocation profiling (dhat) - `ai/ALLOCATION_PROFILING.md`
+- ✅ Phase 3: Lock contention (concurrent benchmark) - `ai/LOCK_CONTENTION_ANALYSIS.md`
+
 **Remaining Work**:
-- Allocation profiling (identify memory bottlenecks)
-- Lock contention analysis (concurrent workloads)
+- Phase 4: Real workload comparisons (RocksDB, fjall)
 - SIMD optimization validation
-- Real workload comparisons (RocksDB, fjall)
 
 **Production Readiness**:
 - Performance: ✅ Ready
@@ -215,7 +220,12 @@
 - Stability: ✅ 176 tests passing, 81.54% coverage
 - Profiling: 🔄 In progress
 
-**Recommendation**: Proceed with allocation profiling to identify final optimization opportunities before production release.
+**Recommendation**: All three profiling phases complete. Key findings:
+1. **CPU**: Block cache delivers 1,406x improvement (Phase 1) ✅
+2. **Memory**: Peak 30-32 MB, no leaks, opportunities identified (Phase 2) ✅
+3. **Locks**: WAL Mutex bottleneck identified, fix available (Phase 3) ✅
+
+Next: Phase 4 (Real workload comparisons) or implement WAL pipelining optimization.
 
 ---
 

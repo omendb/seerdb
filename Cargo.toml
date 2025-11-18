@@ -82,6 +82,7 @@ rand = "0.8"              # Random data generation for soak tests
 # Stress testing
 sysinfo = "0.29"          # Resource monitoring (memory, CPU, fd)
 hdrhistogram = "7.5"      # Accurate latency percentiles
+dhat = "0.3.3"
 
 [features]
 default = ["simd"]
@@ -95,6 +96,8 @@ object-store = ["dep:object_store", "dep:url", "dep:futures"]
 # Only needed when running comparative benchmarks, not for regular tests
 baseline-benchmarks = ["dep:rocksdb", "dep:sled", "dep:fjall"]
 varint-simd = ["dep:varint-simd"]
+# Enable dhat heap profiling (disables jemalloc to avoid conflicts)
+dhat-heap = []
 # Note: io_uring support can be added later as opt-in (security concerns)
 
 [[bench]]

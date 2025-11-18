@@ -9,10 +9,10 @@
 ## Quick Start
 
 **New to the project?** Read in this order:
-1. `STATUS.md` - Current state and recent progress
-2. `TODO.md` - Active tasks and priorities
-3. `PRODUCTION_READINESS.md` - Roadmap to production
-4. `BUGS_AND_EDGE_CASES.md` - Known issues
+1. `STATUS.md` - Current state and recent progress (all 4 profiling phases complete)
+2. `TODO.md` - What's next: optimization priorities and timeline
+3. `REAL_WORKLOAD_COMPARISONS.md` - Performance analysis (Phase 4 findings)
+4. `OMENDB_REQUIREMENTS_ANALYSIS.md` - Why omendb doesn't need durability
 
 ---
 
@@ -80,36 +80,52 @@ ai/
 
 ## Session Files (Read Every Session)
 
-**Core files** (<500 lines each, updated frequently):
+**Core files** (read every session):
 
 1. **`STATUS.md`** - Current state, metrics, recent progress
-   - Last updated: November 17, 2025
-   - Contains: Performance metrics, recent work, priorities
-   - Read: Every session start
+   - Last updated: November 18, 2025
+   - Contains: Phase 4 findings, performance reality check, omendb analysis
+   - Key insight: seerdb is ALREADY fast for omendb with `SyncPolicy::None`
 
-2. **`TODO.md`** - Active tasks and priorities
-   - Last updated: November 17, 2025
-   - Contains: Active tasks, completed work, next steps
-   - Read: Every session start
+2. **`TODO.md`** - Active optimization priorities and timeline
+   - Last updated: November 18, 2025
+   - Contains: Critical optimizations (group commit, WAL pipelining)
+   - Focus: General-purpose improvements
 
-3. **`PROFILING_RESULTS.md`** - Latest profiling analysis
+3. **`PROFILING_RESULTS.md`** - Phase 1 CPU profiling (flamegraph)
    - Date: November 17, 2025
-   - Contains: Flamegraph results, CPU hotspots, optimization opportunities
+   - Contains: Flamegraph results, CPU hotspots, cache validation
    - Read: When working on performance
 
-4. **`OPTIMIZATION_PREFIX_ITERATION.md`** - Current optimization work
+3a. **`ALLOCATION_PROFILING.md`** - Phase 2 memory profiling (dhat)
    - Date: November 17, 2025
-   - Contains: Prefix scan optimization for omendb workload
-   - Read: When working on range iteration
+   - Contains: Heap allocation patterns, peak memory (30-32 MB), optimization opportunities
+   - Read: When optimizing memory usage
 
-5. **`PRODUCTION_READINESS.md`** - Production roadmap
-   - Last updated: November 16, 2025
-   - Contains: Gap analysis, API completeness, production checklist
-   - Read: When planning releases
+3b. **`LOCK_CONTENTION_ANALYSIS.md`** - Phase 3 concurrency profiling
+   - Date: November 17, 2025
+   - Contains: Lock contention analysis, WAL bottleneck, parallel efficiency metrics
+   - Read: When optimizing concurrent performance
 
-6. **`BUGS_AND_EDGE_CASES.md`** - Active bug tracking
-   - Contains: Known bugs, severity, status
-   - Read: Before implementing fixes
+3c. **`REAL_WORKLOAD_COMPARISONS.md`** - Phase 4 realistic workload comparisons
+   - Date: November 18, 2025
+   - Contains: seerdb vs RocksDB vs fjall on realistic workloads, performance discrepancy analysis
+   - Read: When evaluating production readiness or performance claims
+
+3d. **`OMENDB_REQUIREMENTS_ANALYSIS.md`** - omendb durability analysis
+   - Date: November 18, 2025
+   - Contains: Do we need durability? SOTA for vector databases, configuration recommendations
+   - Read: When configuring seerdb for omendb or vector database workloads
+
+4. **`OPTIMIZATION_PREFIX_ITERATION.md`** - Prefix iteration optimizations (completed)
+   - Date: November 17, 2025
+   - Contains: Key-only iteration (5.68x), read-ahead prefetching, batch API
+   - Read: When working on range iteration optimizations
+
+5. **`OMENDB_PERFORMANCE_IMPACT.md`** - omendb integration results
+   - Date: November 17, 2025
+   - Contains: seerdb integration into omendb, cache hit rate analysis
+   - Read: When evaluating omendb-specific performance
 
 ---
 
@@ -117,36 +133,40 @@ ai/
 
 7. **`DECISIONS.md`** - Design decisions index
    - Points to: `decisions/` subdirectory
-   - Contains: Links to detailed decision documents
-
-8. **`RESEARCH.md`** - Research index
-   - Points to: `research/` subdirectory
-   - Contains: Links to paper summaries and analysis
+   - Contains: Architecture, performance, storage, compaction, concurrency decisions
 
 ---
 
 ## Reference Subdirectories (Loaded On Demand)
 
 ### `bugs/` - Historical Bug Tracking
-Fixed bugs with detailed analysis. Reference when encountering similar issues.
+- Fixed bugs with detailed analysis (Bug #10, #11)
+- Archived: `BUGS_AND_EDGE_CASES_ARCHIVE.md` (all critical bugs fixed)
 
 ### `decisions/` - Detailed Design Decisions
-Architecture, performance, storage, compaction, concurrency decisions with rationale.
+- Architecture, performance, storage, compaction, concurrency
+- `superseded-2025-11.md` - Historical decisions from research phase
 
 ### `design/` - Design Specifications
-Architecture specs, API designs, format specifications, roadmaps.
+- Architecture specs, API designs, format specifications
+- Roadmaps for cloud storage, tiered storage, research
 
 ### `performance/` - Performance Analysis Archive
-Historical benchmarks, optimization analyses, profiling results.
+- Historical benchmarks, optimization analyses
+- Block cache optimization, hot path analysis
 
 ### `research/` - Research Findings
-Paper summaries, competitive analysis, SOTA research (>200 lines per topic).
+- Paper summaries (LSM engines, general storage, prefix iteration)
+- Competitive analysis (RocksDB, fjall, sled)
+- SOTA research (2024-2025)
 
 ### `summaries/` - Historical Summaries
-Session summaries, refactoring summaries, milestone reports.
+- Refactoring summary, production readiness archive
+- Milestone reports
 
 ### `testing/` - Test Results Archive
-Stress tests, soak tests, fuzzing results, coverage reports.
+- Stress tests, soak tests, fuzzing results
+- Coverage reports, sanitizer results, crash recovery tests
 
 ---
 
@@ -190,23 +210,32 @@ Stress tests, soak tests, fuzzing results, coverage reports.
 
 ---
 
-## Current Status (November 17, 2025)
+## Current Status (November 18, 2025)
 
 **Performance**:
 - Block cache: 1,406x improvement (30,943 scans/sec)
 - Cache hit rate: 97.38%
 - Write amp: 1.01x
+- Peak memory: 30-32 MB (excellent)
+- Parallel efficiency: 28.7% writes (WAL bottleneck), 81.9% reads (good)
 
-**Recent Work**:
-- ✅ Cloud storage integration complete (S3/GCS/Azure)
-- ✅ Flamegraph profiling Phase 1 complete
-- ✅ ai/ directory reorganized (39 files → 9 active)
+**Recent Work** (Nov 18, 2025):
+- ✅ **All 4 profiling phases complete**:
+  - Phase 1: CPU (flamegraph) - Cache validated (97.38% hit rate)
+  - Phase 2: Memory (dhat) - Peak 30-32 MB, no leaks
+  - Phase 3: Locks (concurrent benchmark) - WAL bottleneck (28.7% efficiency)
+  - Phase 4: Real workloads - **Critical finding**: 2-4x slower with durability
+- ✅ **omendb requirements analysis**: DOES NOT need durability
+  - seerdb is ALREADY fast for omendb (878K writes/sec with `SyncPolicy::None`)
+  - Configuration guide: `/Users/nick/github/omendb/SEERDB_CONFIGURATION.md`
+- ✅ **Strategic direction**: Two-track plan (in TODO.md)
+  - Track 1: Ship omendb NOW (878K writes/sec, 31K scans/sec)
+  - Track 2: Optimize for general-purpose (8-week timeline)
 
-**Next Priorities**:
-1. Allocation profiling (dhat-rs/heaptrack)
-2. Lock contention analysis
-3. SIMD validation
-4. Real workload comparisons
+**Strategic Direction**:
+1. **Ship omendb NOW** (performance already excellent: 878K writes/sec, 31K scans/sec)
+2. **Optimize seerdb** for general-purpose use (group commit → WAL pipelining → async flush)
+3. **Timeline**: 8 weeks to production-ready general-purpose storage engine
 
 ---
 
@@ -243,5 +272,6 @@ Stress tests, soak tests, fuzzing results, coverage reports.
 
 ---
 
-**Last Updated**: November 17, 2025
-**Next Cleanup**: December 1, 2025
+**Last Updated**: November 18, 2025
+**Status**: All 4 profiling phases complete, strategic roadmap defined
+**Next Cleanup**: December 15, 2025

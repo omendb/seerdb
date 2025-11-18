@@ -64,31 +64,126 @@
 
 ---
 
-## 📊 HIGH PRIORITY: Performance Profiling
+## ✅ COMPLETED: Batch Prefix API (Nov 17, 2025)
+
+**Status**: ✅ **General storage engine API implemented**
+
+**What Was Done**:
+- [x] **Research** batch operations SOTA (RocksDB MultiGet, BadgerDB WriteBatch)
+  - Documented: `ai/research/batch_operations_sota.md`
+- [x] **Design** batch prefix API
+  - Documented: `ai/design/batch_prefix_api.md`
+  - API: `prefix_batch(&[&[u8]]) -> Result<Vec<Vec<(Bytes, Bytes)>>>`
+- [x] **Implement** Phase 1 (sequential processing)
+  - Location: `src/db.rs:3251`
+  - Proper error handling (converts Box<dyn Error> to DBError)
+- [x] **Tests** (5 comprehensive unit tests)
+  - `test_prefix_batch_basic` - Basic functionality ✅
+  - `test_prefix_batch_empty` - Edge cases ✅
+  - `test_prefix_batch_no_matches` - No results ✅
+  - `test_prefix_batch_ordering` - Maintains order ✅
+  - `test_prefix_batch_concurrent` - Thread safety ✅
+- [x] **Benchmark** omendb workload (10K nodes, 18 scans)
+  - Created: `examples/batch_prefix_benchmark.rs`
+  - Result: 1.00x speedup (no improvement)
+  - Cache hit rate: 94.72% (excellent)
+
+**Results**:
+- Individual scans: 903µs (median)
+- Batch scans: 899µs (median)
+- **omendb target**: ✅ **903µs** vs original 1002ms = **1,109x improvement!**
+- **Conclusion**: Block cache was the real optimization, batch API provides clean interface
+
+**Key Insight**:
+Block cache optimization (implemented earlier) already provides 94.72% hit rate, making iterator overhead negligible. Batch API is still valuable as general storage engine pattern (matches RocksDB MultiGet) but doesn't add performance benefit when cache is this effective.
+
+---
+
+## ⚠️ CRITICAL: Performance Optimizations (Nov 18, 2025)
+
+**Status**: seerdb is 2-4x slower than RocksDB/fjall with durability
+
+**Phase 4 Finding**: Baseline benchmarks measured peak throughput WITHOUT durability, real workloads show significant performance gap. See `ai/REAL_WORKLOAD_COMPARISONS.md` for detailed analysis.
+
+**Priority 1: Group Commit** (5-10x improvement expected)
+- [ ] Batch multiple writes before fsync
+- [ ] Amortize fsync overhead across 10-100 writes
+- [ ] Expected: 127K → 1.27M writes/sec
+
+**Priority 2: WAL Pipelining** (3-5x improvement expected)
+- [ ] Implement RocksDB-style write pipelining
+- [ ] Fix 28.7% parallel efficiency (from Phase 3 analysis)
+- [ ] Expected: 80%+ parallel efficiency, 3-5x concurrent writes
+
+**Priority 3: Async Flush** (2-3x improvement expected)
+- [ ] Background flush with backpressure
+- [ ] Don't block writes during SSTable creation
+- [ ] Expected: Remove 0.5-2s flush overhead
+
+**Priority 4: Block Cache Tuning** (2-3x read improvement expected)
+- [ ] Increase default cache size: 64MB → 256MB
+- [ ] Make cache size configurable via DBOptions
+- [ ] Expected: 49-68% → 80%+ cache hit rate
+
+**Target**: After optimizations, seerdb should be competitive with RocksDB/fjall (1-2x)
+
+**Timeline**:
+- Week 1: Ship omendb (apply configuration, ready NOW)
+- Weeks 2-3: Group commit (5-10x improvement)
+- Weeks 3-5: WAL pipelining (3-5x concurrent writes)
+- Week 6: Async flush (2-3x improvement)
+- Weeks 7-8: Testing, docs, release 0.1.0
+
+**Strategy**: Two parallel tracks
+1. **Ship omendb NOW** - Already fast with `SyncPolicy::None` (878K writes/sec)
+2. **Optimize seerdb** - General-purpose improvements (group commit → WAL pipelining → async flush)
+
+---
+
+## 📊 COMPLETE: Performance Profiling
 
 **Phase 1: Flamegraph Analysis** ✅ **COMPLETE**
 - [x] Flamegraph profiling, CPU hotspots identified
 - [x] Cache hit rate: **97.38%** (exceeds 80% target)
 - [x] Results documented: `ai/PROFILING_RESULTS.md`
 
-**Phase 2: Allocation Profiling** (NEXT)
-- [ ] Install dhat-rs or heaptrack
-- [ ] Profile write-heavy workload
-- [ ] Profile scan-heavy workload
-- [ ] Identify allocation hotspots
-- [ ] Document memory optimization opportunities
+**Phase 2: Allocation Profiling** ✅ **COMPLETE** (Nov 17, 2025)
+- [x] Installed dhat-rs (heap profiler)
+- [x] Created write-heavy benchmark (`examples/dhat_profile_writes.rs`)
+- [x] Created scan-heavy benchmark (`examples/dhat_profile_scans.rs`)
+- [x] Profiled write workload: 121 MB total, 30 MB peak, 2.1M allocations
+- [x] Profiled scan workload: 373 MB total, 31 MB peak, 2.1M allocations
+- [x] Analyzed allocation hotspots
+- [x] Documented optimization opportunities: `ai/ALLOCATION_PROFILING.md`
 
-**Phase 3: Lock Contention Analysis**
-- [ ] Run concurrent write benchmark
-- [ ] Use cargo-instruments Thread State profile
-- [ ] Measure memtable lock wait time
-- [ ] Profile lock-free structures (WAL, cache)
+**Key Findings**:
+- Peak memory excellent: 30-32 MB for both workloads
+- No memory leaks detected (peak doesn't grow)
+- Cache hit rate: 99.84% (scan workload)
+- Allocation rates reasonable: 14 allocations/write, ~1/key scanned
+- **Opportunities**: Iterator pooling (20-30%), decompression buffer reuse (10-15%), arena allocation (30-40%)
 
-**Phase 4: Real Workload Comparisons**
-- [ ] Compare with RocksDB/fjall on omendb workload
-- [ ] Time series writes (sequential timestamps)
-- [ ] Random key-value workload
-- [ ] Analyze SIMD vs non-SIMD performance
+**Phase 3: Lock Contention Analysis** ✅ **COMPLETE** (Nov 17, 2025)
+- [x] Created concurrent benchmark (`examples/lock_contention_benchmark.rs`)
+- [x] Profiled 16-thread concurrent writes, reads, mixed, batch workloads
+- [x] Measured parallel efficiency: 28.7% writes (poor), 81.9% reads (good)
+- [x] Identified WAL Mutex as bottleneck (30.8x thread time variance)
+- [x] Validated lock-free structures: Memtables ✅, Cache ✅, LSM tree ✅
+- [x] Documented findings: `ai/LOCK_CONTENTION_ANALYSIS.md`
+
+**Key Findings**:
+- WAL Mutex bottleneck: 28.7% parallel efficiency at 16 threads (should be >80%)
+- Thread time variance: 30.8x (one thread: 39ms, another: 1.2s - same work!)
+- Lock-free memtables working: 28K writes/sec per thread (excellent)
+- Lock-free cache working: 81.9% read efficiency (excellent)
+- **Fix available**: WAL pipelining (RocksDB pattern) - 3-5x improvement expected
+
+**Phase 4: Real Workload Comparisons** ✅ **COMPLETE** (Nov 18, 2025)
+- [x] Compare with RocksDB/fjall on omendb workload
+- [x] Time series writes (sequential timestamps)
+- [x] Random key-value workload
+- [x] Documented: `ai/REAL_WORKLOAD_COMPARISONS.md`
+- [ ] SIMD vs non-SIMD performance (deferred)
 
 ---
 

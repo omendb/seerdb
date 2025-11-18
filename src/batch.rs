@@ -208,15 +208,34 @@ impl<'db> Batch<'db> {
             operations: wal_ops,
         };
 
+        // Create acknowledgement channel for group commit
+        let (ack_tx, ack_rx) =
+            crossbeam_channel::bounded::<std::result::Result<(), crate::wal::WALError>>(1);
+
+        // Send batch to WAL writer (will batch with concurrent writes)
         self.db
             .wal_tx
-            .send(crate::db::WALMessage::Record(batch_record))
+            .send(crate::db::WALMessage::WriteAndAck {
+                record: batch_record,
+                ack_tx,
+            })
             .map_err(|_| {
                 DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
                     std::io::ErrorKind::BrokenPipe,
                     "WAL writer thread died",
                 )))
             })?;
+
+        // Wait for WAL flush completion (group commit - durability guaranteed!)
+        ack_rx
+            .recv()
+            .map_err(|_| {
+                DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "WAL writer thread died during flush",
+                )))
+            })?
+            .map_err(DBError::Wal)?;
 
         // Apply all operations to memtables atomically
         // This is fast since memtables are lock-free

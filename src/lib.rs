@@ -106,6 +106,8 @@
 
 // Use jemalloc as the global allocator for better multi-threaded performance
 // Tested jemalloc vs mimalloc: jemalloc wins 3/4 workloads (+17-21% improvement)
+// Disabled when using dhat profiler (conflicts with #[global_allocator])
+#[cfg(not(feature = "dhat-heap"))]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 

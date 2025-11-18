@@ -8,9 +8,76 @@
 
 ---
 
+## Recent Progress (Nov 18, 2025)
+
+### Real Workload Comparisons ✅ **CRITICAL FINDING** (Nov 18, 2025)
+- **Phase 4 Complete**: Compared seerdb vs RocksDB vs fjall on realistic workloads
+- ⚠️ **seerdb is 2-4x SLOWER** than competitors with durability enabled
+- **Root cause**: Baseline benchmarks measured peak throughput WITHOUT durability
+  - Baseline: `SyncPolicy::None` (no fsync) = 878K writes/sec ✅
+  - Real workload: Default policy (with fsync) = 127-228K writes/sec ⚠️
+- **Cache hit rate**: 49-68% (real) vs 97-99% (synthetic) - working set > cache size
+- Documentation: `ai/REAL_WORKLOAD_COMPARISONS.md`
+
+### omendb Requirements Analysis ✅ **SOLUTION IDENTIFIED** (Nov 18, 2025)
+- **Key finding**: ✅ **omendb DOES NOT need full durability**
+- **Reason**: HNSW graph is derived data (can rebuild from vectors)
+- **Solution**: Use `SyncPolicy::None` for optimal performance
+  - Writes: 878K ops/sec (2.47x RocksDB) ✅ **ALREADY FAST**
+  - Reads: 2.2M ops/sec (2.07x RocksDB) ✅
+  - Prefix scans: 31,728 scans/sec (1,442x baseline) ✅
+- **Trade-off**: Crash = rebuild HNSW (acceptable for vector DBs)
+- **Industry standard**: Vector databases prioritize performance over strict durability
+- Documentation: `ai/OMENDB_REQUIREMENTS_ANALYSIS.md`
+- **Impact**: seerdb is ALREADY the right choice for omendb with correct configuration!
+
 ## Recent Progress (Nov 17, 2025)
 
-### Prefix Iteration Optimizations ✅ **LATEST**
+### Lock Contention Analysis ✅ **LATEST** (Nov 17, 2025)
+- **Phase 3 Complete**: Concurrent write/read profiling
+- Critical finding: **WAL Mutex bottleneck** at high concurrency
+  - Writes: 28.7% parallel efficiency (16 threads) ⚠️
+  - Reads: 81.9% parallel efficiency ✅
+  - Thread time variance: 30.8x (extreme serialization)
+- Lock-free structures validated:
+  - Memtables: 28K writes/sec per thread ✅
+  - Cache: 98.95% hit rate, good scaling ✅
+  - LSM tree: Lock-free ArcSwap ✅
+- Optimization path identified: WAL pipelining (RocksDB pattern)
+  - Expected: 3-5x improvement (28% → 80%+ efficiency)
+- Documentation: `ai/LOCK_CONTENTION_ANALYSIS.md`
+- Benchmark: `examples/lock_contention_benchmark.rs`
+- **Workload suitability**:
+  - ✅ Excellent: Single-threaded, read-heavy, low-concurrency writes
+  - ⚠️ Poor: High-concurrent writes (8+ threads)
+
+### Allocation Profiling ✅ (Nov 17, 2025)
+- **Phase 2 Complete**: Heap allocation profiling with dhat
+- Write workload: 121 MB total, 30 MB peak, 2.1M allocations (14/write)
+- Scan workload: 373 MB total, 31 MB peak, 2.1M allocations (~1/key)
+- **Key finding**: Peak memory excellent (30-32 MB), no leaks detected
+- Cache hit rate: 99.84% (validates block cache design)
+- **Opportunities identified**:
+  - Iterator object pooling: 20-30% reduction
+  - Decompression buffer reuse: 10-15% reduction
+  - Arena allocation: 30-40% fewer allocations
+- Documentation: `ai/ALLOCATION_PROFILING.md`
+- Benchmarks: `examples/dhat_profile_writes.rs`, `examples/dhat_profile_scans.rs`
+- Profiles: `dhat-heap-writes.json`, `dhat-heap-scans.json`
+
+### Batch Prefix API ✅ (Nov 17, 2025)
+- **General storage engine feature** (RocksDB MultiGet pattern)
+- New API: `prefix_batch(&[&[u8]]) -> Result<Vec<Vec<(Bytes, Bytes)>>>`
+- 5 unit tests passing (basic, empty, no matches, ordering, concurrent)
+- Benchmark: `examples/batch_prefix_benchmark.rs`
+- **Result**: 1.00x speedup (no improvement)
+- **Why**: Block cache already provides 94.72% hit rate
+- **omendb target**: ✅ **903µs** (1,109x better than original 1002ms, 221x better than 200ms target)
+- **Conclusion**: Block cache optimization was the real win, batch API provides clean interface
+- Implementation: `src/db.rs:3251`, Tests: `src/db.rs:4416-4537`
+- Design: `ai/design/batch_prefix_api.md`
+
+### Prefix Iteration Optimizations ✅
 - **Key-Only Iteration** (BadgerDB pattern): **5.68x faster** for count operations
   - New APIs: `range_keys_only()`, `prefix_keys_only()`
   - Skips value decoding + vLog reads
@@ -122,14 +189,24 @@ Completed:
 
 ## Performance Baseline
 
-| Workload | seerdb | RocksDB | Speedup |
-|----------|--------|---------|---------|
-| **Writes** | 878K ops/sec | 356K ops/sec | **2.47x** |
-| **Reads** | 2,207K ops/sec | 1,065K ops/sec | **2.07x** |
-| **Mixed** | 718K ops/sec | 400K ops/sec | **1.79x** |
-| **Scans** | 19.6K scans/sec | 19.7K scans/sec | 0.99x |
+⚠️ **IMPORTANT**: These results measured peak throughput WITHOUT durability (`SyncPolicy::None`). Real workloads with durability show seerdb is 2-4x slower than RocksDB/fjall. See `ai/REAL_WORKLOAD_COMPARISONS.md` for honest assessment.
 
-**Write Amplification**: 1.01x (4.82x better than traditional LSM)
+| Workload | seerdb (no durability) | RocksDB | Speedup | Reality Check |
+|----------|------------------------|---------|---------|---------------|
+| **Writes** | 878K ops/sec | 356K ops/sec | **2.47x** | ⚠️ **Misleading** (no fsync) |
+| **Reads** | 2,207K ops/sec | 1,065K ops/sec | **2.07x** | ⚠️ **Misleading** (small dataset) |
+| **Mixed** | 718K ops/sec | 400K ops/sec | **1.79x** | ⚠️ **Misleading** (no fsync) |
+| **Scans** | 19.6K scans/sec | 19.7K scans/sec | 0.99x | ✅ **Competitive** |
+
+**Real Performance** (with durability, Phase 4 results):
+
+| Workload | seerdb (with durability) | RocksDB | Speedup | Status |
+|----------|--------------------------|---------|---------|--------|
+| **omendb writes** | 227K ops/sec | 492K ops/sec | **0.47x** | ⚠️ **2.1x slower** |
+| **Time series writes** | 228K ops/sec | 529K ops/sec | **0.43x** | ⚠️ **2.3x slower** |
+| **Random writes** | 127K ops/sec | 298K ops/sec | **0.43x** | ⚠️ **2.3x slower** |
+
+**Write Amplification**: 1.01x (4.82x better than traditional LSM) ✅
 
 ### omendb-specific Performance
 
@@ -237,4 +314,4 @@ StorageConfig::Azure { container, account, prefix }
 
 ---
 
-*Next session: Allocation profiling (dhat-rs/heaptrack), lock contention analysis*
+*Profiling complete (4 phases). Critical finding: seerdb is 2-4x slower than RocksDB/fjall with durability. Next: Implement optimizations (group commit, WAL pipelining, async flush) to reach competitive performance*
