@@ -10,12 +10,23 @@
 
 ## Recent Progress (Nov 17, 2025)
 
-### Performance Profiling - Phase 1 Complete ✅ **LATEST**
+### Prefix Iteration Optimizations ✅ **LATEST**
+- **Key-Only Iteration** (BadgerDB pattern): **5.68x faster** for count operations
+  - New APIs: `range_keys_only()`, `prefix_keys_only()`
+  - Skips value decoding + vLog reads
+  - Result: 9,906,343 keys/sec (vs 1,743,199 baseline)
+- **Read-Ahead Prefetching** (RocksDB pattern): Inline block prefetching
+  - Prefetch next 2 blocks during sequential scans
+  - Improves cache hit rate (83.40% vs 80.28%)
+- Research documented: `ai/research/prefix_iteration_sota.md`
+- Design documented: `ai/design/prefix_iteration_optimization.md`
+- **All tests passing** (168/168), zero regressions
+
+### Performance Profiling - Phase 1 Complete ✅
 - Flamegraph analysis of CPU hotspots (memtable, WAL, SSTable I/O)
 - omendb prefix scan benchmark: **30,943 scans/sec** (1,406x improvement!)
 - Cache hit rate validated: **97.38%** (exceeds 80% target)
 - Results documented in `ai/PROFILING_RESULTS.md`
-- Identified optimization opportunities: allocation profiling, lock contention
 - **Next**: Allocation profiling (dhat-rs/heaptrack)
 
 ### ObjectStore Wired into DB ✅

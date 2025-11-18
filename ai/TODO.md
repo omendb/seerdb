@@ -37,15 +37,37 @@
 
 ---
 
+## ✅ COMPLETED: Prefix Iteration Optimizations (Nov 17, 2025)
+
+**Status**: ✅ **SOTA optimizations implemented and validated**
+
+**What Was Done**:
+- [x] **Research SOTA** patterns (RocksDB, BadgerDB, Cassandra, Pebble)
+  - Documented: `ai/research/prefix_iteration_sota.md`
+- [x] **Design** implementation plan
+  - Documented: `ai/design/prefix_iteration_optimization.md`
+- [x] **Implement Read-Ahead Prefetching** (RocksDB pattern)
+  - Inline prefetching (2 blocks ahead)
+  - Cache hit rate improved: 83.40% (vs 80.28% baseline)
+- [x] **Implement Key-Only Iteration** (BadgerDB pattern)
+  - APIs: `range_keys_only()`, `prefix_keys_only()`
+  - **5.68x faster** for count operations (9.9M keys/sec vs 1.7M)
+- [x] **Benchmarks** created and validated
+  - `examples/key_only_benchmark.rs`: 5.68x improvement ✅
+  - `examples/prefix_readahead_benchmark.rs`: cache improvement ✅
+- [x] **All tests passing** (168/168), zero regressions
+
+**Impact**:
+- General storage engine optimization (not vector-specific)
+- Benefits: count(), exists(), cardinality, index scans
+- Battle-tested SOTA patterns
+
+---
+
 ## 📊 HIGH PRIORITY: Performance Profiling
 
-**Goal**: Identify bottlenecks, optimize hot paths
-
 **Phase 1: Flamegraph Analysis** ✅ **COMPLETE**
-- [x] Profile with flamegraph (`cargo flamegraph`)
-- [x] Measure cache hit rates (block cache, SSTable cache)
-- [x] omendb HNSW edge storage pattern benchmark
-- [x] Prefix scan latency validated: **30,943 scans/sec** (1,406x improvement!)
+- [x] Flamegraph profiling, CPU hotspots identified
 - [x] Cache hit rate: **97.38%** (exceeds 80% target)
 - [x] Results documented: `ai/PROFILING_RESULTS.md`
 

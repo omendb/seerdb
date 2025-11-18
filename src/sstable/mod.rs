@@ -1475,11 +1475,17 @@ pub struct SSTableRangeIterator {
     // Store entries from current data block (avoids lifetime issues with iterator)
     current_block_entries: Vec<(Bytes, Bytes)>,
     current_entry_idx: usize,
+
+    // Read-ahead prefetching
+    readahead_size: usize,
+
+    // Key-only iteration (BadgerDB pattern)
+    read_values: bool,
 }
 
 impl SSTableRangeIterator {
     fn new(
-        file: Arc<Mutex<File>>, // Reuse file handle from parent SSTable
+        file: Arc<Mutex<File>>,
         block_cache: Arc<Cache<u64, Block>>,
         vlog: Option<Arc<Mutex<VLog>>>,
         top_level_index: Vec<TopLevelIndexEntry>,
@@ -1487,6 +1493,7 @@ impl SSTableRangeIterator {
         end_key: Option<&[u8]>,
         cache_hits: Arc<AtomicU64>,
         cache_misses: Arc<AtomicU64>,
+        read_values: bool,
     ) -> Self {
         Self {
             file,
@@ -1503,13 +1510,14 @@ impl SSTableRangeIterator {
             index_entry_idx: 0,
             current_block_entries: Vec::new(),
             current_entry_idx: 0,
+            readahead_size: 2,
+            read_values,
         }
     }
 
     fn load_block(&self, offset: u64, size: u32) -> Result<Block> {
         // Check cache first (quick_cache is lock-free!)
         if let Some(block) = self.block_cache.get(&offset) {
-            // Cache hit!
             self.cache_hits.fetch_add(1, Ordering::Relaxed);
             return Ok(block);
         }
@@ -1517,22 +1525,30 @@ impl SSTableRangeIterator {
         // Cache miss - record and load from disk
         self.cache_misses.fetch_add(1, Ordering::Relaxed);
 
-        // Reuse file handle from parent SSTable
         let mut file = self.file.lock().unwrap();
         file.seek(SeekFrom::Start(offset))?;
 
         let mut buf = vec![0u8; size as usize];
         file.read_exact(&mut buf)?;
         let block_data = Bytes::from(buf);
-        drop(file); // Release lock
+        drop(file);
 
-        // Parse and verify block
         let block = Block::new(block_data)?;
-
-        // Cache the block (automatic LRU eviction when full)
         self.block_cache.insert(offset, block.clone());
 
         Ok(block)
+    }
+
+    fn prefetch_data_blocks(&self) {
+        for i in 1..=self.readahead_size {
+            let next_idx = self.index_entry_idx + i;
+            if next_idx < self.index_block_entries.len() {
+                let (offset, size) = self.index_block_entries[next_idx];
+                if self.block_cache.get(&offset).is_none() {
+                    let _ = self.load_block(offset, size);
+                }
+            }
+        }
     }
 
     fn advance_to_next_index_block(&mut self) -> Result<bool> {
@@ -1590,7 +1606,6 @@ impl SSTableRangeIterator {
 
     fn advance_to_next_data_block(&mut self) -> Result<bool> {
         if self.index_entry_idx >= self.index_block_entries.len() {
-            // Need next index block
             if !self.advance_to_next_index_block()? {
                 return Ok(false);
             }
@@ -1600,7 +1615,6 @@ impl SSTableRangeIterator {
             let (offset, size) = self.index_block_entries[self.index_entry_idx];
             let data_block = self.load_block(offset, size)?;
 
-            // Extract entries from the block (avoids iterator lifetime issues)
             self.current_block_entries.clear();
             for entry_result in data_block.iter() {
                 let (key, value) = entry_result?;
@@ -1609,6 +1623,8 @@ impl SSTableRangeIterator {
 
             self.current_entry_idx = 0;
             self.index_entry_idx += 1;
+
+            self.prefetch_data_blocks();
 
             Ok(true)
         } else {
@@ -1637,7 +1653,10 @@ impl Iterator for SSTableRangeIterator {
                     }
                 }
 
-                // Decode value
+                if !self.read_values {
+                    return Some(Ok((key.clone(), Some(Bytes::new()))));
+                }
+
                 if entry_value.is_empty() {
                     continue;
                 }
@@ -1784,8 +1803,16 @@ impl SSTable {
     /// Returns an iterator that yields (key, Option<value>) where None indicates a tombstone.
     /// Blocks are loaded on-demand as the iterator is consumed, avoiding upfront materialization.
     pub fn scan_range(&self, start_key: &[u8], end_key: Option<&[u8]>) -> SSTableRangeIterator {
+        self.scan_range_with_options(start_key, end_key, true)
+    }
+
+    pub fn scan_range_keys_only(&self, start_key: &[u8], end_key: Option<&[u8]>) -> SSTableRangeIterator {
+        self.scan_range_with_options(start_key, end_key, false)
+    }
+
+    fn scan_range_with_options(&self, start_key: &[u8], end_key: Option<&[u8]>, read_values: bool) -> SSTableRangeIterator {
         SSTableRangeIterator::new(
-            Arc::clone(&self.file), // Share file handle with iterator
+            Arc::clone(&self.file),
             Arc::clone(&self.block_cache),
             self.vlog.as_ref().map(Arc::clone),
             self.top_level_index.clone(),
@@ -1793,6 +1820,7 @@ impl SSTable {
             end_key,
             Arc::clone(&self.cache_hits),
             Arc::clone(&self.cache_misses),
+            read_values,
         )
     }
 }

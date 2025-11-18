@@ -3055,7 +3055,14 @@ impl DB {
     /// - [`DBError::SSTable`]: SSTable corruption or I/O error
     /// - [`DBError::VLog`]: vLog read error for large values
     pub fn range(&self, start_key: &[u8], end_key: Option<&[u8]>) -> Result<RangeIterator> {
-        // Track read operation for Dostoevsky adaptive compaction
+        self.range_internal(start_key, end_key, true)
+    }
+
+    pub fn range_keys_only(&self, start_key: &[u8], end_key: Option<&[u8]>) -> Result<RangeIterator> {
+        self.range_internal(start_key, end_key, false)
+    }
+
+    fn range_internal(&self, start_key: &[u8], end_key: Option<&[u8]>, read_values: bool) -> Result<RangeIterator> {
         self.read_count
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
@@ -3126,12 +3133,15 @@ impl DB {
                     let overlaps = sstable_guard.overlaps_range(start_key, end_key);
 
                     if overlaps {
-                        // Create SSTableRangeIterator which holds its own Arc references
-                        let iter = sstable_guard.scan_range(start_key, end_key);
-                        drop(sstable_guard); // Release lock immediately
+                        let iter = if read_values {
+                            sstable_guard.scan_range(start_key, end_key)
+                        } else {
+                            sstable_guard.scan_range_keys_only(start_key, end_key)
+                        };
+                        drop(sstable_guard);
                         sstables.push(iter);
                     } else {
-                        drop(sstable_guard); // Release lock - SSTable doesn't overlap
+                        drop(sstable_guard);
                     }
                 }
             }
@@ -3191,12 +3201,18 @@ impl DB {
     /// // Output: user:1, user:2, user:3
     /// ```
     pub fn prefix(&self, prefix: &[u8]) -> Result<RangeIterator> {
-        // Calculate the end key by incrementing the prefix
-        // This creates a range [prefix, prefix+1) that captures all keys with the prefix
         let end_key = increment_bytes(prefix);
         match end_key {
             Some(end) => self.range(prefix, Some(&end)),
-            None => self.range(prefix, None), // Prefix is all 0xFF, scan to end
+            None => self.range(prefix, None),
+        }
+    }
+
+    pub fn prefix_keys_only(&self, prefix: &[u8]) -> Result<RangeIterator> {
+        let end_key = increment_bytes(prefix);
+        match end_key {
+            Some(end) => self.range_keys_only(prefix, Some(&end)),
+            None => self.range_keys_only(prefix, None),
         }
     }
 
