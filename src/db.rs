@@ -623,7 +623,7 @@ impl Default for DBOptions {
 
 pub struct DB {
     /// Database options
-    options: DBOptions,
+    pub(crate) options: DBOptions,
     /// Write-ahead log
     wal: Arc<Mutex<WAL>>,
     /// Active memtables (16 partitions, lock-free with ArcSwap)
@@ -1153,29 +1153,44 @@ impl DB {
         };
         let wal_bytes = record.encode().len() as u64;
 
-        // Create acknowledgement channel for group commit
-        let (ack_tx, ack_rx) = crossbeam_channel::bounded(1);
+        // Fast path for SyncPolicy::None - fire-and-forget (no ack needed)
+        // Group commit with ack only for durable writes (SyncPolicy::SyncData/SyncAll)
+        match self.options.wal_sync_policy {
+            SyncPolicy::None => {
+                // Fast path: fire-and-forget, no acknowledgement
+                self.wal_tx.send(WALMessage::Record(record)).map_err(|_| {
+                    DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "WAL writer thread died",
+                    )))
+                })?;
+            }
+            SyncPolicy::SyncData | SyncPolicy::SyncAll => {
+                // Slow path: group commit with acknowledgement for durability
+                let (ack_tx, ack_rx) = crossbeam_channel::bounded(1);
 
-        // Send to WAL writer (will batch with concurrent writes)
-        self.wal_tx
-            .send(WALMessage::WriteAndAck { record, ack_tx })
-            .map_err(|_| {
-                DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    "WAL writer thread died",
-                )))
-            })?;
+                // Send to WAL writer (will batch with concurrent writes)
+                self.wal_tx
+                    .send(WALMessage::WriteAndAck { record, ack_tx })
+                    .map_err(|_| {
+                        DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
+                            std::io::ErrorKind::BrokenPipe,
+                            "WAL writer thread died",
+                        )))
+                    })?;
 
-        // Wait for WAL flush completion (group commit - durability guaranteed!)
-        ack_rx
-            .recv()
-            .map_err(|_| {
-                DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    "WAL writer thread died during flush",
-                )))
-            })?
-            .map_err(DBError::Wal)?;
+                // Wait for WAL flush completion (group commit - durability guaranteed!)
+                ack_rx
+                    .recv()
+                    .map_err(|_| {
+                        DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
+                            std::io::ErrorKind::BrokenPipe,
+                            "WAL writer thread died during flush",
+                        )))
+                    })?
+                    .map_err(DBError::Wal)?;
+            }
+        }
 
         // Track physical bytes written to WAL
         self.metrics.record_physical_bytes(wal_bytes);
@@ -1461,30 +1476,44 @@ impl DB {
         // Write to WAL (durability) - lock-free via channel
         let record = Record::Delete { key: key.clone() };
 
-        // Create acknowledgement channel for group commit
-        let (ack_tx, ack_rx) =
-            crossbeam_channel::bounded::<std::result::Result<(), crate::wal::WALError>>(1);
+        // Fast path for SyncPolicy::None - fire-and-forget (no ack needed)
+        // Group commit with ack only for durable writes (SyncPolicy::SyncData/SyncAll)
+        match self.options.wal_sync_policy {
+            SyncPolicy::None => {
+                // Fast path: fire-and-forget, no acknowledgement
+                self.wal_tx.send(WALMessage::Record(record)).map_err(|_| {
+                    DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "WAL writer thread died",
+                    )))
+                })?;
+            }
+            SyncPolicy::SyncData | SyncPolicy::SyncAll => {
+                // Slow path: group commit with acknowledgement for durability
+                let (ack_tx, ack_rx) = crossbeam_channel::bounded(1);
 
-        // Send to WAL writer (will batch with concurrent writes)
-        self.wal_tx
-            .send(WALMessage::WriteAndAck { record, ack_tx })
-            .map_err(|_| {
-                DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    "WAL writer thread died",
-                )))
-            })?;
+                // Send to WAL writer (will batch with concurrent writes)
+                self.wal_tx
+                    .send(WALMessage::WriteAndAck { record, ack_tx })
+                    .map_err(|_| {
+                        DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
+                            std::io::ErrorKind::BrokenPipe,
+                            "WAL writer thread died",
+                        )))
+                    })?;
 
-        // Wait for WAL flush completion (group commit - durability guaranteed!)
-        ack_rx
-            .recv()
-            .map_err(|_| {
-                DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    "WAL writer thread died during flush",
-                )))
-            })?
-            .map_err(DBError::Wal)?;
+                // Wait for WAL flush completion (group commit - durability guaranteed!)
+                ack_rx
+                    .recv()
+                    .map_err(|_| {
+                        DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
+                            std::io::ErrorKind::BrokenPipe,
+                            "WAL writer thread died during flush",
+                        )))
+                    })?
+                    .map_err(DBError::Wal)?;
+            }
+        }
 
         // Write tombstone to correct partition (lock-free with ArcSwap)
         let partition = partition_for_key(&key);

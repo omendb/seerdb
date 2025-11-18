@@ -48,8 +48,12 @@ pub(crate) enum FlushTask {
 /// Messages sent to the background WAL writer thread
 #[derive(Debug)]
 pub(crate) enum WALMessage {
+    /// Write a record to the WAL (fire-and-forget, no acknowledgement)
+    /// Used for SyncPolicy::None where durability is not required
+    Record(Record),
     /// Write a record to the WAL and acknowledge when durable
     /// The sender will block until the WAL is flushed to disk (group commit)
+    /// Used for SyncPolicy::SyncData/SyncAll where durability is required
     WriteAndAck {
         record: Record,
         ack_tx: CrossbeamSender<std::result::Result<(), crate::wal::WALError>>,
@@ -423,6 +427,13 @@ pub(crate) fn spawn_wal_writer(
                 loop {
                     // 1. Wait for first write (blocking)
                     let first_write = match wal_rx.recv() {
+                        Ok(WALMessage::Record(record)) => {
+                            // Fast path: SyncPolicy::None - fire-and-forget, no ack
+                            if let Err(e) = wal.lock().expect("WAL mutex poisoned").write(&record) {
+                                error!(error = %e, "WAL write failed (SyncPolicy::None)");
+                            }
+                            continue; // Skip group commit logic
+                        }
                         Ok(WALMessage::WriteAndAck { record, ack_tx }) => {
                             batch.push(record);
                             ack_channels.push(ack_tx);
@@ -457,6 +468,13 @@ pub(crate) fn spawn_wal_writer(
 
                             // 3. Wait for more writes (with timeout)
                             match wal_rx.recv_timeout(timeout) {
+                                Ok(WALMessage::Record(record)) => {
+                                    // Fast path: SyncPolicy::None - fire-and-forget, no ack
+                                    if let Err(e) = wal.lock().expect("WAL mutex poisoned").write(&record) {
+                                        error!(error = %e, "WAL write failed (SyncPolicy::None)");
+                                    }
+                                    // Continue collecting for group commit batch
+                                }
                                 Ok(WALMessage::WriteAndAck { record, ack_tx }) => {
                                     batch.push(record);
                                     ack_channels.push(ack_tx);

@@ -9,7 +9,7 @@
 use bytes::Bytes;
 
 use crate::db::{DBError, Result, DB};
-use crate::wal::{BatchOp, Record};
+use crate::wal::{BatchOp, Record, SyncPolicy};
 
 /// Operation type in a batch
 #[derive(Clone, Debug)]
@@ -208,34 +208,51 @@ impl<'db> Batch<'db> {
             operations: wal_ops,
         };
 
-        // Create acknowledgement channel for group commit
-        let (ack_tx, ack_rx) =
-            crossbeam_channel::bounded::<std::result::Result<(), crate::wal::WALError>>(1);
+        // Fast path for SyncPolicy::None - fire-and-forget (no ack needed)
+        // Group commit with ack only for durable writes (SyncPolicy::SyncData/SyncAll)
+        match self.db.options.wal_sync_policy {
+            SyncPolicy::None => {
+                // Fast path: fire-and-forget, no acknowledgement
+                self.db
+                    .wal_tx
+                    .send(crate::db::WALMessage::Record(batch_record))
+                    .map_err(|_| {
+                        DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
+                            std::io::ErrorKind::BrokenPipe,
+                            "WAL writer thread died",
+                        )))
+                    })?;
+            }
+            SyncPolicy::SyncData | SyncPolicy::SyncAll => {
+                // Slow path: group commit with acknowledgement for durability
+                let (ack_tx, ack_rx) = crossbeam_channel::bounded(1);
 
-        // Send batch to WAL writer (will batch with concurrent writes)
-        self.db
-            .wal_tx
-            .send(crate::db::WALMessage::WriteAndAck {
-                record: batch_record,
-                ack_tx,
-            })
-            .map_err(|_| {
-                DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    "WAL writer thread died",
-                )))
-            })?;
+                // Send batch to WAL writer (will batch with concurrent writes)
+                self.db
+                    .wal_tx
+                    .send(crate::db::WALMessage::WriteAndAck {
+                        record: batch_record,
+                        ack_tx,
+                    })
+                    .map_err(|_| {
+                        DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
+                            std::io::ErrorKind::BrokenPipe,
+                            "WAL writer thread died",
+                        )))
+                    })?;
 
-        // Wait for WAL flush completion (group commit - durability guaranteed!)
-        ack_rx
-            .recv()
-            .map_err(|_| {
-                DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    "WAL writer thread died during flush",
-                )))
-            })?
-            .map_err(DBError::Wal)?;
+                // Wait for WAL flush completion (group commit - durability guaranteed!)
+                ack_rx
+                    .recv()
+                    .map_err(|_| {
+                        DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
+                            std::io::ErrorKind::BrokenPipe,
+                            "WAL writer thread died during flush",
+                        )))
+                    })?
+                    .map_err(DBError::Wal)?;
+            }
+        }
 
         // Apply all operations to memtables atomically
         // This is fast since memtables are lock-free
