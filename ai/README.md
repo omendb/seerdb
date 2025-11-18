@@ -230,12 +230,12 @@ ai/
   - Configuration guide: `/Users/nick/github/omendb/SEERDB_CONFIGURATION.md`
 - ✅ **Strategic direction**: Two-track plan (in TODO.md)
   - Track 1: Ship omendb NOW (878K writes/sec, 31K scans/sec)
-  - Track 2: Optimize for general-purpose (8-week timeline)
+  - Track 2: Optimize for general-purpose use
 
 **Strategic Direction**:
 1. **Ship omendb NOW** (performance already excellent: 878K writes/sec, 31K scans/sec)
-2. **Optimize seerdb** for general-purpose use (group commit → WAL pipelining → async flush)
-3. **Timeline**: 8 weeks to production-ready general-purpose storage engine
+2. **Optimize seerdb** for general-purpose use (group commit → WAL pipelining → async flush → snapshots)
+3. **Roadmap**: See TODO.md for optimization priorities and release plan
 
 ---
 

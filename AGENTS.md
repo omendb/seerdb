@@ -29,11 +29,11 @@
 ## Quick Start for AI Agents
 
 **→ First time?** Load these in order:
-1. This file (CLAUDE.md) - Project overview
-2. `ai/STATUS.md` - Current state (read FIRST - has honest assessment)
-3. `ai/design/NEXT_API_PRIORITIES.md` - Missing features roadmap
-4. `ai/design/API_COMPARISON_TABLE.md` - Shows gaps vs competitors
-5. `CONTEXT.md` - Session context
+1. This file (AGENTS.md / CLAUDE.md symlink) - Project overview
+2. `ai/STATUS.md` - Current state (read FIRST)
+3. `ai/TODO.md` - Active tasks and priorities
+4. `ai/design/NEXT_API_PRIORITIES.md` - Missing features roadmap
+5. `ai/design/API_COMPARISON_TABLE.md` - Shows gaps vs competitors
 
 **→ Continuing work?** Check `ai/STATUS.md` first, then `ai/TODO.md`
 
@@ -382,22 +382,24 @@ seerdb/
 
 **Purpose**: AI uses `ai/` to maintain continuity between sessions
 
-**Session files** (ai/ root - read every session, <500 lines each):
-- `CURRENT_STATE.md` — Current status, blockers (read FIRST)
-- `STATUS.md` — Performance metrics, recent learnings
-- `TODO.md` — Active tasks only (no completed tasks)
+**Session files** (ai/ root - read every session, focused on current work):
+- `STATUS.md` — Current state, metrics, recent learnings (read FIRST)
+- `TODO.md` — Active tasks only (completed tasks deleted)
 - `DECISIONS.md` — Design decisions index
-- `PRODUCTION_READINESS.md` — Roadmap to 0.0.1
-- `BUGS_AND_EDGE_CASES.md` — Known bugs
+- `README.md` — Documentation guide
 
 **Reference files** (subdirectories - loaded only when needed):
+- `bugs/` — Bug reports and resolutions
 - `decisions/` — Detailed decisions by topic (architecture, performance, storage, etc.)
-- `research/` — Detailed research (>200 lines per topic)
 - `design/` — Design specifications
+- `performance/` — Profiling results and optimizations
+- `research/` — Detailed research
+- `summaries/` — Historical summaries
+- `testing/` — Test strategy and results
 
-**Token Efficiency**: Session files total ~2,500 tokens (from 35,000+). Reference files loaded on demand.
+**Token Efficiency**: Session files kept current/active only (~200-350 lines each). Reference files loaded on demand. Historical content in git history.
 
-**Maintenance**: Session files kept current and focused. Completed items deleted (git preserves history).
+**Maintenance**: Completed work deleted from session files (git preserves all history). Detailed content organized in subdirectories.
 
 ---
 

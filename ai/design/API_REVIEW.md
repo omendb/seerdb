@@ -539,12 +539,11 @@ pub fn batch(&self) -> Batch<'_> {
 
 **Blocker Issues**: 3 critical (atomicity, size limits, testing)
 
-**Estimated Effort to 0.0.1**:
-- Fix atomicity: 2-3 days
-- Add size limits: 4 hours
-- Write tests: 2-3 days
-- Documentation: 1 day
-- **Total**: ~5-7 days of work
+**Tasks for Production Readiness**:
+- Fix atomicity issues
+- Add size limits for batch operations
+- Comprehensive testing
+- API documentation
 
 **Recommendation**:
 1. ✅ DO NOT ship current batch API (not safe)
