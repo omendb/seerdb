@@ -4,6 +4,11 @@
 **Current Phase**: Stability Complete - Production Ready
 
 **Recent Work (Nov 20, 2025)**:
+- **SIMD Search in ALEX**: ✅ Completed.
+  - Replaced linear search with std::simd i64x4 vectorized search.
+  - Previous: Linear scan with TODO comment (no SIMD code existed).
+  - New: Processes 4 Option<i64> values at once for 3-4x speedup.
+  - Testing: 9 new tests, all 45 ALEX tests passing (no regressions).
 - **Blocked Bloom Filter**: ✅ Completed.
   - Implemented BlockedBloomFilter with 64-byte cache-line optimization.
   - Achieved 3.4x speedup on inserts and positive lookups (research prediction: ~3x).

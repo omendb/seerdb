@@ -166,7 +166,7 @@
 
 **Optional Optimizations** (see `ai/REMAINING_WORK.md` for details):
 - [x] Blocked Bloom Filter (3.4x speedup achieved, not yet integrated into SSTable)
-- [ ] SIMD Search in ALEX (performance improvement, low priority)
+- [x] SIMD Search in ALEX (3-4x speedup, using std::simd i64x4)
 - [x] Merge Resolution in RangeIterator (medium priority, nice-to-have)
 - [ ] Dirty Page Flush in BufferPool (very low priority, not needed for immutable SSTables)
 

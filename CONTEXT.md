@@ -104,6 +104,30 @@ A modern embedded LSM-tree storage engine implementing 2018-2024 research:
 
 **Status**: Implemented and validated, **not yet integrated into SSTable** (kept as optional for now)
 
+#### 4. SIMD Search in ALEX
+**Goal**: Accelerate search within ALEX learned index nodes
+- Previous: Linear search with TODO comment (no SIMD implementation existed)
+- New: std::simd vectorized search (i64x4 - processes 4 values at once)
+
+**Implementation**:
+- Created `src/alex/simd_search.rs` with `simd_search_i64()`
+- Updated `binary_search_exact()` to use SIMD
+- Fast path: Check first element (common after model prediction)
+- SIMD path: Process 4 Option<i64> values per iteration
+- Scalar fallback: Handle remaining elements
+
+**Expected Performance**:
+- **3-4x faster** linear search within exponential search bounds
+- Improves the final search phase of ALEX's O(log error) lookup
+- Uses portable std::simd (not hand-rolled platform-specific code)
+
+**Testing**:
+- 9 new tests in simd_search module (all passing)
+- All 45 ALEX tests passing (no regressions)
+- Tests verify SIMD matches linear search behavior exactly
+
+**Status**: Implemented and integrated into ALEX
+
 ### Stability Hardening (Nov 20, 2025)
 
 #### 1. Fixed WAL Race Condition (CRITICAL)
