@@ -14,6 +14,18 @@
     - **Analysis**: ALEX's learned model predicts accurately → target typically in first 4 positions → SIMD wins.
   - Benchmark: benches/simd_search_comparison.rs validates optimality.
   - Testing: 9 new tests, all 45 ALEX tests passing (no regressions).
+- **Micro-Optimizations (Read Path)**: ✅ Completed.
+  - Added #[inline] hints to 10 hot functions in critical read path.
+  - **Profiling**: samply profiler on 1M random read workload.
+  - **Optimized Functions**:
+    - BloomFilter::contains + hash (every SSTable lookup)
+    - Block::find_exact + find_lower_bound (data/index block searches)
+    - SSTable::find_index_block + find_in_index_block + find_in_data_block
+    - Fallback compare_keys + shared_prefix_len (binary search comparisons)
+  - **Benchmark**: Random reads at ~12.3µs per operation (10K keys).
+  - **Expected Impact**: 3-8% improvement on read-heavy workloads (typical for inline hints).
+  - **Testing**: All 192 tests passing (up from 182).
+  - **New Files**: examples/profile_workload.rs (profiling harness), benches/micro_opt_read_bench.rs.
 - **Blocked Bloom Filter**: ✅ Completed.
   - Implemented BlockedBloomFilter with 64-byte cache-line optimization.
   - Achieved 3.4x speedup on inserts and positive lookups (research prediction: ~3x).
