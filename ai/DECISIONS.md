@@ -98,6 +98,53 @@ Thread safety and isolation guarantees:
 
 ---
 
+### Open Core Strategy (`ai/decisions/open_core.md`)
+**Decision**: `seerdb` (Open Source) + `omendb` (Private Source)
+**Date**: November 19, 2025
+
+**Structure**:
+*   **`seerdb` (Apache 2.0)**: General-purpose SOTA Storage Engine.
+    *   Includes: LSM Tree, Buffer Manager, Compaction, WAL, Snapshots.
+    *   Goal: Beat RocksDB/Fjall public benchmarks. Build community/trust.
+*   **`omendb` (Private/Proprietary)**: Vector/Graph Database Product.
+    *   Includes: Vector Indexing (IVF/HNSW), Graph Traversal Logic, Cloud Orchestration, Control Plane.
+    *   Specifics: Implements `MergeOperator` for graph edges, `PrefixBloom` optimizations.
+    *   Repository: `../omendb` (sibling directory).
+
+**Impact**: Clear separation of concerns. `seerdb` remains clean infrastructure. `omendb` holds the business logic and IP.
+
+---
+
+### Buffer Management (`ai/decisions/buffer_management.md`)
+**Decision**: Stick to Software Buffer Pool (Safe Rust)
+**Date**: November 19, 2025
+
+**Context**: Evaluated moving to "Modern" Buffer Management (LeanStore Swizzling or `vmcache`).
+**Analysis**:
+1.  **Swizzling**: Requires `unsafe` everywhere. High risk of memory corruption.
+2.  **vmcache**: Requires Linux `userfaultfd`. Not portable to Mac (Dev environment).
+3.  **Software Pool**: 500k ops/sec prototype. Good enough.
+
+**Decision**:
+*   **Phase 1**: Implement standard BufferPool with Clock eviction (Done).
+*   **Phase 2**: Optimize locking (sharded).
+*   **Reject**: Pointer swizzling (safety risk) and `vmcache` (portability risk).
+
+**Impact**: Safer codebase, easier contribution, cross-platform support.
+
+---
+
+### Cross-Platform Strategy
+**Decision**: "Mac Fallback" Architecture
+**Date**: November 19, 2025
+
+**Strategy**:
+*   **Development (Mac)**: Use standard `pread` / `BufferPool`.
+*   **Production (Linux)**: Use `io_uring` (future) or optimized paths where available.
+*   **Benefit**: Frictionless dev experience (no Docker required) while maintaining prod performance.
+
+---
+
 ### Superseded & Completed (`ai/decisions/superseded-2025-11.md`)
 Historical decisions from research phase:
 - **Learned bloom filters** - Superseded by traditional blooms (arbitrary keys issue)

@@ -79,6 +79,12 @@ impl RangeIterator {
                     .map(|(key, entry)| match entry {
                         Entry::Value(value) => (key, Some(value)),
                         Entry::Tombstone => (key, None),
+                        Entry::Merge(_) => {
+                            // TODO: Implement merge resolution in RangeIterator
+                            // Currently we treat Merge as Tombstone to avoid returning raw operands
+                            // This means range scans will NOT see merged values yet
+                            (key, None) 
+                        },
                     })
                     .collect()
             } else {
@@ -87,6 +93,12 @@ impl RangeIterator {
                     .map(|(key, entry)| match entry {
                         Entry::Value(value) => (key, Some(value)),
                         Entry::Tombstone => (key, None),
+                        Entry::Merge(_) => {
+                            // TODO: Implement merge resolution in RangeIterator
+                            // Currently we treat Merge as Tombstone to avoid returning raw operands
+                            // This means range scans will NOT see merged values yet
+                            (key, None) 
+                        },
                     })
                     .collect()
             };

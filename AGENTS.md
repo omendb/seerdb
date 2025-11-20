@@ -40,6 +40,8 @@
 
 **→ API research?** See `ai/design/API_COMPARISON_TABLE.md` for gap analysis
 
+**→ Private Repo?** See `ai/OMENDB_INSTRUCTIONS.md` for `omendb` context.
+
 **→ Full documentation guide**: See `ai/README.md` for all available docs
 
 ---

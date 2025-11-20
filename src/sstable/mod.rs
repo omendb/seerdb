@@ -48,6 +48,7 @@ const VERSION: u32 = 0x00000001; // v1: Format versions don't matter until we re
 pub const FLAG_INLINE: u8 = 0x00;
 pub const FLAG_POINTER: u8 = 0x01;
 pub const FLAG_TOMBSTONE: u8 = 0x02;
+pub const FLAG_MERGE: u8 = 0x03;
 
 /// Helper: Handle vLog separation logic (shared by both SSTableBuilder and BufferedSSTableBuilder)
 ///
@@ -288,6 +289,27 @@ impl SSTableBuilder {
                 // Entry too large for default block - create custom-sized block
                 let entry_size = key.len() + entry.len() + 8; // key + entry + headers
                 let custom_size = (entry_size * 2).max(DEFAULT_BLOCK_SIZE * 2); // 2x for safety
+                self.data_block = BlockBuilder::with_capacity(custom_size);
+
+                if !self.data_block.add(&key, &entry) {
+                    return Err(SSTableError::InvalidFormat);
+                }
+            }
+        }
+
+        self.num_entries += 1;
+        Ok(())
+    }
+
+    pub fn add_merge(&mut self, key: Bytes, operand: Bytes) -> Result<()> {
+        self.bloom.insert(&key);
+        let entry = self.encode_entry(&key, FLAG_MERGE, &operand);
+
+        if !self.data_block.add(&key, &entry) {
+            self.flush_data_block()?;
+            if !self.data_block.add(&key, &entry) {
+                let entry_size = key.len() + entry.len() + 8;
+                let custom_size = (entry_size * 2).max(DEFAULT_BLOCK_SIZE * 2);
                 self.data_block = BlockBuilder::with_capacity(custom_size);
 
                 if !self.data_block.add(&key, &entry) {
@@ -634,6 +656,27 @@ impl BufferedSSTableBuilder {
     pub fn add_tombstone(&mut self, key: Bytes) -> Result<()> {
         self.bloom.insert(&key);
         let entry = self.encode_entry(&key, FLAG_TOMBSTONE, &[]);
+
+        if !self.data_block.add(&key, &entry) {
+            self.flush_data_block()?;
+            if !self.data_block.add(&key, &entry) {
+                let entry_size = key.len() + entry.len() + 8;
+                let custom_size = (entry_size * 2).max(DEFAULT_BLOCK_SIZE * 2);
+                self.data_block = BlockBuilder::with_capacity(custom_size);
+
+                if !self.data_block.add(&key, &entry) {
+                    return Err(SSTableError::InvalidFormat);
+                }
+            }
+        }
+
+        self.num_entries += 1;
+        Ok(())
+    }
+
+    pub fn add_merge(&mut self, key: Bytes, operand: Bytes) -> Result<()> {
+        self.bloom.insert(&key);
+        let entry = self.encode_entry(&key, FLAG_MERGE, &operand);
 
         if !self.data_block.add(&key, &entry) {
             self.flush_data_block()?;
@@ -1050,6 +1093,23 @@ impl SSTable {
     }
 
     pub fn get(&mut self, key: &[u8]) -> Result<Option<Bytes>> {
+        match self.get_entry(key)? {
+            Some((data, flag)) => {
+                if flag == FLAG_MERGE {
+                    // Legacy get() cannot handle merge operands without an operator
+                    // For now, treat as "Found" but return data (caller beware)
+                    // Ideally DB should use get_entry() to handle merges
+                    Ok(Some(data))
+                } else {
+                    Ok(Some(data))
+                }
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Get entry with type flag
+    pub fn get_entry(&mut self, key: &[u8]) -> Result<Option<(Bytes, u8)>> {
         if !self.bloom.contains(key) {
             return Ok(None);
         }
@@ -1142,7 +1202,7 @@ impl SSTable {
         Ok(Some((offset, size)))
     }
 
-    fn find_in_data_block(&mut self, data_block: &Block, key: &[u8]) -> Result<Option<Bytes>> {
+    fn find_in_data_block(&mut self, data_block: &Block, key: &[u8]) -> Result<Option<(Bytes, u8)>> {
         // Binary search for exact key match
         let (_entry_key, entry_value) = match data_block.find_exact(key) {
             Some(entry) => entry,
@@ -1157,7 +1217,7 @@ impl SSTable {
         let data = entry_value.slice(1..);
 
         match flag {
-            FLAG_INLINE => Ok(Some(data)),
+            FLAG_INLINE => Ok(Some((data, flag))),
             FLAG_POINTER => {
                 if data.len() < 12 {
                     return Err(SSTableError::InvalidFormat);
@@ -1174,12 +1234,13 @@ impl SSTable {
                     let value = vlog_guard
                         .read(pointer)
                         .map_err(|e| SSTableError::VLog(e.to_string()))?;
-                    Ok(Some(value))
+                    Ok(Some((value, flag)))
                 } else {
                     Err(SSTableError::VLog("VLog not attached".to_string()))
                 }
             }
-            FLAG_TOMBSTONE => Ok(None),
+            FLAG_TOMBSTONE => Ok(Some((Bytes::new(), FLAG_TOMBSTONE))),
+            FLAG_MERGE => Ok(Some((data, flag))),
             _ => Err(SSTableError::InvalidFormat),
         }
     }

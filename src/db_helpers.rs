@@ -4,8 +4,10 @@
 // self-contained and don't require the full DB struct.
 
 use crate::db::{partition_for_key, DBError, DBOptions, Result};
-use crate::memtable::Memtable;
+use crate::memtable::{Entry, Memtable};
+use crate::merge_operator::MergeOperator;
 use crate::wal::{Record, WALReader};
+use bytes::Bytes;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tracing::{debug, warn};
@@ -15,7 +17,11 @@ use tracing::{debug, warn};
 /// Reads records one by one and distributes them across partitions using hash function.
 /// Stops gracefully if corruption or truncation is encountered.
 /// This ensures we recover all valid records before the corruption point.
-pub(crate) fn recover_partitioned(wal_path: &Path, memtables: &[Memtable]) -> Result<()> {
+pub(crate) fn recover_partitioned(
+    wal_path: &Path,
+    memtables: &[Memtable],
+    merge_operator: Option<&Arc<dyn MergeOperator>>,
+) -> Result<()> {
     let mut reader =
         WALReader::open(wal_path).map_err(|e| DBError::Io(std::io::Error::other(e)))?;
 
@@ -35,7 +41,6 @@ pub(crate) fn recover_partitioned(wal_path: &Path, memtables: &[Memtable]) -> Re
                 }
                 Record::Batch { operations } => {
                     // Apply all operations in the batch atomically
-                    // All operations were written as a single WAL record, so they're atomic
                     for op in operations {
                         match op {
                             crate::wal::BatchOp::Put { key, value } => {
@@ -46,8 +51,16 @@ pub(crate) fn recover_partitioned(wal_path: &Path, memtables: &[Memtable]) -> Re
                                 let partition = partition_for_key(&key);
                                 memtables[partition].delete(key);
                             }
+                            crate::wal::BatchOp::Merge { key, operand } => {
+                                let partition = partition_for_key(&key);
+                                apply_merge(&memtables[partition], key, operand, merge_operator);
+                            }
                         }
                     }
+                }
+                Record::Merge { key, operand } => {
+                    let partition = partition_for_key(&key);
+                    apply_merge(&memtables[partition], key, operand, merge_operator);
                 }
             },
             Ok(None) => {
@@ -64,6 +77,55 @@ pub(crate) fn recover_partitioned(wal_path: &Path, memtables: &[Memtable]) -> Re
     }
 
     Ok(())
+}
+
+/// Helper to apply merge during recovery
+fn apply_merge(
+    mt: &Memtable,
+    key: Bytes,
+    operand: Bytes,
+    merge_operator: Option<&Arc<dyn MergeOperator>>,
+) {
+    let new_entry = match mt.get_entry(&key) {
+        Some(Entry::Value(v)) => {
+            if let Some(op) = merge_operator {
+                let operands = [operand.as_ref()];
+                if let Some(merged) = op.full_merge(&key, Some(&v), &operands) {
+                    Entry::Value(Bytes::from(merged))
+                } else {
+                    // Merge failed, fallback to stack (overwrites value with merge list)
+                    Entry::Merge(vec![operand])
+                }
+            } else {
+                Entry::Merge(vec![operand])
+            }
+        }
+        Some(Entry::Merge(ops)) => {
+            let mut new_ops = ops.clone();
+            if let Some(op) = merge_operator {
+                let pushed = if let Some(last) = new_ops.last() {
+                    if let Some(merged) = op.partial_merge(&key, last, &operand) {
+                        new_ops.pop();
+                        new_ops.push(Bytes::from(merged));
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                if !pushed {
+                    new_ops.push(operand);
+                }
+            } else {
+                new_ops.push(operand);
+            }
+            Entry::Merge(new_ops)
+        }
+        Some(Entry::Tombstone) => Entry::Merge(vec![operand]),
+        None => Entry::Merge(vec![operand]),
+    };
+    mt.put_entry(key, new_entry);
 }
 
 /// Clean up old SSTable deletion queue

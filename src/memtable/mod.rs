@@ -26,6 +26,8 @@ pub enum Entry {
     Value(Bytes),
     /// Tombstone (deletion marker)
     Tombstone,
+    /// Merge operands (ordered from oldest to newest)
+    Merge(Vec<Bytes>),
 }
 
 impl Memtable {
@@ -51,6 +53,18 @@ impl Memtable {
         self.size.fetch_add(size_delta, Ordering::Relaxed);
     }
 
+    /// Insert a generic entry (internal use)
+    #[inline]
+    pub fn put_entry(&self, key: Bytes, entry: Entry) {
+        let size_delta = key.len() + match &entry {
+            Entry::Value(v) => v.len(),
+            Entry::Tombstone => 0,
+            Entry::Merge(ops) => ops.iter().map(|op| op.len()).sum(),
+        };
+        self.data.insert(key, entry);
+        self.size.fetch_add(size_delta, Ordering::Relaxed);
+    }
+
     /// Delete a key (insert tombstone)
     #[inline]
     pub fn delete(&self, key: Bytes) {
@@ -60,15 +74,24 @@ impl Memtable {
     }
 
     /// Get a value by key
+    /// Note: For Merge entries, this returns None because the value is not fully resolved.
+    /// Use get_entry() to access Merge operands.
     #[inline]
     pub fn get(&self, key: &[u8]) -> Option<Bytes> {
         self.data.get(key).and_then(|entry| match entry.value() {
             Entry::Value(v) => Some(v.clone()),
             Entry::Tombstone => None,
+            Entry::Merge(_) => None, // Cannot resolve merge without operator/history
         })
     }
 
-    /// Check if key exists (including tombstones)
+    /// Get the raw entry by key
+    #[inline]
+    pub fn get_entry(&self, key: &[u8]) -> Option<Entry> {
+        self.data.get(key).map(|entry| entry.value().clone())
+    }
+
+    /// Check if key exists (including tombstones and merges)
     #[inline]
     pub fn contains(&self, key: &[u8]) -> bool {
         self.data.contains_key(key)
@@ -149,9 +172,14 @@ impl Memtable {
                 }
                 Entry::Tombstone => {
                     // **CRITICAL**: Tombstones MUST be persisted to SSTables!
-                    // They mask older values in lower levels and are removed during compaction
-                    // when all older versions are gone
                     builder.add_tombstone(entry.0)?;
+                }
+                Entry::Merge(operands) => {
+                    // Write all operands as separate Merge entries
+                    // Since they are for the same key, SSTable will store them sequentially
+                    for op in operands {
+                        builder.add_merge(entry.0.clone(), op)?;
+                    }
                 }
             }
         }
@@ -186,6 +214,31 @@ mod tests {
 
         memtable.delete(Bytes::from("key1"));
         assert_eq!(memtable.get(b"key1"), None);
+    }
+
+    #[test]
+    fn test_memtable_merge() {
+        let memtable = Memtable::new(1024);
+
+        // Manual merge simulation using put_entry
+        let key = Bytes::from("key1");
+        let op1 = Bytes::from("op1");
+        let op2 = Bytes::from("op2");
+
+        memtable.put_entry(key.clone(), Entry::Merge(vec![op1.clone(), op2.clone()]));
+
+        // get() returns None for Merge
+        assert_eq!(memtable.get(b"key1"), None);
+
+        // get_entry() returns the ops
+        match memtable.get_entry(b"key1") {
+            Some(Entry::Merge(ops)) => {
+                assert_eq!(ops.len(), 2);
+                assert_eq!(ops[0], op1);
+                assert_eq!(ops[1], op2);
+            }
+            _ => panic!("Expected Merge entry"),
+        }
     }
 
     #[test]

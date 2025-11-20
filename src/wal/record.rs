@@ -27,6 +27,7 @@ pub type Result<T> = std::result::Result<T, RecordError>;
 pub enum BatchOp {
     Put { key: Bytes, value: Bytes },
     Delete { key: Bytes },
+    Merge { key: Bytes, operand: Bytes },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -37,6 +38,10 @@ pub enum Record {
     },
     Delete {
         key: Bytes,
+    },
+    Merge {
+        key: Bytes,
+        operand: Bytes,
     },
     /// Atomic batch of operations
     /// All operations in a batch succeed or fail together
@@ -53,12 +58,14 @@ impl Record {
         let data_len = match self {
             Record::Put { key, value } => 1 + 4 + key.len() + 4 + value.len(),
             Record::Delete { key } => 1 + 4 + key.len(),
+            Record::Merge { key, operand } => 1 + 4 + key.len() + 4 + operand.len(),
             Record::Batch { operations } => {
                 let mut len = 1 + 4; // type + count
                 for op in operations {
                     len += match op {
                         BatchOp::Put { key, value } => 1 + 4 + key.len() + 4 + value.len(),
                         BatchOp::Delete { key } => 1 + 4 + key.len(),
+                        BatchOp::Merge { key, operand } => 1 + 4 + key.len() + 4 + operand.len(),
                     };
                 }
                 len
@@ -105,8 +112,22 @@ impl Record {
                             buf.put_u32(key.len() as u32);
                             buf.put_slice(key);
                         }
+                        BatchOp::Merge { key, operand } => {
+                            buf.put_u8(4); // Op type: Merge
+                            buf.put_u32(key.len() as u32);
+                            buf.put_slice(key);
+                            buf.put_u32(operand.len() as u32);
+                            buf.put_slice(operand);
+                        }
                     }
                 }
+            }
+            Record::Merge { key, operand } => {
+                buf.put_u8(4); // Type: Merge
+                buf.put_u32(key.len() as u32);
+                buf.put_slice(key);
+                buf.put_u32(operand.len() as u32);
+                buf.put_slice(operand);
             }
         }
 
@@ -192,11 +213,31 @@ impl Record {
 
                             operations.push(BatchOp::Delete { key });
                         }
+                        4 => {
+                            // Merge
+                            let key_len = buf.get_u32() as usize;
+                            let key = buf.split_to(key_len);
+
+                            let operand_len = buf.get_u32() as usize;
+                            let operand = buf.split_to(operand_len);
+
+                            operations.push(BatchOp::Merge { key, operand });
+                        }
                         _ => return Err(RecordError::InvalidRecordType(op_type)),
                     }
                 }
 
                 Ok(Record::Batch { operations })
+            }
+            4 => {
+                // Merge
+                let key_len = buf.get_u32() as usize;
+                let key = buf.split_to(key_len);
+
+                let operand_len = buf.get_u32() as usize;
+                let operand = buf.split_to(operand_len);
+
+                Ok(Record::Merge { key, operand })
             }
             _ => Err(RecordError::InvalidRecordType(record_type)),
         }
@@ -224,6 +265,43 @@ mod tests {
     fn test_encode_decode_delete() {
         let record = Record::Delete {
             key: Bytes::from("key1"),
+        };
+
+        let encoded = record.encode();
+        let decoded = Record::decode(encoded).unwrap();
+
+        assert_eq!(record, decoded);
+    }
+
+    #[test]
+    fn test_encode_decode_merge() {
+        let record = Record::Merge {
+            key: Bytes::from("key1"),
+            operand: Bytes::from("op1"),
+        };
+
+        let encoded = record.encode();
+        let decoded = Record::decode(encoded).unwrap();
+
+        assert_eq!(record, decoded);
+    }
+
+    #[test]
+    fn test_encode_decode_batch() {
+        let record = Record::Batch {
+            operations: vec![
+                BatchOp::Put {
+                    key: Bytes::from("key1"),
+                    value: Bytes::from("val1"),
+                },
+                BatchOp::Merge {
+                    key: Bytes::from("key1"),
+                    operand: Bytes::from("op2"),
+                },
+                BatchOp::Delete {
+                    key: Bytes::from("key2"),
+                },
+            ],
         };
 
         let encoded = record.encode();

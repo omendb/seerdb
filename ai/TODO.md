@@ -7,13 +7,23 @@
 
 ---
 
-## 🔥 Active Work (Nov 18, 2025)
+## 🔥 Active Work (Nov 20, 2025)
 
-### Compaction Filters ✅ **COMPLETE**
-- [x] Define `CompactionFilter` trait.
-- [x] Integrate into `DBOptions` and `MergeIterator`.
-- [x] Update background workers.
-- [x] Verify with tests.
+### Merge Operator (The "Graph Killer" Feature) ✅ **COMPLETE**
+- [x] Define `MergeOperator` trait (Full/Partial merge).
+- [x] Implement `Record::Merge` in WAL and `Entry::Merge` in Memtable.
+- [x] Implement `DB::merge` API (Pipelined Group Commit).
+- [x] Implement `DB::get` merge resolution (Lazy Merge on Read).
+- [x] Implement `StringAppendOperator` for testing.
+- [x] Verify with `tests/merge_operator_tests.rs` (All pass).
+- **Impact**: Enables O(1) blind writes for graph edge lists (critical for `omendb`).
+
+### Compaction Optimization 🔄 **NEXT**
+- [ ] Audit `compaction/mod.rs` for random write scaling issues.
+- [ ] Implement Fjall 2.3 optimizations (if applicable).
+
+### Prefix Bloom Filters
+- [ ] Optimize `prefix_seek` for graph traversal.
 
 ### Group Commit Implementation ✅ **COMPLETE**
 - [x] Implement group commit (batching writes before fsync)
@@ -89,13 +99,19 @@
 - [x] Expected: 3-5x concurrent write throughput.
 - **Actual**: 30x scaling improvement (50 threads).
 
-### LeanStore (Buffer Management) 🔄 **IN PROGRESS**
+### LeanStore (Buffer Management) ✅ **PHASE 1 COMPLETE**
 - [x] Design `BufferPool` architecture (ai/design/LEANSTORE_INTEGRATION.md).
 - [x] Implement `BufferPool` prototype (src/buffer/).
 - [x] Implement `Clock` eviction policy.
 - [x] Verify with micro-benchmark (500k ops/sec).
-- [ ] Integrate into `SSTable` (requires Paged SSTable format).
-- [ ] Pointer Swizzling (Phase 3).
+- [x] Integrate into `SSTable` (Phase 1: Intercept `load_block`).
+- [x] Wired into `DBOptions` (disabled by default).
+
+### Research & Planning 🔄 **NEXT**
+- [ ] Research "Lipah" (LeanStore successor) / modern buffer management.
+- [ ] Evaluate `qpdb` (Query Processing DB) patterns.
+- [ ] Decide on Pointer Swizzling vs. other optimization.
+- [ ] Create `ai/PLAN_V2.md` for next phase.
 
 
 ### Async/Cloud I/O

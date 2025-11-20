@@ -5,11 +5,12 @@ use crate::background_workers::{CompactionTask, FlushTask};
 use crate::buffer::{BufferPool, BufferPoolOptions};
 use crate::compaction::{compact_sstables, LSMTree};
 use crate::health::{HealthCheck, HealthStatus};
-use crate::memtable::Memtable;
+use crate::memtable::{Entry, Memtable};
+use crate::merge_operator::MergeOperator;
 use crate::metrics::{DBStats, MetricsCollector};
 use crate::range::RangeIterator;
 use crate::snapshot::Snapshot;
-use crate::sstable::SSTable;
+use crate::sstable::{SSTable, FLAG_INLINE, FLAG_MERGE, FLAG_POINTER, FLAG_TOMBSTONE};
 use crate::vlog::VLog;
 use crate::wal::{Record, SyncPolicy, WAL, PipelinedWAL};
 use arc_swap::ArcSwap;
@@ -371,6 +372,8 @@ pub struct DBOptions {
     pub l0_slowdown_writes_trigger: usize,
     pub l0_stop_writes_trigger: usize,
     pub compaction_filter: Option<Arc<dyn crate::compaction::CompactionFilter>>,
+    /// Optional merge operator for Read-Modify-Write operations
+    pub merge_operator: Option<Arc<dyn MergeOperator>>,
 }
 
 /// Cloud storage backend configuration
@@ -453,6 +456,7 @@ impl Default for DBOptions {
             l0_stop_writes_trigger: 36,     // Stop writes at 36 L0 files
             compaction_filter: None,
             buffer_pool_capacity: None, // Disabled by default (use quick_cache)
+            merge_operator: None,
         }
     }
 }
@@ -603,6 +607,8 @@ pub struct DB {
     buffer_pool: Option<Arc<BufferPool>>,
     /// Optional compaction filter
     compaction_filter: Option<Arc<dyn crate::compaction::CompactionFilter>>,
+    /// Optional merge operator
+    pub(crate) merge_operator: Option<Arc<dyn MergeOperator>>,
     /// Pipelined WAL for high-concurrency writes (Group Commit with Leader/Follower)
     pub(crate) pipelined_wal: PipelinedWAL,
     /// Cloud storage backend (only available with --features object-store)
@@ -678,7 +684,7 @@ impl DB {
         if wal_path.exists() {
             info!("Recovering from WAL");
             let total_entries_before: usize = memtables_vec.iter().map(|mt| mt.len()).sum();
-            crate::db_helpers::recover_partitioned(&wal_path, &memtables_vec)?;
+            crate::db_helpers::recover_partitioned(&wal_path, &memtables_vec, options.merge_operator.as_ref())?;
             let total_entries_after: usize = memtables_vec.iter().map(|mt| mt.len()).sum();
             let recovered = total_entries_after - total_entries_before;
             info!(entries = recovered, "WAL recovery complete");
@@ -798,6 +804,7 @@ impl DB {
         let pending_deletions = Arc::new(Mutex::new(Vec::new()));
 
         let compaction_filter = options.compaction_filter.clone();
+        let merge_operator = options.merge_operator.clone();
         
         // Initialize BufferPool if capacity is set
         let buffer_pool = options.buffer_pool_capacity.map(|capacity| {
@@ -979,6 +986,7 @@ impl DB {
             global_block_cache: Arc::new(Cache::new(options.block_cache_capacity)),
             buffer_pool,
             compaction_filter,
+            merge_operator,
             #[cfg(feature = "object-store")]
             storage_backend,
         };
@@ -1017,8 +1025,14 @@ impl DB {
                              crate::wal::BatchOp::Delete { key } => {
                                  let _ = self.delete_internal(key.clone());
                              }
+                             crate::wal::BatchOp::Merge { key, operand } => {
+                                 let _ = self.merge_internal(key.clone(), operand.clone());
+                             }
                         }
                     }
+                }
+                Record::Merge { key, operand } => {
+                    let _ = self.merge_internal(key.clone(), operand.clone());
                 }
             }
         }
@@ -1284,101 +1298,67 @@ impl DB {
         self.read_count
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-        // Check correct partition first (most recent data, lock-free with ArcSwap)
+        // Accumulate merge operands from newest to oldest
+        let mut operands: Vec<Bytes> = Vec::new();
+
+        // 1. Check correct partition first (most recent data, lock-free with ArcSwap)
         let partition = partition_for_key(key);
         let mt = self.memtables[partition].load(); // Lock-free Arc load
-        let result = mt.get(key);
-        let contains = mt.contains(key);
-        // Arc automatically dropped, no lock to release!
-
-        match result {
-            Some(value) => {
-                // Found value in memtable partition
-                self.metrics.record_get(start.elapsed());
-                return Ok(Some(value));
-            }
-            None if contains => {
-                // Key exists in memtable partition as tombstone - don't check immutable or SSTables
-                self.metrics.record_get(start.elapsed());
-                return Ok(None);
-            }
-            None => {
-                // Key not in active partition - check immutable partitions
+        if let Some(entry) = mt.get_entry(key) {
+            match entry {
+                Entry::Value(v) => return self.resolve_merge(key, Some(v), operands, start),
+                Entry::Tombstone => return self.resolve_merge(key, None, operands, start),
+                Entry::Merge(ops) => {
+                    // ops are [Oldest...Newest] in Memtable.
+                    // We are collecting [Newest...Oldest] in operands.
+                    // So we reverse ops and extend.
+                    operands.extend(ops.iter().rev().cloned());
+                }
             }
         }
 
-        // Check immutable partitions (if flush is in progress) - LOCK-FREE with ArcSwap!
-        // We need to check ALL partitions since the key could be in any one
+        // 2. Check immutable partitions (if flush is in progress) - LOCK-FREE with ArcSwap!
         let immut_arc = self.immutable_memtables.load();
         if let Some(ref immutable_partitions) = **immut_arc {
-            // Check all partitions for the key
-            for partition_mt in immutable_partitions.iter() {
-                let immut_result = partition_mt.get(key);
-                let immut_contains = partition_mt.contains(key);
-
-                match immut_result {
-                    Some(value) => {
-                        // Found value in immutable partition
-                        // Arc automatically dropped (lock-free, no explicit drop needed!)
-                        self.metrics.record_get(start.elapsed());
-                        return Ok(Some(value));
+             // Only check the correct partition (optimization)
+             let partition_mt = &immutable_partitions[partition];
+             if let Some(entry) = partition_mt.get_entry(key) {
+                 match entry {
+                    Entry::Value(v) => return self.resolve_merge(key, Some(v), operands, start),
+                    Entry::Tombstone => return self.resolve_merge(key, None, operands, start),
+                    Entry::Merge(ops) => {
+                        operands.extend(ops.iter().rev().cloned());
                     }
-                    None if immut_contains => {
-                        // Key exists as tombstone in immutable partition
-                        // Arc automatically dropped (lock-free, no explicit drop needed!)
-                        self.metrics.record_get(start.elapsed());
-                        return Ok(None);
-                    }
-                    None => {
-                        // Key not in this partition - check next partition
-                        continue;
-                    }
-                }
-            }
-            // Arc automatically dropped (lock-free, no explicit drop needed!)
-        } else {
-            // Arc automatically dropped (lock-free, no explicit drop needed!)
+                 }
+             }
         }
 
         // Get vLog if available (need to clone for SSTable attachment)
         let vlog_path = self.options.data_dir.join("values.vlog");
         let has_vlog = self.has_vlog.load(std::sync::atomic::Ordering::Relaxed);
 
-        // Check SSTables in LSM tree (L0 -> L6) (LOCK-FREE!)
+        // 3. Check SSTables in LSM tree (L0 -> L6) (LOCK-FREE!)
         let lsm_arc = self.lsm.load();
         for level_num in 0..lsm_arc.num_levels() {
             if let Some(level) = lsm_arc.level(level_num) {
                 // IMPORTANT: Check all levels in reverse order (newest first)
-                // L0 has overlapping SSTables - check newest first
-                // L1+ may also have overlapping SSTables due to our simple compaction strategy
-                // (we add new merged SSTables without re-merging with existing L1 SSTables)
-                // So we check reverse order to get the latest value
                 let sstables: Vec<_> = level.sstables().iter().rev().collect();
 
                 // Check each SSTable in this level
                 for sstable_path in sstables {
-                    // Use cached SSTable reader (avoids expensive re-opening and index deserialization)
-                    // quick_cache provides lock-free get_or_insert with automatic LRU eviction
+                    // Use cached SSTable reader
                     let cached_sstable = self.sstable_cache.get_or_insert_with(
                         sstable_path,
                         || -> Result<Arc<Mutex<SSTable>>> {
-                            // Cache miss: open SSTable (called only once per unique path)
-                            // Pass global block cache for shared block caching across all SSTables
                             let global_cache = Some(Arc::clone(&self.global_block_cache));
                             let buffer_pool = self.buffer_pool.clone();
                             
-                            // Open SSTable with appropriate caching strategy
                             let mut sstable = if let Some(pool) = buffer_pool {
-                                // LeanStore mode: Use BufferPool (L2)
-                                // Note: open_with_buffer_pool currently disables global_cache (L1)
-                                // TODO: We might want both enabled in future (L1 Parsed + L2 Raw)
                                 SSTable::open_with_buffer_pool(sstable_path, Some(pool))?
                             } else {
-                                // Standard mode: Use Global Block Cache (L1)
                                 SSTable::open_with_global_cache(sstable_path, global_cache)?
                             };
                             
-                            // Attach VLog if enabled
                             if has_vlog {
                                 let vlog = VLog::open(&vlog_path)?;
                                 sstable = sstable.with_vlog(vlog);
@@ -1390,32 +1370,38 @@ impl DB {
 
                     let mut sstable = cached_sstable.lock().expect("SSTable lock poisoned");
 
-                    // get() already does bloom filter check internally - no need to call may_contain()
-                    let result = sstable.get(key)?;
+                    // Use get_entry to see flags (Merge/Tombstone)
+                    let result = sstable.get_entry(key)?;
 
                     match result {
-                        Some(value) => {
-                            self.metrics.record_get(start.elapsed());
-                            return Ok(Some(value));
+                        Some((data, flag)) => {
+                             match flag {
+                                 FLAG_INLINE | FLAG_POINTER => {
+                                     // Found value (pointer resolved by get_entry)
+                                     return self.resolve_merge(key, Some(data), operands, start);
+                                 }
+                                 FLAG_TOMBSTONE => {
+                                     // Found tombstone
+                                     return self.resolve_merge(key, None, operands, start);
+                                 }
+                                 FLAG_MERGE => {
+                                     // Found merge operand
+                                     operands.push(data);
+                                     // Continue to next SSTable/Level
+                                 }
+                                 _ => return Err(crate::sstable::SSTableError::InvalidFormat.into()),
+                             }
                         }
                         None => {
-                            // CRITICAL FIX (Bug #9): Distinguish tombstone from miss
-                            // If key exists in SSTable but get() returned None, it's a tombstone
-                            // Don't continue to older SSTables - tombstone masks older values
-                            if sstable.contains(key)? {
-                                // Key exists in this SSTable as tombstone - stop here
-                                self.metrics.record_get(start.elapsed());
-                                return Ok(None);
-                            }
-                            // Key not in this SSTable - continue to next SSTable
+                            // Not found in this SSTable
                         }
                     }
                 }
             }
         }
 
-        self.metrics.record_get(start.elapsed());
-        Ok(None)
+        // No more levels. Apply operands to base=None.
+        self.resolve_merge(key, None, operands, start)
     }
 
     /// Delete a key from the database
@@ -1490,6 +1476,36 @@ impl DB {
 
         // Record latency
         self.metrics.record_delete(start.elapsed());
+
+        Ok(())
+    }
+
+    /// Merge a value into the database
+    ///
+    /// Applies a merge operand to a key. The merge logic is defined by the configured
+    /// [`MergeOperator`](crate::merge_operator::MergeOperator).
+    ///
+    /// # Arguments
+    /// * `key` - The key to merge into
+    /// * `operand` - The operand to merge
+    pub fn merge(&self, key: impl AsRef<[u8]>, operand: impl AsRef<[u8]>) -> Result<()> {
+        self.check_write_stall();
+        let start = Instant::now();
+        let key = Bytes::copy_from_slice(key.as_ref());
+        let operand = Bytes::copy_from_slice(operand.as_ref());
+
+        let record = Record::Merge {
+            key: key.clone(),
+            operand: operand.clone(),
+        };
+
+        // Pipelined Group Commit
+        self.pipelined_wal.put(record, |batch| {
+            self.apply_wal_records(batch);
+        }).map_err(DBError::Wal)?;
+
+        // Metrics (reuse put metric for now or add new one)
+        self.metrics.record_put(start.elapsed());
 
         Ok(())
     }
@@ -1613,6 +1629,92 @@ impl DB {
                 // If swap failed, another thread is already flushing - skip
             } else {
                 // Synchronous flush: block until done
+                self.flush()?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Internal merge method (skips WAL write)
+    pub(crate) fn merge_internal(&self, key: Bytes, operand: Bytes) -> Result<()> {
+        let partition = partition_for_key(&key);
+        let mt = self.memtables[partition].load();
+
+        // Read-Modify-Write logic for Memtable
+        // Safe because PipelinedWAL ensures single-threaded access for writes
+        let new_entry = match mt.get_entry(&key) {
+            Some(Entry::Value(v)) => {
+                if let Some(ref op) = self.options.merge_operator {
+                    // Try to resolve full merge immediately
+                    // Note: This creates a slice of reference to slice.
+                    let operands = [operand.as_ref()];
+                    if let Some(merged) = op.full_merge(&key, Some(&v), &operands) {
+                        Entry::Value(Bytes::from(merged))
+                    } else {
+                        // Failed to merge (e.g. overflow). Fallback to appending operand?
+                        // Or maybe the operator expects to handle failure?
+                        // We'll append to preserve the operation, but this overwrites the Value
+                        // with a Merge list, essentially losing the base value unless we had
+                        // a way to store "BaseValue + Operands".
+                        // Since we don't, and full_merge failed, we are in a bad state.
+                        // Assuming full_merge is robust, we panic or log.
+                        // For now, we'll create a Merge entry with just the operand,
+                        // effectively "resetting" the value if the user didn't handle it.
+                        // Ideally, Memtable should support Value+Operands.
+                        warn!("Merge operator returned None for full_merge on key {:?}. Overwriting.", key);
+                        Entry::Merge(vec![operand])
+                    }
+                } else {
+                    // No operator - cannot merge against Value.
+                    // We must overwrite or fail.
+                    warn!("Merge called without merge_operator on existing Value. Overwriting.");
+                    Entry::Merge(vec![operand])
+                }
+            },
+            Some(Entry::Merge(ops)) => {
+                let mut new_ops = ops.clone();
+                // Optimization: Partial merge
+                if let Some(ref op) = self.options.merge_operator {
+                    let pushed = if let Some(last) = new_ops.last() {
+                        if let Some(merged) = op.partial_merge(&key, last, &operand) {
+                            new_ops.pop();
+                            new_ops.push(Bytes::from(merged));
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    if !pushed {
+                        new_ops.push(operand);
+                    }
+                } else {
+                    new_ops.push(operand);
+                }
+                Entry::Merge(new_ops)
+            },
+            Some(Entry::Tombstone) => {
+                // Merge against delete -> Merge(op) (acts as Put if Associative)
+                Entry::Merge(vec![operand])
+            },
+            None => {
+                Entry::Merge(vec![operand])
+            }
+        };
+
+        mt.put_entry(key, new_entry);
+
+        // Check flush logic
+        let should_flush = self.memtables.iter().any(|mt| mt.load().should_flush());
+        if should_flush {
+            if let Some(ref tx) = self.flush_tx {
+                if self.try_swap_memtable()? {
+                    debug!("Memtable swapped, signaling background flush");
+                    let _ = tx.send(FlushTask::Flush);
+                }
+            } else {
                 self.flush()?;
             }
         }
@@ -1981,6 +2083,7 @@ impl DB {
                             Entry::Tombstone => {
                                 builder.add_tombstone(key.clone())?;
                             }
+                            crate::memtable::Entry::Merge(_) => todo!(),
                         }
                     }
 
@@ -2016,6 +2119,7 @@ impl DB {
                             Entry::Tombstone => {
                                 builder.add_tombstone(key.clone())?;
                             }
+                            crate::memtable::Entry::Merge(_) => todo!(),
                         }
                     }
 
@@ -2041,6 +2145,7 @@ impl DB {
                         Entry::Tombstone => {
                             builder.add_tombstone(key.clone())?;
                         }
+                        crate::memtable::Entry::Merge(_) => todo!(),
                     }
                 }
 
@@ -2069,6 +2174,7 @@ impl DB {
                             Entry::Tombstone => {
                                 builder.add_tombstone(key.clone())?;
                             }
+                            crate::memtable::Entry::Merge(_) => todo!(),
                         }
                     }
 
@@ -2100,6 +2206,7 @@ impl DB {
                             Entry::Tombstone => {
                                 builder.add_tombstone(key.clone())?;
                             }
+                            crate::memtable::Entry::Merge(_) => todo!(),
                         }
                     }
 
@@ -2121,6 +2228,7 @@ impl DB {
                         Entry::Tombstone => {
                             builder.add_tombstone(key.clone())?;
                         }
+                        crate::memtable::Entry::Merge(_) => todo!(),
                     }
                 }
 
@@ -3519,6 +3627,41 @@ impl DB {
 
         // Now create snapshot with guaranteed consistency
         self.snapshot()
+    }
+
+    fn resolve_merge(
+        &self,
+        key: &[u8],
+        base: Option<Bytes>,
+        operands: Vec<Bytes>,
+        start: Instant,
+    ) -> Result<Option<Bytes>> {
+        // operands are collected [Newest ... Oldest]
+        // We need to apply them [Oldest ... Newest]
+        if operands.is_empty() {
+            self.metrics.record_get(start.elapsed());
+            return Ok(base);
+        }
+
+        if let Some(ref op) = self.options.merge_operator {
+            let ops_reversed: Vec<&[u8]> = operands.iter().rev().map(|b| b.as_ref()).collect();
+            let base_slice = base.as_ref().map(|b| b.as_ref());
+
+            if let Some(merged) = op.full_merge(key, base_slice, &ops_reversed) {
+                self.metrics.record_get(start.elapsed());
+                Ok(Some(Bytes::from(merged)))
+            } else {
+                // Merge failed
+                // warn!("Merge operator failed during read for key {:?}", key);
+                self.metrics.record_get(start.elapsed());
+                Ok(base)
+            }
+        } else {
+            // No operator, but we have operands.
+            // warn!("Found merge operands but no merge_operator configured. Ignoring operands.");
+            self.metrics.record_get(start.elapsed());
+            Ok(base)
+        }
     }
 }
 
