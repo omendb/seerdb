@@ -41,6 +41,7 @@ fn test_wal_memtable_integration() {
             Record::Delete { key } => {
                 memtable.delete(key.clone());
             }
+            Record::Merge { .. } => {}
             Record::Batch { operations } => {
                 for op in operations {
                     match op {
@@ -50,6 +51,7 @@ fn test_wal_memtable_integration() {
                         seerdb::wal::BatchOp::Delete { key } => {
                             memtable.delete(key.clone());
                         }
+                        seerdb::wal::BatchOp::Merge { .. } => {}
                     }
                 }
             }
@@ -119,6 +121,7 @@ fn test_crash_recovery() {
             Record::Delete { key } => {
                 memtable.delete(key);
             }
+            Record::Merge { .. } => {}
             Record::Batch { operations } => {
                 for op in operations {
                     match op {
@@ -128,6 +131,7 @@ fn test_crash_recovery() {
                         seerdb::wal::BatchOp::Delete { key } => {
                             memtable.delete(key);
                         }
+                        seerdb::wal::BatchOp::Merge { .. } => {}
                     }
                 }
             }
@@ -189,6 +193,7 @@ fn test_write_flush_recover_cycle() {
                 Record::Delete { key } => {
                     memtable.delete(key);
                 }
+                Record::Merge { .. } => {}
                 Record::Batch { operations } => {
                     for op in operations {
                         match op {
@@ -198,6 +203,7 @@ fn test_write_flush_recover_cycle() {
                             seerdb::wal::BatchOp::Delete { key } => {
                                 memtable.delete(key);
                             }
+                            seerdb::wal::BatchOp::Merge { .. } => {}
                         }
                     }
                 }
@@ -254,6 +260,7 @@ fn test_delete_in_wal_and_memtable() {
                 Record::Delete { key } => {
                     memtable.delete(key);
                 }
+                Record::Merge { .. } => {}
                 Record::Batch { operations } => {
                     for op in operations {
                         match op {
@@ -263,6 +270,7 @@ fn test_delete_in_wal_and_memtable() {
                             seerdb::wal::BatchOp::Delete { key } => {
                                 memtable.delete(key);
                             }
+                            seerdb::wal::BatchOp::Merge { .. } => {}
                         }
                     }
                 }

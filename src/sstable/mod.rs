@@ -280,6 +280,9 @@ impl SSTableBuilder {
 
     pub fn add_with_vlog(&mut self, key: Bytes, value: Bytes, vlog: &mut VLog) -> Result<()> {
         self.bloom.insert(&key);
+        if self.prefix_len > 0 && key.len() >= self.prefix_len {
+            self.prefix_bloom.insert(&key[..self.prefix_len]);
+        }
 
         // Use shared helper for vLog handling
         let (data, flag) = handle_vlog_value(&key, value, vlog, self.vlog_threshold)?;
@@ -306,6 +309,9 @@ impl SSTableBuilder {
 
     pub fn add_tombstone(&mut self, key: Bytes) -> Result<()> {
         self.bloom.insert(&key);
+        if self.prefix_len > 0 && key.len() >= self.prefix_len {
+            self.prefix_bloom.insert(&key[..self.prefix_len]);
+        }
         let entry = self.encode_entry(&key, FLAG_TOMBSTONE, &[]);
 
         if !self.data_block.add(&key, &entry) {
@@ -328,6 +334,9 @@ impl SSTableBuilder {
 
     pub fn add_merge(&mut self, key: Bytes, operand: Bytes) -> Result<()> {
         self.bloom.insert(&key);
+        if self.prefix_len > 0 && key.len() >= self.prefix_len {
+            self.prefix_bloom.insert(&key[..self.prefix_len]);
+        }
         let entry = self.encode_entry(&key, FLAG_MERGE, &operand);
 
         if !self.data_block.add(&key, &entry) {
@@ -640,35 +649,6 @@ impl BufferedSSTableBuilder {
         if self.prefix_len > 0 && key.len() >= self.prefix_len {
             self.prefix_bloom.insert(&key[..self.prefix_len]);
         }
-        let entry = self.encode_entry(&key, FLAG_INLINE, &value);
-
-        if !self.data_block.add(&key, &entry) {
-            self.flush_data_block()?;
-            if !self.data_block.add(&key, &entry) {
-                let entry_size = key.len() + entry.len() + 8;
-                let custom_size = (entry_size * 2).max(DEFAULT_BLOCK_SIZE * 2);
-                self.data_block = BlockBuilder::with_capacity(custom_size);
-
-                if !self.data_block.add(&key, &entry) {
-                    return Err(SSTableError::InvalidFormat);
-                }
-            }
-        }
-
-        self.num_entries += 1;
-        Ok(())
-    }
-
-    pub fn add_raw(&mut self, key: Bytes, encoded_value: Bytes) -> Result<()> {
-        if self.min_key.is_none() {
-            self.min_key = Some(key.clone());
-        }
-        self.max_key = Some(key.clone());
-
-        self.bloom.insert(&key);
-        if self.prefix_len > 0 && key.len() >= self.prefix_len {
-            self.prefix_bloom.insert(&key[..self.prefix_len]);
-        }
 
         if !self.data_block.add(&key, &encoded_value) {
             self.flush_data_block()?;
@@ -689,6 +669,9 @@ impl BufferedSSTableBuilder {
 
     pub fn add_with_vlog(&mut self, key: Bytes, value: Bytes, vlog: &mut VLog) -> Result<()> {
         self.bloom.insert(&key);
+        if self.prefix_len > 0 && key.len() >= self.prefix_len {
+            self.prefix_bloom.insert(&key[..self.prefix_len]);
+        }
 
         // Use shared helper for vLog handling
         let (data, flag) = handle_vlog_value(&key, value, vlog, self.vlog_threshold)?;
@@ -714,6 +697,9 @@ impl BufferedSSTableBuilder {
 
     pub fn add_tombstone(&mut self, key: Bytes) -> Result<()> {
         self.bloom.insert(&key);
+        if self.prefix_len > 0 && key.len() >= self.prefix_len {
+            self.prefix_bloom.insert(&key[..self.prefix_len]);
+        }
         let entry = self.encode_entry(&key, FLAG_TOMBSTONE, &[]);
 
         if !self.data_block.add(&key, &entry) {
@@ -735,6 +721,9 @@ impl BufferedSSTableBuilder {
 
     pub fn add_merge(&mut self, key: Bytes, operand: Bytes) -> Result<()> {
         self.bloom.insert(&key);
+        if self.prefix_len > 0 && key.len() >= self.prefix_len {
+            self.prefix_bloom.insert(&key[..self.prefix_len]);
+        }
         let entry = self.encode_entry(&key, FLAG_MERGE, &operand);
 
         if !self.data_block.add(&key, &entry) {

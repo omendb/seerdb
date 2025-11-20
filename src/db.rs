@@ -3337,9 +3337,7 @@ impl DB {
                             };
 
                             if is_contained {
-                                // FIXME: Prefix bloom filter optimization is causing test failures
-                                // sstable_guard.may_contain_prefix(p)
-                                true
+                                sstable_guard.may_contain_prefix(p)
                             } else {
                                 true
                             }

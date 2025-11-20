@@ -2,7 +2,6 @@
 // Uses Vec<u64> instead of Vec<bool> (standard approach, 8x more memory efficient)
 // SIMD-friendly for future optimizations
 
-use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use twox_hash::XxHash64;
 
@@ -144,20 +143,17 @@ impl BloomFilter {
         })
     }
 
+    pub fn debug_hash<T: Hash + ?Sized>(&self, item: &T, seed: usize) -> u64 {
+        self.hash(item, seed)
+    }
+
     /// Compute hash for an item with a given seed
     fn hash<T: Hash + ?Sized>(&self, item: &T, seed: usize) -> u64 {
-        if seed.is_multiple_of(2) {
-            // Use DefaultHasher for even seeds
-            let mut hasher = DefaultHasher::new();
-            seed.hash(&mut hasher);
-            item.hash(&mut hasher);
-            hasher.finish()
-        } else {
-            // Use XxHash64 for odd seeds
-            let mut hasher = XxHash64::with_seed(seed as u64);
-            item.hash(&mut hasher);
-            hasher.finish()
-        }
+        // Always use XxHash64 for stability (persisted to disk)
+        // DefaultHasher is randomized per-process and cannot be used for persistence
+        let mut hasher = XxHash64::with_seed(seed as u64);
+        item.hash(&mut hasher);
+        hasher.finish()
     }
 }
 
