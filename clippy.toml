@@ -1,0 +1,7 @@
+# Deny panicking functions
+disallowed-methods = [
+    "std::option::Option::expect",
+    "std::result::Result::expect",
+    "std::option::Option::unwrap",
+    "std::result::Result::unwrap",
+]
