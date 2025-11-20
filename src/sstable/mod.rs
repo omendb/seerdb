@@ -886,6 +886,7 @@ impl SSTable {
         Ok(data_block.find_exact(key).is_some())
     }
 
+    #[inline]
     fn find_index_block(&self, key: &[u8]) -> Option<(u64, u32)> {
         // CRITICAL FIX (Bug #11): Disable ALEX for top-level index lookup
         // ALEX learned index cannot correctly handle keys with shared prefixes
@@ -905,6 +906,7 @@ impl SSTable {
         }
     }
 
+    #[inline]
     fn find_in_index_block(&self, index_block: &Block, key: &[u8]) -> Result<Option<(u64, u32)>> {
         // Binary search for first entry where entry_key >= key
         let entry = match index_block.find_lower_bound(key) {
@@ -930,6 +932,7 @@ impl SSTable {
         Ok(Some((offset, size)))
     }
 
+    #[inline]
     fn find_in_data_block(&mut self, data_block: &Block, key: &[u8]) -> Result<Option<(Bytes, u8)>> {
         // Binary search for exact key match
         let (_entry_key, entry_value) = match data_block.find_exact(key) {

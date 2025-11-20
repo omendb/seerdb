@@ -16,6 +16,7 @@ use crate::simd;
 #[cfg(not(feature = "simd"))]
 mod simd {
     use std::cmp::Ordering;
+    #[inline]
     pub fn compare_keys(a: &[u8], b: &[u8]) -> Ordering {
         a.cmp(b)
     }

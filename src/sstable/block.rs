@@ -72,9 +72,11 @@ use crate::simd;
 #[cfg(not(feature = "simd"))]
 mod simd {
     use std::cmp::Ordering;
+    #[inline]
     pub fn shared_prefix_len(a: &[u8], b: &[u8]) -> usize {
         a.iter().zip(b.iter()).take_while(|(x, y)| x == y).count()
     }
+    #[inline]
     pub fn compare_keys(a: &[u8], b: &[u8]) -> Ordering {
         a.cmp(b)
     }
@@ -440,6 +442,7 @@ impl Block {
 
     /// Find exact key match using binary search (for data blocks)
     /// Returns Some((key, value)) if found, None otherwise
+    #[inline]
     pub fn find_exact(&self, key: &[u8]) -> Option<(Bytes, Bytes)> {
         let entries = self
             .decompressed_cache
@@ -454,6 +457,7 @@ impl Block {
 
     /// Find first key >= target using binary search (for index blocks)
     /// Returns Some((key, value)) if found, None otherwise
+    #[inline]
     pub fn find_lower_bound(&self, key: &[u8]) -> Option<(Bytes, Bytes)> {
         let entries = self
             .decompressed_cache

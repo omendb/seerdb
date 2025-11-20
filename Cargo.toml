@@ -140,6 +140,10 @@ harness = false
 name = "simd_search_comparison"
 harness = false
 
+[[bench]]
+name = "micro_opt_read_bench"
+harness = false
+
 # Examples that require optional features
 [[example]]
 name = "baseline_benchmark"

@@ -56,6 +56,7 @@ impl BloomFilter {
 
     /// Check if an element might be in the set
     /// Returns true if possibly in set, false if definitely not in set
+    #[inline]
     pub fn contains<T: Hash + ?Sized>(&self, item: &T) -> bool {
         for i in 0..self.num_hashes {
             let hash = self.hash(item, i);
@@ -159,6 +160,7 @@ impl BloomFilter {
     }
 
     /// Hash function with seed
+    #[inline]
     fn hash<T: Hash + ?Sized>(&self, item: &T, seed: usize) -> u64 {
         if seed.is_multiple_of(2) {
             // Use DefaultHasher for even seeds
