@@ -52,6 +52,24 @@ A modern embedded LSM-tree storage engine implementing 2018-2024 research:
 
 ## What Was Just Completed
 
+### Merge Resolution in RangeIterator (Nov 20, 2025)
+
+#### 1. Completed Merge Resolution
+**Problem**: Range scans (`range()`, `prefix()`) were not resolving merge operands, meaning scans would return raw operands or tombstones instead of merged values.
+- `Entry` type was not propagated through the iterator pipeline.
+- `KWayMergeIterator` didn't have access to `MergeOperator`.
+
+**Fix**:
+- Updated `Entry` to derive `PartialEq`.
+- Updated `SSTableRangeIterator` to return `Result<(Bytes, Entry)>`.
+- Updated `KWayMergeIterator` to accept `MergeOperator` and resolve merges on-the-fly.
+- Updated `DB::range_internal` and `Snapshot::range` to pass `MergeOperator`.
+- Fixed `Entry::Merge` construction to properly wrap operands in `Vec`.
+
+**Tests**:
+- Created and verified `tests/merge_range_test.rs`.
+- Verified correct behavior for stacked merges and base value resolution.
+
 ### Stability Hardening (Nov 20, 2025)
 
 #### 1. Fixed WAL Race Condition (CRITICAL)
@@ -116,17 +134,7 @@ See `ai/REMAINING_WORK.md` for detailed breakdown.
 **Priority**: Low (ALEX already fast)
 **File**: `src/alex/gapped_node.rs:332`
 
-#### 3. Merge Resolution in RangeIterator
-**Impact**: Range scans would see merged values
-**Effort**: Medium (3-4 hours)
-**Priority**: Medium (merge operators work in get(), just not in scans)
-**Files**: `src/range.rs:139`, `src/range.rs:153`
-
-**Note**: Merge operators fully functional in `DB::get()`, which covers the
-primary use case (graph adjacency lists). Range scans currently hide merged
-entries to avoid exposing raw operands.
-
-#### 4. Dirty Page Flush in BufferPool
+#### 3. Dirty Page Flush in BufferPool
 **Impact**: Support for mutable pages (currently read-only)
 **Effort**: Medium (3-4 hours)
 **Priority**: Very Low (SSTables are immutable, no need for dirty pages)
@@ -248,6 +256,7 @@ cargo run --release --example write_amp_benchmark
 ## Recent Commits
 
 ```
+[Pending] - feat: merge resolution in range scans (Entry propagation)
 15a779a - docs: update ai/ with production readiness status
 ca0123a - docs: update STATUS and TODO with stability hardening completion
 774c825 - fix: critical stability issues (WAL race, hanging tests, BufferPool)
@@ -280,7 +289,6 @@ e4d1d9f - docs: complete BufferPool investigation - working as designed
 
 ### 0.2.0 (Optional Optimizations)
 - [ ] Blocked bloom filters (3x speedup)
-- [ ] Merge resolution in range scans
 - [ ] Reverse iteration support
 - [ ] Additional compaction strategies
 

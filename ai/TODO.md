@@ -89,6 +89,12 @@
 - [x] Verify with `tests/merge_operator_tests.rs` (All pass).
 - **Impact**: Enables O(1) blind writes for graph edge lists (critical for `omendb`).
 
+### Merge Resolution in RangeIterator ✅ **COMPLETE**
+- [x] Implement `Entry` propagation in `SSTableRangeIterator`.
+- [x] Implement `MergeOperator` logic in `KWayMergeIterator`.
+- [x] Update `RangeIterator` to resolve merges during scan.
+- [x] Verify with `tests/merge_range_test.rs`.
+
 ### Group Commit Implementation ✅ **COMPLETE**
 - [x] Implement group commit (batching writes before fsync)
 - [x] Add group_commit_delay_us and max_batch_size to DBOptions
@@ -154,7 +160,7 @@
 **Optional Optimizations** (see `ai/REMAINING_WORK.md` for details):
 - [ ] Blocked Bloom Filter (3x speedup, low priority)
 - [ ] SIMD Search in ALEX (performance improvement, low priority)
-- [ ] Merge Resolution in RangeIterator (medium priority, nice-to-have)
+- [x] Merge Resolution in RangeIterator (medium priority, nice-to-have)
 - [ ] Dirty Page Flush in BufferPool (very low priority, not needed for immutable SSTables)
 
 **Production Status**: ✅ Ready to deploy

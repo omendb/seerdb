@@ -4,6 +4,11 @@
 **Current Phase**: Stability Complete - Production Ready
 
 **Recent Work (Nov 20, 2025)**:
+- **Merge Resolution in RangeIterator**: ✅ Completed.
+  - Range scans (`range()`, `prefix()`) now correctly resolve merge operands using the configured `MergeOperator`.
+  - Updated `Entry` to derive `PartialEq`.
+  - Updated `RangeIterator` pipeline (`SSTableRangeIterator` -> `KWayMergeIterator` -> `RangeIterator`) to propagate `Entry` types.
+  - Verified with `tests/merge_range_test.rs`.
 - **Compaction Audit**: ✅ Analyzed architecture. SeerDB uses **Tiered Compaction**, which is write-optimized and immune to the random-write scaling issues affecting Leveled compaction.
   - Verified with `compaction_stress_test` (stable throughput).
   - Decision: Stick with Tiered for now, prioritize **Prefix Bloom Filters** to mitigate Read Amp.
