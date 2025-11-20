@@ -66,8 +66,24 @@
   - All key public APIs now have complete documentation with examples.
   - All 178 tests passing.
 
+**Recent Work (Nov 20, 2025 - Part 6: Stability Hardening)**:
+- **Critical Stability Fixes**: ✅ Resolved all stability issues.
+  - **WAL Race Condition (Data Loss)**: Fixed data loss on reopen with tiny memtables.
+    - Problem: DB::drop() didn't sync WAL, data stayed in kernel buffers, lost on reopen.
+    - Fix: Add WAL sync in DB::drop() before background worker shutdown.
+    - Tests fixed: test_db_recovery_with_flush, test_db_background_compaction.
+  - **Hanging Tests**: Fixed two tests that appeared to hang.
+    - Problem: Tests stuck waiting for unflushed data during shutdown.
+    - Fix: Resolved by WAL sync (same root cause).
+    - Tests fixed: test_memory_budget_enforcement, test_estimate_memory_usage.
+  - **BufferPool Error Handling**: Replaced panic with proper error propagation.
+    - Problem: make_capacity_error() would panic when buffer pool full.
+    - Fix: Create BufferPoolError enum, add to SSTableError, proper trait bounds.
+    - Impact: Graceful degradation under memory pressure instead of crash.
+- **Test Results**: All 182 tests passing (was 178 with 4 ignored), 0 ignored.
+
 **Next Focus**:
-All active work complete!
+All critical stability work complete!
 
 **Environment Notes**:
 - **Mac (M3 Max, 128GB)**: Large-scale tests, development, tokio + LocalFileSystem.

@@ -1,9 +1,9 @@
 # TODO - seerdb
 
 **Last Updated**: November 20, 2025
-**Current Focus**: All Benchmarks Complete, BufferPool Optimized
+**Current Focus**: Stability Hardening Complete
 **Version**: 0.0.1-alpha
-**Status**: 186 tests passing, 81.54% coverage
+**Status**: 182 tests passing (0 ignored), 81.54% coverage
 
 **Environment**:
 - **Mac (M3 Max, 128GB)**: Development, large-scale tests, tokio + LocalFileSystem
@@ -131,6 +131,21 @@
 - [x] Add comprehensive docs for RangeIterator with examples.
 - [x] Document range_keys_only, prefix_keys_only methods.
 - [x] All 178 tests passing.
+
+### Stability Hardening ✅ **COMPLETE**
+- [x] Fix WAL race condition (data loss on reopen with tiny memtables).
+  - Root cause: DB::drop() didn't sync WAL before shutdown.
+  - Fix: Add WAL sync in Drop, expose PipelinedWAL::sync().
+  - Tests fixed: test_db_recovery_with_flush, test_db_background_compaction.
+- [x] Fix hanging tests (test_memory_budget_enforcement, test_estimate_memory_usage).
+  - Root cause: Same WAL race - tests stuck waiting for unflushed data.
+  - Fix: Resolved by WAL sync.
+- [x] Fix BufferPool error handling (replace panic with proper error).
+  - Root cause: make_capacity_error() would panic when pool full.
+  - Fix: Create BufferPoolError enum, propagate to SSTableError.
+  - Impact: Graceful degradation instead of crash under memory pressure.
+- [x] All 182 tests passing (was 178 with 4 ignored).
+- [x] Zero ignored tests (was 4).
 
 ### Next Steps
 None - all active work complete!
