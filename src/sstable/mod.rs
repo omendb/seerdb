@@ -11,7 +11,7 @@ use block::{Block, BlockBuilder, BlockError, DEFAULT_BLOCK_SIZE};
 use bytes::{Bytes, BytesMut};
 use quick_cache::sync::Cache;
 use std::fs::{File, OpenOptions};
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -130,17 +130,11 @@ fn bytes_to_i64(bytes: &[u8]) -> i64 {
 
 /// SSTable builder with block-based format
 ///
-/// TODO (Phase 2 - Object Storage): SSTableBuilder currently uses File directly
-/// for streaming writes (write header, blocks incrementally, footer). When adding
-/// object storage backends (S3/GCS/Azure), we'll need to:
-/// 1. Buffer all SSTable data in memory
-/// 2. Call LocalStorage::write_sstable() once at the end with complete data
-/// 3. For S3, this maps directly to PutObject operation
-///
-/// This is deferred to Phase 2 (post-0.0.1) to avoid increasing memory usage
-/// and complexity during production hardening.
-pub struct SSTableBuilder {
-    file: File,
+/// Generic over any writer that implements Read + Write + Seek.
+/// - Use `SSTableBuilder<File>` for direct-to-disk (low memory)
+/// - Use `SSTableBuilder<Cursor<Vec<u8>>>` for buffered (cloud storage)
+pub struct SSTableBuilder<W> {
+    writer: W,
     data_block: BlockBuilder,
     index_block: BlockBuilder,
     top_level_index: Vec<TopLevelIndexEntry>,
@@ -158,8 +152,10 @@ pub struct SSTableBuilder {
     max_sequence: u64,
 }
 
-impl SSTableBuilder {
-    /// Create a new SSTable builder
+pub type BufferedSSTableBuilder = SSTableBuilder<Cursor<Vec<u8>>>;
+
+impl SSTableBuilder<File> {
+    /// Create a new SSTable builder writing directly to a file
     pub fn create(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         let mut file = OpenOptions::new()
@@ -174,7 +170,7 @@ impl SSTableBuilder {
         let header_size = header.len() as u64;
 
         Ok(Self {
-            file,
+            writer: file,
             data_block: BlockBuilder::with_capacity(DEFAULT_BLOCK_SIZE),
             index_block: BlockBuilder::with_capacity(DEFAULT_BLOCK_SIZE),
             top_level_index: Vec::new(),
@@ -191,420 +187,28 @@ impl SSTableBuilder {
         })
     }
 
-    pub fn with_vlog_threshold(mut self, threshold: usize) -> Self {
-        self.vlog_threshold = Some(threshold);
-        self
-    }
-
-    pub fn with_prefix_len(mut self, len: usize) -> Self {
-        self.prefix_len = len;
-        // Re-create header with correct prefix_len
-        // Note: This rewrites the header to the file, which is fine since we're at the start
-        let header = Self::create_header(len);
-        let _ = self.file.seek(SeekFrom::Start(0));
-        let _ = self.file.write_all(&header);
-        let _ = self.file.seek(SeekFrom::Start(self.current_offset));
-        self
-    }
-
-    /// Set the maximum sequence number for this SSTable
-    /// Should be called before finish() to track flush/compaction coordination
-    pub fn with_max_sequence(mut self, seq: u64) -> Self {
-        self.max_sequence = seq;
-        self
-    }
-
-    pub fn add(&mut self, key: Bytes, value: Bytes) -> Result<()> {
-        // Track min/max keys for range filtering
-        if self.min_key.is_none() {
-            self.min_key = Some(key.clone());
-        }
-        self.max_key = Some(key.clone());
-
-        self.bloom.insert(&key);
-        if self.prefix_len > 0 && key.len() >= self.prefix_len {
-            self.prefix_bloom.insert(&key[..self.prefix_len]);
-        }
-
-        let entry = self.encode_entry(&key, FLAG_INLINE, &value);
-
-        if !self.data_block.add(&key, &entry) {
-            self.flush_data_block()?;
-            if !self.data_block.add(&key, &entry) {
-                // Entry too large for default block - create custom-sized block
-                let entry_size = key.len() + entry.len() + 8; // key + entry + headers
-                let custom_size = (entry_size * 2).max(DEFAULT_BLOCK_SIZE * 2); // 2x for safety
-                self.data_block = BlockBuilder::with_capacity(custom_size);
-
-                if !self.data_block.add(&key, &entry) {
-                    return Err(SSTableError::InvalidFormat);
-                }
-            }
-        }
-
-        self.num_entries += 1;
+    /// Finish building and ensure data is synced to disk
+    pub fn finish(self) -> Result<()> {
+        let mut file = self.finish_internal()?;
+        file.sync_all()?;
         Ok(())
-    }
-
-    /// Add a raw entry that already has a flag prefix (for compaction)
-    /// This preserves the original encoding (FLAG_INLINE, FLAG_POINTER, etc.)
-    pub fn add_raw(&mut self, key: Bytes, encoded_value: Bytes) -> Result<()> {
-        // Track min/max keys for range filtering
-        if self.min_key.is_none() {
-            self.min_key = Some(key.clone());
-        }
-        self.max_key = Some(key.clone());
-
-        self.bloom.insert(&key);
-        if self.prefix_len > 0 && key.len() >= self.prefix_len {
-            self.prefix_bloom.insert(&key[..self.prefix_len]);
-        }
-
-        if !self.data_block.add(&key, &encoded_value) {
-            self.flush_data_block()?;
-            if !self.data_block.add(&key, &encoded_value) {
-                // Entry too large for default block - create custom-sized block
-                let entry_size = key.len() + encoded_value.len() + 8; // key + value + headers
-                let custom_size = (entry_size * 2).max(DEFAULT_BLOCK_SIZE * 2); // 2x for safety
-                self.data_block = BlockBuilder::with_capacity(custom_size);
-
-                if !self.data_block.add(&key, &encoded_value) {
-                    return Err(SSTableError::InvalidFormat);
-                }
-            }
-        }
-
-        self.num_entries += 1;
-        Ok(())
-    }
-
-    pub fn add_with_vlog(&mut self, key: Bytes, value: Bytes, vlog: &mut VLog) -> Result<()> {
-        self.bloom.insert(&key);
-        if self.prefix_len > 0 && key.len() >= self.prefix_len {
-            self.prefix_bloom.insert(&key[..self.prefix_len]);
-        }
-
-        // Use shared helper for vLog handling
-        let (data, flag) = handle_vlog_value(&key, value, vlog, self.vlog_threshold)?;
-
-        let entry = self.encode_entry(&key, flag, &data);
-
-        if !self.data_block.add(&key, &entry) {
-            self.flush_data_block()?;
-            if !self.data_block.add(&key, &entry) {
-                // Entry too large for default block - create custom-sized block
-                let entry_size = key.len() + entry.len() + 8; // key + entry + headers
-                let custom_size = (entry_size * 2).max(DEFAULT_BLOCK_SIZE * 2); // 2x for safety
-                self.data_block = BlockBuilder::with_capacity(custom_size);
-
-                if !self.data_block.add(&key, &entry) {
-                    return Err(SSTableError::InvalidFormat);
-                }
-            }
-        }
-
-        self.num_entries += 1;
-        Ok(())
-    }
-
-    pub fn add_tombstone(&mut self, key: Bytes) -> Result<()> {
-        self.bloom.insert(&key);
-        if self.prefix_len > 0 && key.len() >= self.prefix_len {
-            self.prefix_bloom.insert(&key[..self.prefix_len]);
-        }
-        let entry = self.encode_entry(&key, FLAG_TOMBSTONE, &[]);
-
-        if !self.data_block.add(&key, &entry) {
-            self.flush_data_block()?;
-            if !self.data_block.add(&key, &entry) {
-                // Entry too large for default block - create custom-sized block
-                let entry_size = key.len() + entry.len() + 8; // key + entry + headers
-                let custom_size = (entry_size * 2).max(DEFAULT_BLOCK_SIZE * 2); // 2x for safety
-                self.data_block = BlockBuilder::with_capacity(custom_size);
-
-                if !self.data_block.add(&key, &entry) {
-                    return Err(SSTableError::InvalidFormat);
-                }
-            }
-        }
-
-        self.num_entries += 1;
-        Ok(())
-    }
-
-    pub fn add_merge(&mut self, key: Bytes, operand: Bytes) -> Result<()> {
-        self.bloom.insert(&key);
-        if self.prefix_len > 0 && key.len() >= self.prefix_len {
-            self.prefix_bloom.insert(&key[..self.prefix_len]);
-        }
-        let entry = self.encode_entry(&key, FLAG_MERGE, &operand);
-
-        if !self.data_block.add(&key, &entry) {
-            self.flush_data_block()?;
-            if !self.data_block.add(&key, &entry) {
-                let entry_size = key.len() + entry.len() + 8;
-                let custom_size = (entry_size * 2).max(DEFAULT_BLOCK_SIZE * 2);
-                self.data_block = BlockBuilder::with_capacity(custom_size);
-
-                if !self.data_block.add(&key, &entry) {
-                    return Err(SSTableError::InvalidFormat);
-                }
-            }
-        }
-
-        self.num_entries += 1;
-        Ok(())
-    }
-
-    fn encode_entry(&self, _key: &[u8], flag: u8, data: &[u8]) -> Bytes {
-        let mut buf = BytesMut::with_capacity(1 + data.len());
-        buf.extend_from_slice(&[flag]);
-        buf.extend_from_slice(data);
-        buf.freeze()
-    }
-
-    fn flush_data_block(&mut self) -> Result<()> {
-        if self.data_block.is_empty() {
-            return Ok(());
-        }
-
-        let last_key = Bytes::copy_from_slice(self.data_block.last_key());
-        let block_offset = self.current_offset;
-
-        let old_block = std::mem::replace(
-            &mut self.data_block,
-            BlockBuilder::with_capacity(DEFAULT_BLOCK_SIZE),
-        );
-        let block_data = old_block.finish();
-        let block_size = block_data.len() as u32;
-        self.file.write_all(&block_data)?;
-        self.current_offset += block_data.len() as u64;
-
-        let mut index_entry = BytesMut::with_capacity(4 + last_key.len() + 8 + 4);
-        index_entry.extend_from_slice(&(last_key.len() as u32).to_le_bytes());
-        index_entry.extend_from_slice(&last_key);
-        index_entry.extend_from_slice(&block_offset.to_le_bytes());
-        index_entry.extend_from_slice(&block_size.to_le_bytes());
-        let index_entry_bytes = index_entry.freeze();
-
-        if !self.index_block.add(&last_key, &index_entry_bytes) {
-            self.flush_index_block()?;
-
-            let mut index_entry2 = BytesMut::with_capacity(4 + last_key.len() + 8 + 4);
-            index_entry2.extend_from_slice(&(last_key.len() as u32).to_le_bytes());
-            index_entry2.extend_from_slice(&last_key);
-            index_entry2.extend_from_slice(&block_offset.to_le_bytes());
-            index_entry2.extend_from_slice(&block_size.to_le_bytes());
-
-            if !self.index_block.add(&last_key, &index_entry2.freeze()) {
-                return Err(SSTableError::InvalidFormat);
-            }
-        }
-
-        Ok(())
-    }
-
-    fn flush_index_block(&mut self) -> Result<()> {
-        if self.index_block.is_empty() {
-            return Ok(());
-        }
-
-        if self.index_blocks_start == 0 {
-            self.index_blocks_start = self.current_offset;
-        }
-
-        let last_key = Bytes::copy_from_slice(self.index_block.last_key());
-        let block_offset = self.current_offset;
-
-        let old_block = std::mem::replace(
-            &mut self.index_block,
-            BlockBuilder::with_capacity(DEFAULT_BLOCK_SIZE),
-        );
-        let block_data = old_block.finish();
-        let block_size = block_data.len() as u32;
-        self.file.write_all(&block_data)?;
-        self.current_offset += block_data.len() as u64;
-
-        self.top_level_index.push(TopLevelIndexEntry {
-            last_key,
-            offset: block_offset,
-            size: block_size,
-        });
-
-        Ok(())
-    }
-
-    pub fn finish(mut self) -> Result<()> {
-        self.flush_data_block()?;
-        self.flush_index_block()?;
-
-        let top_level_offset = self.current_offset;
-        self.write_top_level_index()?;
-
-        let bloom_offset = self.current_offset;
-        let bloom_bytes = self.bloom.to_bytes();
-        self.file
-            .write_all(&(bloom_bytes.len() as u64).to_le_bytes())?;
-        self.file.write_all(&bloom_bytes)?;
-        self.current_offset += 8 + bloom_bytes.len() as u64;
-
-        let prefix_bloom_offset = self.current_offset;
-        let prefix_bloom_bytes = self.prefix_bloom.to_bytes();
-        self.file
-            .write_all(&(prefix_bloom_bytes.len() as u64).to_le_bytes())?;
-        self.file.write_all(&prefix_bloom_bytes)?;
-        self.current_offset += 8 + prefix_bloom_bytes.len() as u64;
-
-        // Write min_key/max_key metadata
-        let metadata_offset = self.current_offset;
-        self.write_metadata()?;
-
-        // Write num_entries and max_sequence to header BEFORE computing footer checksum
-        // This ensures the checksum includes these header fields
-        let footer_offset = self.current_offset;
-        self.file.seek(SeekFrom::Start(16))?; // Skip magic (4) + version (4) + reserved (8)
-        self.file.write_all(&self.num_entries.to_le_bytes())?; // Offset 16-23
-        self.file.write_all(&self.max_sequence.to_le_bytes())?; // Offset 24-31
-        self.file.seek(SeekFrom::Start(footer_offset))?; // Return to footer position
-
-        self.write_footer(
-            top_level_offset,
-            bloom_offset,
-            prefix_bloom_offset,
-            metadata_offset,
-        )?;
-
-        // CRITICAL: Fsync to ensure durability (sync data + metadata)
-        // This guarantees all SSTable data is persisted to disk before returning
-        self.file.sync_all()?;
-        Ok(())
-    }
-
-    fn write_top_level_index(&mut self) -> Result<()> {
-        // OPTIMIZATION: Batch all index entries into single buffer to reduce syscalls
-        let mut buffer = Vec::new();
-        buffer.extend_from_slice(&(self.top_level_index.len() as u32).to_le_bytes());
-
-        for entry in &self.top_level_index {
-            buffer.extend_from_slice(&(entry.last_key.len() as u32).to_le_bytes());
-            buffer.extend_from_slice(&entry.last_key);
-            buffer.extend_from_slice(&entry.offset.to_le_bytes());
-            buffer.extend_from_slice(&entry.size.to_le_bytes());
-        }
-
-        // Single syscall instead of N syscalls
-        self.file.write_all(&buffer)?;
-        self.current_offset += buffer.len() as u64;
-
-        Ok(())
-    }
-
-    fn write_metadata(&mut self) -> Result<()> {
-        // OPTIMIZATION: Batch metadata writes into single buffer
-        let mut buffer = Vec::new();
-
-        // Write min_key
-        let min_key = self.min_key.as_ref().map(|k| k.as_ref()).unwrap_or(&[]);
-        buffer.extend_from_slice(&(min_key.len() as u32).to_le_bytes());
-        buffer.extend_from_slice(min_key);
-
-        // Write max_key
-        let max_key = self.max_key.as_ref().map(|k| k.as_ref()).unwrap_or(&[]);
-        buffer.extend_from_slice(&(max_key.len() as u32).to_le_bytes());
-        buffer.extend_from_slice(max_key);
-
-        // Single syscall instead of 4 syscalls
-        self.file.write_all(&buffer)?;
-        self.current_offset += buffer.len() as u64;
-
-        Ok(())
-    }
-
-    fn write_footer(
-        &mut self,
-        top_level_offset: u64,
-        bloom_offset: u64,
-        prefix_bloom_offset: u64,
-        metadata_offset: u64,
-    ) -> Result<()> {
-        let footer_start = self.current_offset;
-
-        self.file.seek(SeekFrom::Start(0))?;
-        let mut checksum = 0u32;
-        let mut buf = vec![0u8; 4096];
-        let mut remaining = footer_start;
-
-        while remaining > 0 {
-            let to_read = remaining.min(4096) as usize;
-            self.file.read_exact(&mut buf[..to_read])?;
-            checksum = crc32c::crc32c_append(checksum, &buf[..to_read]);
-            remaining -= to_read as u64;
-        }
-        self.file.seek(SeekFrom::Start(footer_start))?;
-
-        // OPTIMIZATION: Batch footer writes into single buffer (8 syscalls → 1 syscall)
-        let mut footer_buffer = Vec::with_capacity(56);
-        footer_buffer.extend_from_slice(&self.index_blocks_start.to_le_bytes());
-        footer_buffer.extend_from_slice(&top_level_offset.to_le_bytes());
-        footer_buffer.extend_from_slice(&bloom_offset.to_le_bytes());
-        footer_buffer.extend_from_slice(&prefix_bloom_offset.to_le_bytes());
-        footer_buffer.extend_from_slice(&metadata_offset.to_le_bytes());
-        footer_buffer.extend_from_slice(&checksum.to_le_bytes());
-        footer_buffer.extend_from_slice(&MAGIC.to_le_bytes());
-        footer_buffer.extend_from_slice(&VERSION.to_le_bytes());
-        footer_buffer.extend_from_slice(&0u32.to_le_bytes()); // Padding
-
-        self.file.write_all(&footer_buffer)?;
-
-        Ok(())
-    }
-
-    fn create_header(prefix_len: usize) -> Vec<u8> {
-        let mut header = Vec::with_capacity(32);
-        header.extend_from_slice(&MAGIC.to_le_bytes()); // 4 bytes: magic
-        header.extend_from_slice(&VERSION.to_le_bytes()); // 4 bytes: version
-        // Store prefix_len in reserved field (4 bytes prefix_len + 4 bytes reserved)
-        header.extend_from_slice(&(prefix_len as u32).to_le_bytes());
-        header.extend_from_slice(&0u32.to_le_bytes());
-        header.extend_from_slice(&0u64.to_le_bytes()); // 8 bytes: num_entries (filled in finish())
-        header.extend_from_slice(&0u64.to_le_bytes()); // 8 bytes: max_sequence (filled in finish())
-        header
     }
 }
 
-// ============================================================================
-// BufferedSSTableBuilder - Build SSTable entirely in memory
-// ============================================================================
-
-/// SSTable builder that buffers all data in memory
-/// Enables cloud storage uploads and reduces syscalls for local writes
-pub struct BufferedSSTableBuilder {
-    buffer: BytesMut,
-    data_block: BlockBuilder,
-    index_block: BlockBuilder,
-    top_level_index: Vec<TopLevelIndexEntry>,
-    bloom: BloomFilter,
-    prefix_bloom: BloomFilter,
-    prefix_len: usize,
-    vlog_threshold: Option<usize>,
-    num_entries: u64,
-    current_offset: u64,
-    index_blocks_start: u64,
-    min_key: Option<Bytes>,
-    max_key: Option<Bytes>,
-    max_sequence: u64,
-}
-
-impl BufferedSSTableBuilder {
-    /// Create a new buffered SSTable builder
+impl SSTableBuilder<Cursor<Vec<u8>>> {
+    /// Create a new buffered SSTable builder (in-memory)
     pub fn new() -> Self {
         let header = Self::create_header(DEFAULT_PREFIX_LEN);
         let header_size = header.len() as u64;
-        let mut buffer = BytesMut::with_capacity(64 * 1024); // Start with 64KB
+        
+        // Pre-allocate 64KB
+        let mut buffer = Vec::with_capacity(64 * 1024);
         buffer.extend_from_slice(&header);
+        let mut writer = Cursor::new(buffer);
+        writer.set_position(header_size);
 
         Self {
-            buffer,
+            writer,
             data_block: BlockBuilder::with_capacity(DEFAULT_BLOCK_SIZE),
             index_block: BlockBuilder::with_capacity(DEFAULT_BLOCK_SIZE),
             top_level_index: Vec::new(),
@@ -621,6 +225,35 @@ impl BufferedSSTableBuilder {
         }
     }
 
+    /// Finish building and return the complete SSTable as bytes
+    pub fn finish_to_bytes(self) -> Result<Bytes> {
+        let writer = self.finish_internal()?;
+        Ok(Bytes::from(writer.into_inner()))
+    }
+    
+    /// Finish building and write to a file (helper for tests)
+    pub fn finish_to_file(self, path: impl AsRef<Path>) -> Result<()> {
+        let bytes = self.finish_to_bytes()?;
+        std::fs::write(path, &bytes)?;
+        Ok(())
+    }
+}
+
+impl<W: Read + Write + Seek> SSTableBuilder<W> {
+    /// Create header (static helper)
+    fn create_header(prefix_len: usize) -> Vec<u8> {
+        let mut header = Vec::with_capacity(32);
+        header.extend_from_slice(&MAGIC.to_le_bytes()); // 4 bytes: magic
+        header.extend_from_slice(&VERSION.to_le_bytes()); // 4 bytes: version
+        // Store prefix_len in reserved field (4 bytes prefix_len + 4 bytes reserved)
+        header.extend_from_slice(&(prefix_len as u32).to_le_bytes());
+        header.extend_from_slice(&0u32.to_le_bytes());
+        header.extend_from_slice(&0u64.to_le_bytes()); // 8 bytes: num_entries (filled in finish())
+        header.extend_from_slice(&0u64.to_le_bytes()); // 8 bytes: max_sequence (filled in finish())
+        header
+    }
+
+
     pub fn with_vlog_threshold(mut self, threshold: usize) -> Self {
         self.vlog_threshold = Some(threshold);
         self
@@ -628,12 +261,15 @@ impl BufferedSSTableBuilder {
 
     pub fn with_prefix_len(mut self, len: usize) -> Self {
         self.prefix_len = len;
-        // Rewrite header
+        // Re-create header with correct prefix_len
         let header = Self::create_header(len);
-        self.buffer[0..32].copy_from_slice(&header);
+        let _ = self.writer.seek(SeekFrom::Start(0));
+        let _ = self.writer.write_all(&header);
+        let _ = self.writer.seek(SeekFrom::Start(self.current_offset));
         self
     }
 
+    /// Set the maximum sequence number for this SSTable
     pub fn with_max_sequence(mut self, seq: u64) -> Self {
         self.max_sequence = seq;
         self
@@ -645,6 +281,7 @@ impl BufferedSSTableBuilder {
     }
 
     pub fn add_raw(&mut self, key: Bytes, encoded_value: Bytes) -> Result<()> {
+        // Track min/max keys for range filtering
         if self.min_key.is_none() {
             self.min_key = Some(key.clone());
         }
@@ -658,6 +295,7 @@ impl BufferedSSTableBuilder {
         if !self.data_block.add(&key, &encoded_value) {
             self.flush_data_block()?;
             if !self.data_block.add(&key, &encoded_value) {
+                // Entry too large for default block - create custom-sized block
                 let entry_size = key.len() + encoded_value.len() + 8;
                 let custom_size = (entry_size * 2).max(DEFAULT_BLOCK_SIZE * 2);
                 self.data_block = BlockBuilder::with_capacity(custom_size);
@@ -769,9 +407,7 @@ impl BufferedSSTableBuilder {
         );
         let block_data = old_block.finish();
         let block_size = block_data.len() as u32;
-
-        // Write to buffer instead of file
-        self.buffer.extend_from_slice(&block_data);
+        self.writer.write_all(&block_data)?;
         self.current_offset += block_data.len() as u64;
 
         let mut index_entry = BytesMut::with_capacity(4 + last_key.len() + 8 + 4);
@@ -816,9 +452,7 @@ impl BufferedSSTableBuilder {
         );
         let block_data = old_block.finish();
         let block_size = block_data.len() as u32;
-
-        // Write to buffer instead of file
-        self.buffer.extend_from_slice(&block_data);
+        self.writer.write_all(&block_data)?;
         self.current_offset += block_data.len() as u64;
 
         self.top_level_index.push(TopLevelIndexEntry {
@@ -830,65 +464,51 @@ impl BufferedSSTableBuilder {
         Ok(())
     }
 
-    /// Finish building and return the complete SSTable as bytes
-    /// This is the primary method for cloud storage uploads
-    pub fn finish_to_bytes(mut self) -> Result<Bytes> {
+    pub fn finish_internal(mut self) -> Result<W> {
         self.flush_data_block()?;
         self.flush_index_block()?;
 
         let top_level_offset = self.current_offset;
-        self.write_top_level_index();
+        self.write_top_level_index()?;
 
         let bloom_offset = self.current_offset;
         let bloom_bytes = self.bloom.to_bytes();
-        self.buffer
-            .extend_from_slice(&(bloom_bytes.len() as u64).to_le_bytes());
-        self.buffer.extend_from_slice(&bloom_bytes);
+        self.writer
+            .write_all(&(bloom_bytes.len() as u64).to_le_bytes())?;
+        self.writer.write_all(&bloom_bytes)?;
         self.current_offset += 8 + bloom_bytes.len() as u64;
 
         let prefix_bloom_offset = self.current_offset;
         let prefix_bloom_bytes = self.prefix_bloom.to_bytes();
-        self.buffer
-            .extend_from_slice(&(prefix_bloom_bytes.len() as u64).to_le_bytes());
-        self.buffer.extend_from_slice(&prefix_bloom_bytes);
+        self.writer
+            .write_all(&(prefix_bloom_bytes.len() as u64).to_le_bytes())?;
+        self.writer.write_all(&prefix_bloom_bytes)?;
         self.current_offset += 8 + prefix_bloom_bytes.len() as u64;
 
+        // Write min_key/max_key metadata
         let metadata_offset = self.current_offset;
-        self.write_metadata();
+        self.write_metadata()?;
 
-        // Update num_entries and max_sequence in header (offsets 16 and 24)
+        // Write num_entries and max_sequence to header BEFORE computing footer checksum
+        // This ensures the checksum includes these header fields
         let footer_offset = self.current_offset;
-        self.buffer[16..24].copy_from_slice(&self.num_entries.to_le_bytes());
-        self.buffer[24..32].copy_from_slice(&self.max_sequence.to_le_bytes());
+        self.writer.seek(SeekFrom::Start(16))?; // Skip magic (4) + version (4) + reserved (8)
+        self.writer.write_all(&self.num_entries.to_le_bytes())?; // Offset 16-23
+        self.writer.write_all(&self.max_sequence.to_le_bytes())?; // Offset 24-31
+        self.writer.seek(SeekFrom::Start(footer_offset))?; // Return to footer position
 
         self.write_footer(
             top_level_offset,
             bloom_offset,
             prefix_bloom_offset,
             metadata_offset,
-            footer_offset,
-        );
+        )?;
 
-        Ok(self.buffer.freeze())
+        Ok(self.writer)
     }
 
-    /// Finish building and write to file (for local disk)
-    pub fn finish_to_file(self, path: impl AsRef<Path>) -> Result<()> {
-        let bytes = self.finish_to_bytes()?;
-
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(path)?;
-
-        file.write_all(&bytes)?;
-        file.sync_all()?;
-
-        Ok(())
-    }
-
-    fn write_top_level_index(&mut self) {
+    fn write_top_level_index(&mut self) -> Result<()> {
+        // OPTIMIZATION: Batch all index entries into single buffer to reduce syscalls
         let mut buffer = Vec::new();
         buffer.extend_from_slice(&(self.top_level_index.len() as u32).to_le_bytes());
 
@@ -899,23 +519,32 @@ impl BufferedSSTableBuilder {
             buffer.extend_from_slice(&entry.size.to_le_bytes());
         }
 
-        self.buffer.extend_from_slice(&buffer);
+        // Single syscall instead of N syscalls
+        self.writer.write_all(&buffer)?;
         self.current_offset += buffer.len() as u64;
+
+        Ok(())
     }
 
-    fn write_metadata(&mut self) {
+    fn write_metadata(&mut self) -> Result<()> {
+        // OPTIMIZATION: Batch metadata writes into single buffer
         let mut buffer = Vec::new();
 
+        // Write min_key
         let min_key = self.min_key.as_ref().map(|k| k.as_ref()).unwrap_or(&[]);
         buffer.extend_from_slice(&(min_key.len() as u32).to_le_bytes());
         buffer.extend_from_slice(min_key);
 
+        // Write max_key
         let max_key = self.max_key.as_ref().map(|k| k.as_ref()).unwrap_or(&[]);
         buffer.extend_from_slice(&(max_key.len() as u32).to_le_bytes());
         buffer.extend_from_slice(max_key);
 
-        self.buffer.extend_from_slice(&buffer);
+        // Single syscall instead of 4 syscalls
+        self.writer.write_all(&buffer)?;
         self.current_offset += buffer.len() as u64;
+
+        Ok(())
     }
 
     fn write_footer(
@@ -924,11 +553,23 @@ impl BufferedSSTableBuilder {
         bloom_offset: u64,
         prefix_bloom_offset: u64,
         metadata_offset: u64,
-        footer_offset: u64,
-    ) {
-        // Compute checksum over all data before footer
-        let checksum = crc32c::crc32c(&self.buffer[..footer_offset as usize]);
+    ) -> Result<()> {
+        let footer_start = self.current_offset;
 
+        self.writer.seek(SeekFrom::Start(0))?;
+        let mut checksum = 0u32;
+        let mut buf = vec![0u8; 4096];
+        let mut remaining = footer_start;
+
+        while remaining > 0 {
+            let to_read = remaining.min(4096) as usize;
+            self.writer.read_exact(&mut buf[..to_read])?;
+            checksum = crc32c::crc32c_append(checksum, &buf[..to_read]);
+            remaining -= to_read as u64;
+        }
+        self.writer.seek(SeekFrom::Start(footer_start))?;
+
+        // OPTIMIZATION: Batch footer writes into single buffer (8 syscalls → 1 syscall)
         let mut footer_buffer = Vec::with_capacity(56);
         footer_buffer.extend_from_slice(&self.index_blocks_start.to_le_bytes());
         footer_buffer.extend_from_slice(&top_level_offset.to_le_bytes());
@@ -940,37 +581,13 @@ impl BufferedSSTableBuilder {
         footer_buffer.extend_from_slice(&VERSION.to_le_bytes());
         footer_buffer.extend_from_slice(&0u32.to_le_bytes()); // Padding
 
-        self.buffer.extend_from_slice(&footer_buffer);
-    }
+        self.writer.write_all(&footer_buffer)?;
 
-    fn create_header(prefix_len: usize) -> Vec<u8> {
-        let mut header = Vec::with_capacity(32);
-        header.extend_from_slice(&MAGIC.to_le_bytes());
-        header.extend_from_slice(&VERSION.to_le_bytes());
-        // Store prefix_len in reserved field (4 bytes prefix_len + 4 bytes reserved)
-        header.extend_from_slice(&(prefix_len as u32).to_le_bytes());
-        header.extend_from_slice(&0u32.to_le_bytes());
-        header.extend_from_slice(&0u64.to_le_bytes()); // num_entries (filled later)
-        header.extend_from_slice(&0u64.to_le_bytes()); // max_sequence (filled later)
-        header
-    }
-
-    /// Returns true if no entries have been added
-    pub fn is_empty(&self) -> bool {
-        self.num_entries == 0
-    }
-
-    /// Returns the number of entries added so far
-    pub fn num_entries(&self) -> u64 {
-        self.num_entries
+        Ok(())
     }
 }
 
-impl Default for BufferedSSTableBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+
 
 // ============================================================================
 // SSTable - Read SSTables with lazy loading
@@ -2089,7 +1706,7 @@ mod tests {
         let path = dir.path().join("test.sst");
 
         // Build SSTable with buffered builder
-        let mut builder = BufferedSSTableBuilder::new();
+        let mut builder = SSTableBuilder::new_buffered();
         builder
             .add(Bytes::from("key1"), Bytes::from("value1"))
             .unwrap();
@@ -2126,7 +1743,7 @@ mod tests {
         let path = dir.path().join("test.sst");
 
         // Build SSTable and get bytes
-        let mut builder = BufferedSSTableBuilder::new();
+        let mut builder = SSTableBuilder::new_buffered();
         builder
             .add(Bytes::from("aaa"), Bytes::from("111"))
             .unwrap();
@@ -2148,7 +1765,7 @@ mod tests {
 
     #[test]
     fn test_buffered_builder_empty() {
-        let builder = BufferedSSTableBuilder::new();
+        let builder = SSTableBuilder::new_buffered();
         assert!(builder.is_empty());
         assert_eq!(builder.num_entries(), 0);
 
@@ -2165,7 +1782,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.sst");
 
-        let mut builder = BufferedSSTableBuilder::new();
+        let mut builder = SSTableBuilder::new_buffered();
         builder
             .add(Bytes::from("key1"), Bytes::from("value1"))
             .unwrap();
@@ -2195,7 +1812,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.sst");
 
-        let mut builder = BufferedSSTableBuilder::new().with_max_sequence(12345);
+        let mut builder = SSTableBuilder::new_buffered().with_max_sequence(12345);
         builder
             .add(Bytes::from("key1"), Bytes::from("value1"))
             .unwrap();
@@ -2211,7 +1828,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.sst");
 
-        let mut builder = BufferedSSTableBuilder::new();
+        let mut builder = SSTableBuilder::new_buffered();
 
         // Add 1000 entries to force multiple data blocks
         for i in 0..1000 {
@@ -2249,7 +1866,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.sst");
 
-        let mut builder = BufferedSSTableBuilder::new();
+        let mut builder = SSTableBuilder::new_buffered();
         builder
             .add(Bytes::from("key1"), Bytes::from("value1"))
             .unwrap();
@@ -2269,7 +1886,7 @@ mod tests {
         let path_file = dir.path().join("file.sst");
 
         // Build with buffered builder
-        let mut buffered = BufferedSSTableBuilder::new().with_max_sequence(100);
+        let mut buffered = SSTableBuilder::new_buffered().with_max_sequence(100);
         buffered
             .add(Bytes::from("key1"), Bytes::from("value1"))
             .unwrap();
@@ -2310,7 +1927,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.sst");
 
-        let mut builder = BufferedSSTableBuilder::new();
+        let mut builder = SSTableBuilder::new_buffered();
         let large_value = vec![0xABu8; 100_000]; // 100KB value
 
         builder
