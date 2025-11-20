@@ -9,6 +9,16 @@
 
 ## 🔥 Active Work (Nov 20, 2025)
 
+### Refactoring (SSTableBuilder) ✅ **COMPLETE**
+- [x] Make `SSTableBuilder` generic over `W: Write + Seek`.
+- [x] Implement `SSTableBuilder::new_buffered()` (replaces `BufferedSSTableBuilder`).
+- [x] Update `src/db.rs` to use `SSTableBuilder::new_buffered()`.
+- [x] Update `src/background_workers.rs` to use `SSTableBuilder::new_buffered()`.
+- [x] Update `src/compaction/mod.rs` to use `SSTableBuilder::new_buffered()`.
+- [x] Remove `BufferedSSTableBuilder` type alias.
+- [x] Add `is_empty()` and `num_entries()` helper methods.
+- [x] All 178 tests passing.
+
 ### Cloud Storage Robustness 🔄 **NEXT**
 - [ ] Deepen S3/Object Store integration robustness.
 - [ ] Validate `object_store` integration with stress tests.
@@ -133,6 +143,7 @@
 - [x] **Phase 2**: Benchmark BufferPool vs OS Cache (Result: 1.2% overhead).
 - [x] **Phase 3**: Zero-Copy Access (Block View) - Implemented `BlockData` enum.
 - [x] **Phase 3**: Benchmark Uncompressed Blocks (Result: 30% faster than Compressed).
+- [x] **Phase 3**: Enable Zero-Copy in `load_block` with `BlockData::Borrowed`.
 - [ ] Research "Lipah" (LeanStore successor) / modern buffer management.
 - [ ] Evaluate `qpdb` (Query Processing DB) patterns.
 - [ ] Decide on Pointer Swizzling vs. other optimization.

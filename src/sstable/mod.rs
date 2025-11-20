@@ -53,7 +53,7 @@ pub const FLAG_MERGE: u8 = 0x03;
 /// Default prefix length for prefix bloom filter
 pub const DEFAULT_PREFIX_LEN: usize = 3;
 
-/// Helper: Handle vLog separation logic (shared by both SSTableBuilder and BufferedSSTableBuilder)
+/// Helper: Handle vLog separation logic (shared by SSTableBuilder implementations)
 ///
 /// Returns (encoded_value, flag):
 /// - If value is large (>threshold), appends to vLog and returns (pointer_bytes, FLAG_POINTER)
@@ -152,8 +152,6 @@ pub struct SSTableBuilder<W> {
     max_sequence: u64,
 }
 
-pub type BufferedSSTableBuilder = SSTableBuilder<Cursor<Vec<u8>>>;
-
 impl SSTableBuilder<File> {
     /// Create a new SSTable builder writing directly to a file
     pub fn create(path: impl AsRef<Path>) -> Result<Self> {
@@ -189,7 +187,7 @@ impl SSTableBuilder<File> {
 
     /// Finish building and ensure data is synced to disk
     pub fn finish(self) -> Result<()> {
-        let mut file = self.finish_internal()?;
+        let file = self.finish_internal()?;
         file.sync_all()?;
         Ok(())
     }
@@ -197,7 +195,7 @@ impl SSTableBuilder<File> {
 
 impl SSTableBuilder<Cursor<Vec<u8>>> {
     /// Create a new buffered SSTable builder (in-memory)
-    pub fn new() -> Self {
+    pub fn new_buffered() -> Self {
         let header = Self::create_header(DEFAULT_PREFIX_LEN);
         let header_size = header.len() as u64;
         
@@ -273,6 +271,16 @@ impl<W: Read + Write + Seek> SSTableBuilder<W> {
     pub fn with_max_sequence(mut self, seq: u64) -> Self {
         self.max_sequence = seq;
         self
+    }
+
+    /// Check if the builder is empty (no entries added yet)
+    pub fn is_empty(&self) -> bool {
+        self.num_entries == 0
+    }
+
+    /// Get the number of entries added so far
+    pub fn num_entries(&self) -> u64 {
+        self.num_entries
     }
 
     pub fn add(&mut self, key: Bytes, value: Bytes) -> Result<()> {

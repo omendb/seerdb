@@ -2064,10 +2064,8 @@ impl DB {
             #[cfg(feature = "object-store")]
             {
                 if use_cloud_storage {
-                    // Cloud storage + vLog: use BufferedSSTableBuilder
-                    use crate::sstable::BufferedSSTableBuilder;
-
-                    let mut builder = BufferedSSTableBuilder::new()
+                    // Cloud storage + vLog: use buffered builder
+                    let mut builder = SSTableBuilder::new_buffered()
                         .with_vlog_threshold(threshold)
                         .with_max_sequence(sequence);
 
@@ -2154,13 +2152,11 @@ impl DB {
             // No KV separation - traditional flush
             drop(vlog_guard);
 
-            // Use BufferedSSTableBuilder when cloud storage is enabled (fewer syscalls + upload)
+            // Use buffered builder when cloud storage is enabled (fewer syscalls + upload)
             #[cfg(feature = "object-store")]
             {
                 if self.storage_backend.is_some() {
-                    use crate::sstable::BufferedSSTableBuilder;
-
-                    let mut builder = BufferedSSTableBuilder::new().with_max_sequence(sequence);
+                    let mut builder = SSTableBuilder::new_buffered().with_max_sequence(sequence);
 
                     for (key, entry) in entries {
                         match entry {

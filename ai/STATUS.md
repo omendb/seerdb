@@ -12,18 +12,23 @@
   - Fixed regression where prefix bloom filters were not being populated during flush.
   - Optimization `may_contain_prefix` is now active in `db.rs`.
   - Tests passing (including `test_prefix_with_sstables`).
-- **LeanStore**: Phase 2 In Progress (Memory Reuse implemented).
+- **LeanStore**: Phase 2 & 3 Completed (Memory Reuse + Zero-Copy).
 - **BufferPool Benchmark**: ✅ Completed. `BufferPool` (49.5µs) is nearly identical to OS Cache (48.9µs).
 - **Phase 3 (Zero-Copy)**: ✅ Implemented `BlockData::Borrowed` and `FrameRef` integration.
   - Eliminated redundant copy for compressed blocks (read directly from Frame).
   - Enabled true Zero-Copy for uncompressed blocks (Block views Frame directly).
   - **Benchmark (Fedora)**: Uncompressed (250ns) vs Compressed (354ns) - **30% faster** block parsing + Zero Allocations.
   - Fixed concurrency bug in `get_page` (pinning race).
+- **SSTableBuilder Refactor**: ✅ Completed.
+  - Made `SSTableBuilder` generic over `W: Write + Seek`.
+  - Introduced `SSTableBuilder::new_buffered()` to replace `BufferedSSTableBuilder`.
+  - Removed `BufferedSSTableBuilder` type alias and updated all call sites.
+  - All 178 tests passing.
 - **Code Quality**: ✅ Enforced safety rules (removed `unwrap()` on locks/critical paths).
 - **Prefix Bloom Filters**: ✅ Implemented, Enabled, and Benchmarked (30k scans/sec vs 22 ops/sec baseline).
 
-**Next Focus**: 
-- **BufferPool**: Benchmark vs OS Cache.
+**Next Focus**:
+- **BufferPool**: Benchmark vs OS Cache (Verify Linux results).
 - **S3/Cloud Storage**: Robustness and performance.
 - **Lazy Leveling** (Future): Evaluate for better read performance.
 
@@ -55,6 +60,7 @@
   - Compressed (Random Data): 354ns (Alloc + Decompress + Parse)
   - Uncompressed (Zero-Copy): 250ns (Parse only)
   - **Result**: 30% reduction in CPU time + 0 Allocations.
+- ✅ **Refactoring**: Started consolidating `SSTableBuilder` (generic writer).
 
 ### Group Commit Validation
 - ✅ 9.22x improvement at 10 threads validates research.

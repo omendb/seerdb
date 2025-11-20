@@ -11,8 +11,6 @@ use crate::memtable::{Entry, Memtable};
 use crate::metrics::MetricsCollector;
 use crate::sstable::SSTableBuilder;
 #[cfg(feature = "object-store")]
-use crate::sstable::BufferedSSTableBuilder;
-#[cfg(feature = "object-store")]
 use crate::storage::Storage;
 use crate::vlog::VLog;
 use crate::wal::WAL;
@@ -183,8 +181,8 @@ pub(crate) fn run_background_flush_partitioned(
         if use_cloud_storage {
              #[cfg(feature = "object-store")]
              {
-                // Cloud storage + vLog: use BufferedSSTableBuilder
-                let mut builder = BufferedSSTableBuilder::new()
+                // Cloud storage + vLog: use buffered builder
+                let mut builder = SSTableBuilder::new_buffered()
                     .with_vlog_threshold(threshold)
                     .with_max_sequence(flush_sequence);
 
@@ -252,8 +250,8 @@ pub(crate) fn run_background_flush_partitioned(
         if use_cloud_storage {
             #[cfg(feature = "object-store")]
             {
-                // Use BufferedSSTableBuilder when cloud storage is enabled
-                let mut builder = BufferedSSTableBuilder::new().with_max_sequence(flush_sequence);
+                // Use buffered builder when cloud storage is enabled
+                let mut builder = SSTableBuilder::new_buffered().with_max_sequence(flush_sequence);
 
                 for (key, entry) in &all_entries {
                     match entry {

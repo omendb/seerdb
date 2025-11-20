@@ -4,7 +4,7 @@
 pub mod merge;
 pub mod filter;
 
-use crate::sstable::{BufferedSSTableBuilder, SSTable, SSTableBuilder};
+use crate::sstable::{SSTable, SSTableBuilder};
 use bytes::Bytes;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -112,7 +112,7 @@ pub fn compact_sstables_buffered(
     let merge = MergeIterator::new(sstables, compaction_level, filter)?;
 
     // Build new SSTable in memory
-    let mut builder = BufferedSSTableBuilder::new();
+    let mut builder = SSTableBuilder::new_buffered();
 
     for result in merge {
         let (key, value) = result?;
