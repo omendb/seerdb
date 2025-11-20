@@ -127,3 +127,31 @@ fn cleanup_old_deletions(...) {
 **References**:
 - Bug analysis from Task subagent (identified TWO separate bugs)
 - User feedback: "dont temporary fix, correctly fix it"
+
+---
+
+## Compaction Audit & Prefix Filters (Nov 19, 2025)
+
+**Context**:
+- Current implementation uses **Tiered Compaction** (overlapping SSTables at all levels).
+- Write throughput is high (878K/sec), but **Read Amplification** is severe for range queries.
+- `compaction_stress_test` confirms writes are stable, but reads scale poorly with data size.
+
+**Options Considered**:
+1. **Switch to Leveled**: Lower Read Amp, but 10x higher Write Amp.
+2. **Prefix Bloom Filters**: Keep Tiered (write optimized) but speed up prefix scans (graph traversal).
+
+**Decision**: **Prefix Bloom Filters**.
+
+**Rationale**:
+- `omendb` is graph-heavy. Most reads are `prefix_scan(node_id)`.
+- Tiered compaction is ideal for high ingest rates.
+- Prefix Bloom Filters solve the Read Amp problem for the *specific* workload of graph traversal, without paying the Write Amp cost of Leveled compaction.
+- "RocksDB but with 2020s research" -> Bloom Filters are cheaper than rearranging data on disk.
+
+**Implementation**:
+- SSTable Format v2: Add `prefix_bloom_offset` to footer.
+- `SSTableBuilder`: Compute and write prefix bloom filters.
+- `DB::scan_range`: Check `may_contain_prefix` before creating iterators.
+
+**Status**: Implemented & Enabled.

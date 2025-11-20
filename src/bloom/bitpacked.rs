@@ -143,9 +143,6 @@ impl BloomFilter {
         })
     }
 
-    pub fn debug_hash<T: Hash + ?Sized>(&self, item: &T, seed: usize) -> u64 {
-        self.hash(item, seed)
-    }
 
     /// Compute hash for an item with a given seed
     fn hash<T: Hash + ?Sized>(&self, item: &T, seed: usize) -> u64 {

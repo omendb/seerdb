@@ -1,20 +1,22 @@
 # TODO - seerdb
 
-**Last Updated**: November 18, 2025
+**Last Updated**: November 20, 2025
 **Current Focus**: Performance Optimization (WAL Pipelining)
 **Version**: 0.0.1-alpha
-**Status**: 174 tests passing, 81.54% coverage
+**Status**: 178 tests passing, 81.54% coverage
 
 ---
 
 ## 🔥 Active Work (Nov 20, 2025)
 
-### Prefix Bloom Filters 🔄 **ACTIVE**
-- [ ] Update `SSTableBuilder` to generate Prefix Bloom Filters.
-- [ ] Update `SSTable` to check Prefix Bloom Filter in `scan_range`.
-- [ ] Benchmark `prefix()` scan performance (expected 10x+ speedup).
+### Prefix Bloom Filters ✅ **COMPLETE**
+- [x] Update `SSTableBuilder` to generate Prefix Bloom Filters.
+- [x] Update `SSTable` to check Prefix Bloom Filter in `scan_range`.
+- [x] **Optimization Enabled**: `may_contain_prefix` is now active in `db.rs`.
+- [x] Fixed critical bug in `add_with_vlog` skipping filter population.
+- [x] Verified with `cargo test` (178 passed).
 
-### Compaction Optimization ✅ **AUDITED**
+### Compaction Optimization ✅ **COMPLETE**
 - [x] Audit `compaction/mod.rs` for random write scaling issues.
   - **Result**: SeerDB uses Tiered Compaction, which handles random writes well.
   - **Action**: Skip Fjall optimizations (Leveled-specific). Focus on Prefix Bloom Filters.
@@ -68,6 +70,7 @@
 
 ### Next Steps
 - [ ] **Benchmarks**: Verify SOTA claims on Linux.
+- [ ] **Refactoring**: Address `unwrap`/`expect` usage (enforced by clippy).
 
 ---
 

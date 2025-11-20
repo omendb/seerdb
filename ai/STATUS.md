@@ -8,19 +8,20 @@
   - Verified with `compaction_stress_test` (stable throughput).
   - Decision: Stick with Tiered for now, prioritize **Prefix Bloom Filters** to mitigate Read Amp.
 - **Merge Operator**: ✅ Merged to `main`.
-- **Prefix Bloom Filters**: ✅ Implemented format v2 and persistence.
-  - Optimization disabled temporarily due to test regressions (correctness first).
-  - Foundation laid for high-performance graph traversals.
+- **Prefix Bloom Filters**: ✅ Implemented and **ENABLED**.
+  - Fixed regression where prefix bloom filters were not being populated during flush.
+  - Optimization `may_contain_prefix` is now active in `db.rs`.
+  - Tests passing (including `test_prefix_with_sstables`).
 - **LeanStore**: Phase 1 Integrated.
-- **Code Quality**: ✅ Addressed static analysis warnings and duplication.
+- **Code Quality**: ✅ Addressed static analysis warnings and added `clippy.toml` to deny `unwrap`/`expect`.
 
 **Next Focus**: 
-- **Enable Prefix Bloom Optimization**: Debug and enable for read path.
+- **Benchmarks**: Measure impact of Prefix Bloom Filters on range scan performance.
 - **Lazy Leveling** (Future): Evaluate for better read performance.
 
 **Success Metrics**:
 - ✅ **Performance**: 878K writes/sec (2.47x RocksDB), 2.2M reads/sec (2.07x RocksDB).
-- ✅ **Quality**: 81.54% coverage, ASAN clean, 174 tests passing.
+- ✅ **Quality**: 81.54% coverage, ASAN clean, 178 tests passing.
 - ✅ **Features**: Core LSM + Snapshots + Range Iterators + Filters + BufferPool (Phase 1).
 - ⚠️ **Missing**: Reverse iteration, MVCC.
 
@@ -34,6 +35,10 @@
 ---
 
 ## Recent Learnings
+
+### Prefix Bloom Filters
+- ✅ Fixed critical bug where `add_with_vlog` (used by flush) was bypassing prefix bloom filter insertion.
+- ✅ Switched to `twox-hash` (XxHash64) for stable persistence of Bloom Filters.
 
 ### LeanStore Phase 1
 - ✅ Integrated `BufferPool` into `SSTable` (intercepting `load_block`).
@@ -53,9 +58,8 @@
 
 ## Next Priorities
 
-1. **WAL Pipelining**: ✅ Implemented (Leader/Follower Group Commit).
-2. **Benchmarks**: Verify SOTA claims on Linux.
-3. **LeanStore**: Buffer management research.
+1. **Benchmarks**: Verify SOTA claims on Linux.
+2. **LeanStore**: Buffer management research.
 
 ---
 
