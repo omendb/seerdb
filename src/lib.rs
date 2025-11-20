@@ -136,7 +136,7 @@ pub mod wal;
 // Re-export main types for convenient access
 pub use alex::AlexTree;
 pub use batch::Batch;
-pub use bloom::{BloomFilter, LearnedBloomFilter};
+pub use bloom::{BloomFilter, BlockedBloomFilter, LearnedBloomFilter};
 pub use db::{DBError, DBOptions, DB};
 #[cfg(feature = "object-store")]
 pub use db::StorageConfig;

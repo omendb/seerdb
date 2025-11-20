@@ -132,6 +132,10 @@ harness = false
 name = "zero_copy_bench"
 harness = false
 
+[[bench]]
+name = "bloom_blocked"
+harness = false
+
 # Examples that require optional features
 [[example]]
 name = "baseline_benchmark"
