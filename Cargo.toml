@@ -136,6 +136,10 @@ harness = false
 name = "bloom_blocked"
 harness = false
 
+[[bench]]
+name = "simd_search_comparison"
+harness = false
+
 # Examples that require optional features
 [[example]]
 name = "baseline_benchmark"

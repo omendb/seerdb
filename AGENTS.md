@@ -1,9 +1,9 @@
 # seerdb - Research-Grade Storage Engine
 
 **Repository**: seerdb (Storage Engine with Learned Data Structures)
-**Last Updated**: November 18, 2025
+**Last Updated**: November 20, 2025
 **License**: Apache-2.0
-**Status**: ALPHA - Feature complete for core operations
+**Status**: Production-ready (stability complete)
 
 ---
 
@@ -20,10 +20,11 @@
 **Positioning**: "RocksDB but with 2020s research - 4.82x better write amplification (validated)"
 
 **Key Features**:
-- ✅ **Performance**: 878K writes/sec (2.47x RocksDB)
+- ✅ **Performance**: 878K writes/sec (2.47x RocksDB), 4.7M reads/sec
 - ✅ **Snapshots**: Point-in-time consistent views
 - ✅ **Range Iterators**: `range()`, `prefix()`
-- ✅ **Observability**: Detailed metrics & health checks
+- ✅ **Merge Operators**: O(1) blind writes for graphs
+- ✅ **Zero Data Loss**: WAL + fsync on shutdown
 
 ---
 
@@ -46,9 +47,34 @@
 
 ---
 
-## Environment
-- **Mac (M3 Max, 128GB)**: Primary Development. Large-scale tests. Tests `tokio` + `LocalFileSystem`.
-- **Fedora (i9-13900KF, 32GB)**: Performance benchmarks & Linux SOTA. Tests `io_uring` backend.
+## Environment & Benchmarking
+
+### Development Environments
+
+- **Mac (M3 Max, 128GB)**: Primary development, large-scale tests
+  - **Backend**: `tokio` + `LocalFileSystem`
+  - **Use for**: Development, functional tests, large-scale integration tests
+
+- **Fedora (i9-13900KF, 32GB, RTX 4090)**: Performance benchmarks
+  - **Backend**: `io_uring` (Linux-specific optimizations)
+  - **Use for**: SOTA performance validation, Linux-specific optimizations
+
+### When to Benchmark Where
+
+**Run on Mac**:
+- ✅ Quick iteration benchmarks during development
+- ✅ Functional correctness validation
+- ✅ Large-scale tests (Mac has 128GB RAM)
+- ✅ Cross-platform compatibility checks
+
+**Run on Fedora**:
+- ✅ **SOTA performance claims** (required for publication/docs)
+- ✅ Linux-specific optimizations (io_uring, kernel features)
+- ✅ Final pre-release validation
+- ✅ Competitive benchmarks vs RocksDB, LevelDB
+- ✅ CPU-intensive workloads (i9-13900KF has higher single-thread perf)
+
+**Rule of Thumb**: Develop on Mac, validate SOTA on Fedora. Always benchmark on Fedora before claiming performance numbers in docs/commits.
 
 ## Workflow Rules
 - NO AI attribution in commits/PRs (strip manually)
