@@ -115,6 +115,8 @@ pub struct BlockBuilder {
     last_key: Bytes,
     /// Maximum block size
     max_size: usize,
+    /// Whether to compress the block (default: true)
+    compression_enabled: bool,
 }
 
 impl BlockBuilder {
@@ -131,7 +133,13 @@ impl BlockBuilder {
             counter: 0,
             last_key: Bytes::new(),
             max_size,
+            compression_enabled: true,
         }
+    }
+
+    /// Enable or disable compression
+    pub fn set_compression(&mut self, enabled: bool) {
+        self.compression_enabled = enabled;
     }
 
     /// Add an entry to the block
@@ -211,24 +219,37 @@ impl BlockBuilder {
         // Save uncompressed size before compression
         let uncompressed_size = self.buffer.len() as u32;
 
-        // Compress block data with LZ4 (includes size prefix)
-        let uncompressed_data = self.buffer.to_vec();
-        let compressed_data = compress_prepend_size(&uncompressed_data);
+        if self.compression_enabled {
+            // Compress block data with LZ4 (includes size prefix)
+            let uncompressed_data = self.buffer.to_vec();
+            let compressed_data = compress_prepend_size(&uncompressed_data);
 
-        // Create final block with metadata
-        let mut final_buffer = BytesMut::with_capacity(compressed_data.len() + 13);
-        final_buffer.extend_from_slice(&compressed_data);
+            // Create final block with metadata
+            let mut final_buffer = BytesMut::with_capacity(compressed_data.len() + 13);
+            final_buffer.extend_from_slice(&compressed_data);
 
-        // Write metadata
-        final_buffer.extend_from_slice(&uncompressed_size.to_le_bytes()); // 4 bytes
-        final_buffer.extend_from_slice(&[1u8]); // compressed flag: 1 = compressed
-        final_buffer.extend_from_slice(&restart_offset.to_le_bytes()); // 4 bytes
+            // Write metadata
+            final_buffer.extend_from_slice(&uncompressed_size.to_le_bytes()); // 4 bytes
+            final_buffer.extend_from_slice(&[1u8]); // compressed flag: 1 = compressed
+            final_buffer.extend_from_slice(&restart_offset.to_le_bytes()); // 4 bytes
 
-        // Calculate checksum over compressed data + metadata (hardware-accelerated CRC32C)
-        let checksum = crc32c::crc32c(&final_buffer);
-        final_buffer.extend_from_slice(&checksum.to_le_bytes()); // 4 bytes
+            // Calculate checksum over compressed data + metadata (hardware-accelerated CRC32C)
+            let checksum = crc32c::crc32c(&final_buffer);
+            final_buffer.extend_from_slice(&checksum.to_le_bytes()); // 4 bytes
 
-        final_buffer.freeze()
+            final_buffer.freeze()
+        } else {
+            // Uncompressed: append metadata directly to buffer
+            self.buffer.extend_from_slice(&uncompressed_size.to_le_bytes()); // 4 bytes
+            self.buffer.extend_from_slice(&[0u8]); // compressed flag: 0 = uncompressed
+            self.buffer.extend_from_slice(&restart_offset.to_le_bytes()); // 4 bytes
+
+            // Calculate checksum (over data + metadata so far)
+            let checksum = crc32c::crc32c(&self.buffer);
+            self.buffer.extend_from_slice(&checksum.to_le_bytes()); // 4 bytes
+
+            self.buffer.freeze()
+        }
     }
 
     /// Reset the builder for reuse
@@ -364,14 +385,16 @@ impl Block {
                 });
             }
 
-            if restart_offset >= raw_data.len() {
+            if restart_offset >= raw_data.len() - 13 {
                 return Err(BlockError::InvalidFormat);
             }
 
             // Count restarts
+            // For uncompressed blocks, we must stop before the footer (last 13 bytes)
+            let content_limit = raw_data.len() - 13;
             let mut offset = restart_offset;
             let mut num_restarts = 0;
-            while offset < raw_data.len() {
+            while offset < content_limit {
                 if let Some(_offset_val) = read_varint(raw_data, &mut offset) {
                     num_restarts += 1;
                     let pos_after = offset;
