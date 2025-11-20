@@ -16,7 +16,7 @@ The current `BufferPool` implementation (Phase 1) is functional but inefficient 
     *   Handle variable sized blocks:
         *   If `size <= frame_size`: Use existing buffer.
         *   If `size > frame_size`: Reallocate (grow) the buffer.
-*   **Status**: 🔄 Planned
+*   **Status**: ✅ Completed
 
 ### Phase 3: Zero-Copy Access
 *   **Problem**: `load_block` copies data from `Frame` to `Bytes` (for `Block`).
@@ -25,7 +25,7 @@ The current `BufferPool` implementation (Phase 1) is functional but inefficient 
     *   `Block` becomes a view into the `BufferPool`.
     *   Eliminates `block_cache` (or makes it a lightweight "Swip" cache).
     *   See `ai/design/PHASE_3_ZERO_COPY.md` for detailed design.
-*   **Status**: 🔮 Researching (Design Drafted)
+*   **Status**: ✅ Completed (Benchmark: 30% faster for uncompressed blocks)
 
 ### Phase 4: Pointer Swizzling (True LeanStore)
 *   **Concept**: Replace `PageId` lookups with direct pointers (`&Frame`) in the index.
@@ -65,5 +65,7 @@ The current `BufferPool` implementation (Phase 1) is functional but inefficient 
 
 ## Immediate Action Items
 
-1.  **Refactor `BufferPool`**: Enable memory reuse (avoid `Vec` churn).
-2.  **Benchmark**: Measure impact of `BufferPool` on read latency vs OS cache.
+1.  **Refactor `BufferPool`**: ✅ Enable memory reuse (avoid `Vec` churn).
+2.  **Benchmark**: ✅ Measure impact of `BufferPool` on read latency vs OS cache.
+3.  **Zero-Copy**: ✅ Implement `BlockData` and benchmark.
+4.  **Next**: Investigate Pointer Swizzling (Phase 4).

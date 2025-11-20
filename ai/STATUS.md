@@ -17,6 +17,7 @@
 - **Phase 3 (Zero-Copy)**: ✅ Implemented `BlockData::Borrowed` and `FrameRef` integration.
   - Eliminated redundant copy for compressed blocks (read directly from Frame).
   - Enabled true Zero-Copy for uncompressed blocks (Block views Frame directly).
+  - **Benchmark (Fedora)**: Uncompressed (250ns) vs Compressed (354ns) - **30% faster** block parsing + Zero Allocations.
   - Fixed concurrency bug in `get_page` (pinning race).
 - **Code Quality**: ✅ Enforced safety rules (removed `unwrap()` on locks/critical paths).
 - **Prefix Bloom Filters**: ✅ Implemented, Enabled, and Benchmarked (30k scans/sec vs 22 ops/sec baseline).
@@ -47,10 +48,13 @@
 - ✅ Fixed critical bug where `add_with_vlog` (used by flush) was bypassing prefix bloom filter insertion.
 - ✅ Switched to `twox-hash` (XxHash64) for stable persistence of Bloom Filters.
 
-### LeanStore Phase 2 (Active)
-- ✅ **Memory Reuse**: Fixed `BufferPool::get_page` to avoid allocating new `Vec`s on every load.
-- ✅ Integrated into `SSTable::load_block` to read directly into frame memory.
-- ✅ Validated with `tests/buffer_pool_tests.rs`.
+### LeanStore Phase 3 (Zero-Copy)
+- ✅ **Zero-Copy Infrastructure**: Implemented `BlockData::Borrowed` to view BufferPool frames directly.
+- ✅ **Optional Compression**: `BlockBuilder` now supports uncompressed blocks.
+- ✅ **Benchmark Results (Fedora)**:
+  - Compressed (Random Data): 354ns (Alloc + Decompress + Parse)
+  - Uncompressed (Zero-Copy): 250ns (Parse only)
+  - **Result**: 30% reduction in CPU time + 0 Allocations.
 
 ### Group Commit Validation
 - ✅ 9.22x improvement at 10 threads validates research.

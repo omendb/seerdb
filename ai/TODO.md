@@ -122,7 +122,7 @@
 - [x] Expected: 3-5x concurrent write throughput.
 - **Actual**: 30x scaling improvement (50 threads).
 
-### LeanStore (Buffer Management) 🔄 **PHASE 2 IN PROGRESS**
+### LeanStore (Buffer Management) ✅ **PHASE 3 COMPLETE**
 - [x] Design `BufferPool` architecture (ai/design/LEANSTORE_INTEGRATION.md).
 - [x] Implement `BufferPool` prototype (src/buffer/).
 - [x] Implement `Clock` eviction policy.
@@ -132,7 +132,7 @@
 - [x] **Phase 2**: Refactor `get_page` for memory reuse (avoid `Vec` churn).
 - [x] **Phase 2**: Benchmark BufferPool vs OS Cache (Result: 1.2% overhead).
 - [x] **Phase 3**: Zero-Copy Access (Block View) - Implemented `BlockData` enum.
-- [ ] **Phase 3.5**: Benchmark Uncompressed Blocks (True Zero-Copy).
+- [x] **Phase 3**: Benchmark Uncompressed Blocks (Result: 30% faster than Compressed).
 - [ ] Research "Lipah" (LeanStore successor) / modern buffer management.
 - [ ] Evaluate `qpdb` (Query Processing DB) patterns.
 - [ ] Decide on Pointer Swizzling vs. other optimization.
