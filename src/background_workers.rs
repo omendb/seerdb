@@ -50,6 +50,24 @@ pub(crate) enum FlushTask {
     Shutdown,
 }
 
+/// Messages sent to the background WAL writer thread
+#[derive(Debug)]
+pub(crate) enum WALMessage {
+    /// Write a record to the WAL (fire-and-forget, no acknowledgement)
+    /// Used for SyncPolicy::None where durability is not required
+    Record(Record),
+    /// Write a record to the WAL and acknowledge when durable
+    /// The sender will block until the WAL is flushed to disk (group commit)
+    /// Used for SyncPolicy::SyncData/SyncAll where durability is required
+    WriteAndAck {
+        record: Record,
+        ack_tx: CrossbeamSender<std::result::Result<(), crate::wal::WALError>>,
+    },
+    /// Barrier: flush all pending records and send acknowledgement
+    /// Used by flush() to ensure WAL is fully written before clearing
+    Barrier(CrossbeamSender<()>),
+}
+
 
 /// Static compaction method for background worker thread
 /// This is called from the worker thread without &self
