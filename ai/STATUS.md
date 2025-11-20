@@ -27,10 +27,18 @@
 - **Code Quality**: ✅ Enforced safety rules (removed `unwrap()` on locks/critical paths).
 - **Prefix Bloom Filters**: ✅ Implemented, Enabled, and Benchmarked (30k scans/sec vs 22 ops/sec baseline).
 
+**Recent Work (Nov 20, 2025 - Part 2)**:
+- **Cloud Storage Robustness**: ✅ Completed.
+  - Implemented comprehensive retry logic for all operations (read_block, write, delete, list).
+  - Added RetryConfig with exponential backoff + jitter (configurable: default, none, aggressive).
+  - Implemented error classification (transient vs permanent errors).
+  - Created 7 stress tests: 100+ parallel writes, 200+ parallel reads, mixed workload.
+  - All 186 tests passing, no regressions.
+  - Fixed Entry::Merge handling in cloud storage flush paths.
+
 **Next Focus**:
-1. **Cloud Storage Robustness** - Deepen S3/Object Store integration, stress tests.
-2. **BufferPool Benchmarks** (Fedora) - Verify vs OS Cache on Linux with io_uring.
-3. **SOTA Benchmarks** (Fedora) - Verify performance claims on Linux.
+1. **BufferPool Benchmarks** (Fedora) - Verify vs OS Cache on Linux with io_uring.
+2. **SOTA Benchmarks** (Fedora) - Verify performance claims on Linux.
 
 **Environment Notes**:
 - **Mac (M3 Max, 128GB)**: Large-scale tests, development, tokio + LocalFileSystem.
