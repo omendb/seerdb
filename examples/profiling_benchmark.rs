@@ -81,8 +81,8 @@ fn main() {
     println!("  Mixed throughput: {:.0} ops/sec", operations as f64 / duration.as_secs_f64());
     println!();
 
-    // Phase 4: Prefix scans (hot path for omendb)
-    println!("Phase 4: Prefix scans (omendb workload)");
+    // Phase 4: Prefix scans (hot path for graph traversal)
+    println!("Phase 4: Prefix scans (graph workload)");
     let num_scans = 1000;
     let start = Instant::now();
 

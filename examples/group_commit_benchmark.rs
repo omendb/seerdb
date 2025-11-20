@@ -16,7 +16,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
 
-const WRITES_PER_THREAD: usize = 10_000;
+const WRITES_PER_THREAD: usize = 1_000;
 
 fn main() {
     println!("=== Group Commit Performance Benchmark ===\n");

@@ -66,12 +66,13 @@ sled = { version = "0.34", optional = true }
 fjall = { version = "2.3", optional = true }
 anyhow = "1.0.100"
 tikv-jemallocator = "0.6.1"
-varint-simd = { version = "0.4.1", optional = true }
 
 # Optional cloud storage support (S3, GCS, Azure)
 object_store = { version = "0.11", optional = true, default-features = false, features = ["aws", "gcp", "azure"] }
 url = { version = "2.5", optional = true }
 futures = { version = "0.3", optional = true }
+parking_lot = "0.12.5"
+dashmap = "6.1.0"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -95,7 +96,6 @@ object-store = ["dep:object_store", "dep:url", "dep:futures"]
 # Enable baseline benchmark dependencies (RocksDB, sled, fjall)
 # Only needed when running comparative benchmarks, not for regular tests
 baseline-benchmarks = ["dep:rocksdb", "dep:sled", "dep:fjall"]
-varint-simd = ["dep:varint-simd"]
 # Enable dhat heap profiling (disables jemalloc to avoid conflicts)
 dhat-heap = []
 # Note: io_uring support can be added later as opt-in (security concerns)

@@ -1,7 +1,7 @@
 // Real Workload Comparisons - Phase 4 Profiling
 //
 // Compares seerdb vs RocksDB vs fjall on three realistic workloads:
-// 1. omendb pattern (HNSW graph: prefix scans)
+// 1. Graph pattern (HNSW graph: prefix scans)
 // 2. Time series (sequential timestamps: range queries)
 // 3. Random KV (random access: point lookups)
 //
@@ -19,9 +19,9 @@ use seerdb::{DBOptions, DB};
 
 const WARMUP_OPS: usize = 1_000;
 
-// === Workload 1: omendb Pattern (HNSW graph edges) ===
+// === Workload 1: Graph Pattern (HNSW graph edges) ===
 
-fn benchmark_omendb_seerdb() -> (Duration, Duration, f64) {
+fn benchmark_graph_seerdb() -> (Duration, Duration, f64) {
     let dir = tempdir().unwrap();
     let options = DBOptions {
         data_dir: dir.path().to_path_buf(),
@@ -72,7 +72,7 @@ fn benchmark_omendb_seerdb() -> (Duration, Duration, f64) {
 }
 
 #[cfg(feature = "baseline-benchmarks")]
-fn benchmark_omendb_rocksdb() -> (Duration, Duration) {
+fn benchmark_graph_rocksdb() -> (Duration, Duration) {
     let dir = tempdir().unwrap();
     let mut opts = RocksDBOptions::default();
     opts.create_if_missing(true);
@@ -116,7 +116,7 @@ fn benchmark_omendb_rocksdb() -> (Duration, Duration) {
 }
 
 #[cfg(feature = "baseline-benchmarks")]
-fn benchmark_omendb_fjall() -> (Duration, Duration) {
+fn benchmark_graph_fjall() -> (Duration, Duration) {
     let dir = tempdir().unwrap();
     let config = FjallConfig::new(dir.path());
     let keyspace = config.open().unwrap();
@@ -466,22 +466,22 @@ fn benchmark_random_fjall() -> (Duration, Duration) {
 fn main() {
     println!("=== Real Workload Comparisons - Phase 4 Profiling ===\n");
     println!("Workloads:");
-    println!("1. omendb (HNSW): 10K nodes × 32 edges = 320K entries, 100 prefix scans");
+    println!("1. Graph (HNSW): 10K nodes × 32 edges = 320K entries, 100 prefix scans");
     println!("2. Time series: 1M entries, 100 range queries (10K entries each)");
     println!("3. Random KV: 500K entries, 100K point lookups\n");
 
-    // Workload 1: omendb pattern
-    println!("=== Workload 1: omendb Pattern (HNSW Graph) ===\n");
+    // Workload 1: Graph pattern
+    println!("=== Workload 1: Graph Pattern (HNSW Graph) ===\n");
 
     print!("seerdb... ");
-    let (seer_write, seer_read, seer_cache) = benchmark_omendb_seerdb();
+    let (seer_write, seer_read, seer_cache) = benchmark_graph_seerdb();
     println!("Write: {:.2}s, Read: {:.2}s, Cache: {:.2}%",
              seer_write.as_secs_f64(), seer_read.as_secs_f64(), seer_cache * 100.0);
 
     #[cfg(feature = "baseline-benchmarks")]
     {
         print!("RocksDB... ");
-        let (rocks_write, rocks_read) = benchmark_omendb_rocksdb();
+        let (rocks_write, rocks_read) = benchmark_graph_rocksdb();
         println!("Write: {:.2}s, Read: {:.2}s",
                  rocks_write.as_secs_f64(), rocks_read.as_secs_f64());
 

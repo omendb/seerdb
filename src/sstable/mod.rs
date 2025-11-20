@@ -5,6 +5,7 @@ pub mod block;
 
 use crate::alex::AlexTree;
 use crate::bloom::BloomFilter;
+use crate::buffer::{BufferPool, PageId};
 use crate::vlog::{VLog, ValuePointer};
 use block::{Block, BlockBuilder, BlockError, DEFAULT_BLOCK_SIZE};
 use bytes::{Bytes, BytesMut};
@@ -888,6 +889,9 @@ pub struct SSTable {
     /// Optional global block cache shared across all SSTables
     /// Key: (path_hash, block_offset), Value: raw block data
     global_cache: Option<Arc<Cache<(u64, u64), Bytes>>>,
+    /// Optional LeanStore BufferPool (L2 Raw Page Cache)
+    /// Replaces global_cache/OS cache usage when enabled
+    buffer_pool: Option<Arc<BufferPool>>,
     /// Hash of this SSTable's path for global cache key
     path_hash: u64,
 }
@@ -903,7 +907,7 @@ impl SSTable {
     }
 
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        Self::open_with_global_cache(path, None)
+        Self::open_with_options(path, None, None)
     }
 
     /// Open SSTable with optional global block cache
@@ -913,6 +917,21 @@ impl SSTable {
     pub fn open_with_global_cache(
         path: impl AsRef<Path>,
         global_cache: Option<Arc<Cache<(u64, u64), Bytes>>>,
+    ) -> Result<Self> {
+        Self::open_with_options(path, global_cache, None)
+    }
+
+    pub fn open_with_buffer_pool(
+        path: impl AsRef<Path>,
+        buffer_pool: Option<Arc<BufferPool>>,
+    ) -> Result<Self> {
+        Self::open_with_options(path, None, buffer_pool)
+    }
+
+    fn open_with_options(
+        path: impl AsRef<Path>,
+        global_cache: Option<Arc<Cache<(u64, u64), Bytes>>>,
+        buffer_pool: Option<Arc<BufferPool>>,
     ) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         let path_hash = Self::hash_path(&path);
@@ -963,6 +982,7 @@ impl SSTable {
             cache_hits: Arc::new(AtomicU64::new(0)),
             cache_misses: Arc::new(AtomicU64::new(0)),
             global_cache,
+            buffer_pool,
             path_hash,
         })
     }
@@ -1187,15 +1207,37 @@ impl SSTable {
         // Cache miss - record and load from disk
         self.cache_misses.fetch_add(1, Ordering::Relaxed);
 
-        // Slow path: Reuse file handle for zero-overhead reads
-        // File was opened in SSTable::open() and kept alive for our lifetime
-        let mut file = self.file.lock().unwrap();
-        file.seek(SeekFrom::Start(offset))?;
+        let block_data = if let Some(ref pool) = self.buffer_pool {
+            // LeanStore Path: Use BufferPool for L2 caching
+            let page_id = PageId {
+                file_id: self.path_hash,
+                offset,
+            };
+            
+            let frame_ref = pool.get_page(page_id, || {
+                // Load from disk via shared file handle
+                let mut file = self.file.lock().unwrap();
+                file.seek(SeekFrom::Start(offset))?;
+                
+                // Note: We assume block size fits in frame for now (or handle appropriately)
+                let mut buf = vec![0u8; size as usize];
+                file.read_exact(&mut buf)?;
+                Ok(buf)
+            }).map_err(|e: std::io::Error| SSTableError::Io(e))?;
 
-        let mut buf = vec![0u8; size as usize];
-        file.read_exact(&mut buf)?;
-        let block_data = Bytes::from(buf);
-        drop(file); // Release lock before CRC verification
+            // Access data from frame
+            let guard = frame_ref.get_data();
+            Bytes::copy_from_slice(&guard) // Copy out to bytes (Parsing overhead paid here)
+        } else {
+            // Standard Path: Direct File IO (OS Cache)
+            let mut file = self.file.lock().unwrap();
+            file.seek(SeekFrom::Start(offset))?;
+
+            let mut buf = vec![0u8; size as usize];
+            file.read_exact(&mut buf)?;
+            drop(file); // Release lock before CRC verification
+            Bytes::from(buf)
+        };
 
         // Parse and verify block (CRC check happens here)
         let block = Block::new(block_data.clone())?;

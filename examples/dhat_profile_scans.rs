@@ -93,7 +93,7 @@ fn main() {
     println!("Keys scanned: {}, throughput: {:.0} keys/sec\n",
              range_keys, range_keys as f64 / range_scan_start.elapsed().as_secs_f64());
 
-    // Phase 3: Prefix scans (omendb-like pattern)
+    // Phase 3: Prefix scans (graph-like pattern)
     println!("Phase 3: Prefix scans (5000 small prefix scans)");
     let prefix_scan_start = Instant::now();
     let mut prefix_keys = 0usize;

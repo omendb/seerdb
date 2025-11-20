@@ -24,10 +24,10 @@
 
 use bytes::{Bytes, BytesMut};
 use lz4_flex::{compress_prepend_size, decompress_size_prepended};
-use std::io::{self, Cursor};
+use std::io::{self};
 use std::sync::{Arc, OnceLock};
 use thiserror::Error;
-use varint_rs::{VarintReader, VarintWriter};
+use varint_rs::VarintWriter;
 
 /// Helper to write varint to BytesMut
 fn write_varint(buf: &mut BytesMut, value: u64) {
@@ -36,14 +36,46 @@ fn write_varint(buf: &mut BytesMut, value: u64) {
     buf.extend_from_slice(&temp);
 }
 
+/// Helper to read varint from slice, advancing offset
+/// Uses SIMD acceleration if enabled
+#[inline(always)]
+fn read_varint(data: &[u8], offset: &mut usize) -> Option<u64> {
+    #[cfg(feature = "simd")]
+    {
+        // Use our internal SIMD implementation (portable std::simd)
+        // This will handle both long and short buffers efficiently
+        if let Some((val, len)) = crate::simd::decode_varint(&data[*offset..]) {
+            *offset += len;
+            return Some(val);
+        }
+        return None;
+    }
+    #[cfg(not(feature = "simd"))]
+    {
+        let mut slice = &data[*offset..];
+        match slice.read_u64_varint() {
+            Ok(val) => {
+                let read = data.len() - *offset - slice.len();
+                *offset += read;
+                Some(val)
+            }
+            Err(_) => None,
+        }
+    }
+}
+
 // Use SIMD-accelerated comparison when available, fallback to standard otherwise
 #[cfg(feature = "simd")]
 use crate::simd;
 
 #[cfg(not(feature = "simd"))]
 mod simd {
+    use std::cmp::Ordering;
     pub fn shared_prefix_len(a: &[u8], b: &[u8]) -> usize {
         a.iter().zip(b.iter()).take_while(|(x, y)| x == y).count()
+    }
+    pub fn compare_keys(a: &[u8], b: &[u8]) -> Ordering {
+        a.cmp(b)
     }
 }
 
@@ -286,36 +318,31 @@ impl Block {
 
         // Read num_restarts (varint at end of restart points)
         // Parse restart points until we can read num_restarts
-        let mut cursor = Cursor::new(&data[restart_offset..]);
+        let mut offset = restart_offset;
         let mut num_restarts = 0;
 
         // Simplified approach: try to read varints until we reach the end
-        loop {
-            if let Ok(_offset) = cursor.read_u64_varint() {
+        while offset < data.len() {
+            if let Some(_offset_val) = read_varint(&data, &mut offset) {
                 num_restarts += 1;
 
                 // Check if next varint could be num_restarts
                 // (it should match the count of restart points we've seen)
-                let pos_after = cursor.position();
-                if let Ok(count) = cursor.read_u64_varint() {
+                let pos_after = offset;
+                if let Some(count) = read_varint(&data, &mut offset) {
                     if count as usize == num_restarts {
                         // Found num_restarts!
                         num_restarts = count as usize;
                         break;
                     } else {
                         // Not num_restarts, rewind and continue
-                        cursor.set_position(pos_after);
+                        offset = pos_after;
                     }
                 } else {
                     break;
                 }
             } else {
                 // Couldn't read varint, we've likely reached the end
-                break;
-            }
-
-            // Safety check: don't read past the end
-            if cursor.position() as usize >= data.len() - restart_offset {
                 break;
             }
         }
@@ -345,8 +372,8 @@ impl Block {
             .decompressed_cache
             .get_or_init(|| self.decompress_all_entries());
 
-        // Binary search for exact match
-        match entries.binary_search_by(|(k, _)| k.as_ref().cmp(key)) {
+        // Binary search for exact match using SIMD comparison
+        match entries.binary_search_by(|(k, _)| simd::compare_keys(k.as_ref(), key)) {
             Ok(idx) => Some(entries[idx].clone()),
             Err(_) => None,
         }
@@ -359,8 +386,8 @@ impl Block {
             .decompressed_cache
             .get_or_init(|| self.decompress_all_entries());
 
-        // Binary search for first entry where entry_key >= key
-        let idx = entries.partition_point(|(k, _)| k.as_ref() < key);
+        // Binary search for first entry where entry_key >= key using SIMD
+        let idx = entries.partition_point(|(k, _)| simd::compare_keys(k.as_ref(), key).is_lt());
 
         if idx < entries.len() {
             Some(entries[idx].clone())
@@ -377,29 +404,30 @@ impl Block {
     /// Decompress all entries in the block (called once per block)
     fn decompress_all_entries(&self) -> Vec<(Bytes, Bytes)> {
         let mut entries = Vec::with_capacity(self.num_entries_approx());
-        let mut cursor = Cursor::new(&self.data[..self.restart_offset]);
+        // Access data slice directly for SIMD compatibility
+        let data = &self.data[..self.restart_offset];
+        let mut offset = 0;
         let mut last_key = Bytes::new();
 
-        while (cursor.position() as usize) < self.restart_offset {
+        while offset < data.len() {
             // Read prefix length (varint)
-            let prefix_len = match cursor.read_u64_varint() {
-                Ok(len) => len as usize,
-                Err(_) => break,
+            let prefix_len = match read_varint(data, &mut offset) {
+                Some(len) => len as usize,
+                None => break,
             };
 
             // Read suffix length (varint)
-            let suffix_len = match cursor.read_u64_varint() {
-                Ok(len) => len as usize,
-                Err(_) => break,
+            let suffix_len = match read_varint(data, &mut offset) {
+                Some(len) => len as usize,
+                None => break,
             };
 
             // Read suffix
-            let offset = cursor.position() as usize;
-            if offset + suffix_len > self.restart_offset {
+            if offset + suffix_len > data.len() {
                 break;
             }
             let suffix = self.data.slice(offset..offset + suffix_len);
-            cursor.set_position((offset + suffix_len) as u64);
+            offset += suffix_len;
 
             // Reconstruct full key from prefix + suffix
             let key = if prefix_len == 0 {
@@ -417,18 +445,17 @@ impl Block {
             };
 
             // Read value length (varint)
-            let value_len = match cursor.read_u64_varint() {
-                Ok(len) => len as usize,
-                Err(_) => break,
+            let value_len = match read_varint(data, &mut offset) {
+                Some(len) => len as usize,
+                None => break,
             };
 
             // Read value
-            let offset = cursor.position() as usize;
-            if offset + value_len > self.restart_offset {
+            if offset + value_len > data.len() {
                 break;
             }
             let value = self.data.slice(offset..offset + value_len);
-            cursor.set_position((offset + value_len) as u64);
+            offset += value_len;
 
             // Update last_key for next entry
             last_key = key.clone();

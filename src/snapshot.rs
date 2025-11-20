@@ -156,7 +156,7 @@ impl Snapshot {
 
         // Search SSTables at snapshot time (from L0 to LN)
         // SSTables handle VLog references internally via with_vlog()
-        let vlog_path = self.vlog_path.as_ref().map(|p| p.join("values.vlog"));
+        let vlog_path = self.vlog_path.as_ref();
 
         for (_level_idx, level_sstables) in self.sstable_paths.iter().enumerate() {
             // IMPORTANT: Check all levels in reverse order (newest first)
@@ -299,7 +299,7 @@ impl std::fmt::Debug for Snapshot {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    
 
     // Integration tests will be added in db.rs test module
     // since Snapshot requires a full DB instance

@@ -6,9 +6,14 @@
 // - Compaction worker: Merges SSTables to reduce read amplification
 
 use crate::compaction::LSMTree;
+use crate::compaction::CompactionFilter;
 use crate::memtable::{Entry, Memtable};
 use crate::metrics::MetricsCollector;
 use crate::sstable::SSTableBuilder;
+#[cfg(feature = "object-store")]
+use crate::sstable::BufferedSSTableBuilder;
+#[cfg(feature = "object-store")]
+use crate::storage::Storage;
 use crate::vlog::VLog;
 use crate::wal::{Record, WAL};
 use arc_swap::ArcSwap;
@@ -78,6 +83,9 @@ pub(crate) fn run_compaction(
     metrics: &Arc<MetricsCollector>,
     max_flushed_seq: &Arc<AtomicU64>,
     pending_deletions: &Arc<Mutex<Vec<(PathBuf, std::time::Instant)>>>,
+    filter: &Option<Arc<dyn CompactionFilter>>,
+    #[cfg(feature = "object-store")]
+    storage_backend: &Option<Arc<dyn Storage>>,
 ) -> Result<()> {
     use crate::db::DB;
 
@@ -96,7 +104,8 @@ pub(crate) fn run_compaction(
             metrics,
             max_flushed_seq,
             pending_deletions,
-            &None, // No cloud storage for background worker
+            filter,
+            storage_backend,
         )
     }
 
@@ -111,6 +120,7 @@ pub(crate) fn run_compaction(
             metrics,
             max_flushed_seq,
             pending_deletions,
+            filter,
         )
     }
 }
@@ -134,6 +144,9 @@ pub(crate) fn run_background_flush_partitioned(
     vlog_threshold: Option<usize>,
     flush_mutex: &Arc<Mutex<()>>,
     max_flushed_seq: &Arc<AtomicU64>,
+    compaction_tx: &Option<Sender<CompactionTask>>,
+    #[cfg(feature = "object-store")]
+    storage_backend: &Option<Arc<dyn Storage>>,
 ) -> Result<()> {
     // Serialize all flushes to prevent concurrent SSTable builds
     let _flush_lock = flush_mutex.lock().expect("Flush mutex poisoned");
@@ -174,46 +187,130 @@ pub(crate) fn run_background_flush_partitioned(
     }
     all_entries.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
 
+    // Check if we're using cloud storage (feature-gated)
+    #[cfg(feature = "object-store")]
+    let use_cloud_storage = storage_backend.is_some();
+    #[cfg(not(feature = "object-store"))]
+    let use_cloud_storage = false;
+
     // Build SSTable with optional vLog support
     let mut vlog_guard = vlog.lock().expect("vLog mutex poisoned");
 
     if let (Some(threshold), Some(ref mut vlog_ref)) = (vlog_threshold, vlog_guard.as_mut()) {
         // KV separation enabled - use vLog for large values
-        let mut builder = SSTableBuilder::create(&sstable_path)?
-            .with_vlog_threshold(threshold)
-            .with_max_sequence(flush_sequence);
+        
+        if use_cloud_storage {
+             #[cfg(feature = "object-store")]
+             {
+                // Cloud storage + vLog: use BufferedSSTableBuilder
+                let mut builder = BufferedSSTableBuilder::new()
+                    .with_vlog_threshold(threshold)
+                    .with_max_sequence(flush_sequence);
 
-        for (key, entry) in &all_entries {
-            match entry {
-                Entry::Value(value) => {
-                    builder.add_with_vlog(key.clone(), value.clone(), vlog_ref)?;
+                for (key, entry) in &all_entries {
+                    match entry {
+                        Entry::Value(value) => {
+                            builder.add_with_vlog(key.clone(), value.clone(), vlog_ref)?;
+                        }
+                        Entry::Tombstone => {
+                            builder.add_tombstone(key.clone())?;
+                        }
+                    }
                 }
-                Entry::Tombstone => {
-                    builder.add_tombstone(key.clone())?;
+
+                // ALWAYS sync vLog after flush
+                vlog_ref.sync()?;
+
+                // Build SSTable in memory
+                let bytes = builder.finish_to_bytes()?;
+
+                // Write to local disk (single syscall)
+                std::fs::write(&sstable_path, &bytes)?;
+
+                // Upload to cloud storage
+                if let Some(ref backend) = storage_backend {
+                    backend.write_sstable(&sstable_path, &bytes)?;
+                    info!(
+                        path = ?sstable_path,
+                        size_bytes = bytes.len(),
+                        "SSTable with vLog uploaded to cloud storage (background flush)"
+                    );
+                }
+             }
+        } else {
+            // No cloud storage + vLog: use traditional SSTableBuilder
+            let mut builder = SSTableBuilder::create(&sstable_path)?
+                .with_vlog_threshold(threshold)
+                .with_max_sequence(flush_sequence);
+
+            for (key, entry) in &all_entries {
+                match entry {
+                    Entry::Value(value) => {
+                        builder.add_with_vlog(key.clone(), value.clone(), vlog_ref)?;
+                    }
+                    Entry::Tombstone => {
+                        builder.add_tombstone(key.clone())?;
+                    }
                 }
             }
+
+            builder.finish()?;
+
+            // Sync vLog after flush
+            vlog_ref.sync()?;
         }
-
-        builder.finish()?;
-
-        // Sync vLog after flush
-        vlog_ref.sync()?;
     } else {
         // No KV separation - traditional flush
         drop(vlog_guard);
 
-        let mut builder = SSTableBuilder::create(&sstable_path)?.with_max_sequence(flush_sequence);
-        for (key, entry) in &all_entries {
-            match entry {
-                Entry::Value(value) => {
-                    builder.add(key.clone(), value.clone())?;
+        if use_cloud_storage {
+            #[cfg(feature = "object-store")]
+            {
+                // Use BufferedSSTableBuilder when cloud storage is enabled
+                let mut builder = BufferedSSTableBuilder::new().with_max_sequence(flush_sequence);
+
+                for (key, entry) in &all_entries {
+                    match entry {
+                        Entry::Value(value) => {
+                            builder.add(key.clone(), value.clone())?;
+                        }
+                        Entry::Tombstone => {
+                            builder.add_tombstone(key.clone())?;
+                        }
+                    }
                 }
-                Entry::Tombstone => {
-                    builder.add_tombstone(key.clone())?;
+
+                // Build SSTable in memory
+                let bytes = builder.finish_to_bytes()?;
+
+                // Write to local disk (single syscall)
+                std::fs::write(&sstable_path, &bytes)?;
+
+                // Upload to cloud storage
+                if let Some(ref backend) = storage_backend {
+                    backend.write_sstable(&sstable_path, &bytes)?;
+                    info!(
+                        path = ?sstable_path,
+                        size_bytes = bytes.len(),
+                        "SSTable uploaded to cloud storage (background flush)"
+                    );
                 }
             }
+        } else {
+             // No cloud storage - use traditional SSTableBuilder
+            let mut builder = SSTableBuilder::create(&sstable_path)?.with_max_sequence(flush_sequence);
+            for (key, entry) in &all_entries {
+                match entry {
+                    Entry::Value(value) => {
+                        builder.add(key.clone(), value.clone())?;
+                    }
+                    Entry::Tombstone => {
+                        builder.add_tombstone(key.clone())?;
+                    }
+                }
+            }
+            builder.finish()?;
         }
-        builder.finish()?;
     }
     // Arc automatically dropped (lock-free, no explicit drop needed!)
 
@@ -261,6 +358,15 @@ pub(crate) fn run_background_flush_partitioned(
     // Record flush metric
     metrics.record_flush();
 
+    // Check if compaction is needed (LOCK-FREE!)
+    if let Some(level_num) = lsm.load().needs_compaction() {
+        info!(level = level_num, "Compaction triggered by background flush");
+        if let Some(tx) = compaction_tx {
+            // Background compaction: send signal (non-blocking)
+            let _ = tx.send(CompactionTask::CompactLevel(level_num));
+        }
+    }
+
     Ok(())
 }
 
@@ -277,6 +383,9 @@ pub(crate) fn spawn_compaction_worker(
     max_flushed_seq: Arc<AtomicU64>,
     compaction_healthy: Arc<AtomicBool>,
     pending_deletions: Arc<Mutex<Vec<(PathBuf, Instant)>>>,
+    filter: Option<Arc<dyn CompactionFilter>>,
+    #[cfg(feature = "object-store")]
+    storage_backend: Option<Arc<dyn Storage>>,
 ) -> (Option<Sender<CompactionTask>>, Option<JoinHandle<()>>) {
     if !enabled {
         return (None, None);
@@ -294,7 +403,8 @@ pub(crate) fn spawn_compaction_worker(
                     match task {
                         CompactionTask::CompactLevel(level_num) => {
                             // Perform compaction
-                            if let Err(e) = run_compaction(
+                            #[cfg(feature = "object-store")]
+                            let res = run_compaction(
                                 &lsm,
                                 &lsm_mutex,
                                 &sstable_counter,
@@ -303,7 +413,24 @@ pub(crate) fn spawn_compaction_worker(
                                 &metrics,
                                 &max_flushed_seq,
                                 &pending_deletions,
-                            ) {
+                                &filter,
+                                &storage_backend,
+                            );
+                            
+                            #[cfg(not(feature = "object-store"))]
+                            let res = run_compaction(
+                                &lsm,
+                                &lsm_mutex,
+                                &sstable_counter,
+                                &data_dir,
+                                level_num,
+                                &metrics,
+                                &max_flushed_seq,
+                                &pending_deletions,
+                                &filter,
+                            );
+
+                            if let Err(e) = res {
                                 error!(error = %e, level = level_num, "Background compaction failed");
                             }
                         }
@@ -345,6 +472,9 @@ pub(crate) fn spawn_flush_worker(
     flush_mutex: Arc<Mutex<()>>,
     max_flushed_seq: Arc<AtomicU64>,
     flush_healthy: Arc<AtomicBool>,
+    compaction_tx: Option<Sender<CompactionTask>>,
+    #[cfg(feature = "object-store")]
+    storage_backend: Option<Arc<dyn Storage>>,
 ) -> (Option<Sender<FlushTask>>, Option<JoinHandle<()>>) {
     if !enabled {
         return (None, None);
@@ -362,7 +492,8 @@ pub(crate) fn spawn_flush_worker(
                     match task {
                         FlushTask::Flush => {
                             // Perform background flush (now with partitioned memtables)
-                            if let Err(e) = run_background_flush_partitioned(
+                            #[cfg(feature = "object-store")]
+                            let res = run_background_flush_partitioned(
                                 &memtables,
                                 &immutable_memtables,
                                 &wal,
@@ -376,7 +507,29 @@ pub(crate) fn spawn_flush_worker(
                                 vlog_threshold,
                                 &flush_mutex,
                                 &max_flushed_seq,
-                            ) {
+                                &compaction_tx,
+                                &storage_backend,
+                            );
+
+                            #[cfg(not(feature = "object-store"))]
+                            let res = run_background_flush_partitioned(
+                                &memtables,
+                                &immutable_memtables,
+                                &wal,
+                                &lsm,
+                                &lsm_mutex,
+                                &vlog,
+                                &sstable_counter,
+                                &data_dir,
+                                &metrics,
+                                memtable_capacity,
+                                vlog_threshold,
+                                &flush_mutex,
+                                &max_flushed_seq,
+                                &compaction_tx,
+                            );
+
+                            if let Err(e) = res {
                                 error!(error = %e, "Background flush failed");
                             }
                         }

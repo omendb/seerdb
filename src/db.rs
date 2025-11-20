@@ -1,19 +1,19 @@
 // Main database interface
 // Integrates WAL, Memtable, SSTable, Compaction, and VLog
 
-pub(crate) use crate::background_workers::WALMessage;
 use crate::background_workers::{CompactionTask, FlushTask};
+use crate::buffer::{BufferPool, BufferPoolOptions};
 use crate::compaction::{compact_sstables, LSMTree};
 use crate::health::{HealthCheck, HealthStatus};
 use crate::memtable::Memtable;
 use crate::metrics::{DBStats, MetricsCollector};
 use crate::range::RangeIterator;
+use crate::snapshot::Snapshot;
 use crate::sstable::SSTable;
 use crate::vlog::VLog;
-use crate::wal::{Record, SyncPolicy, WAL};
+use crate::wal::{Record, SyncPolicy, WAL, PipelinedWAL};
 use arc_swap::ArcSwap;
 use bytes::Bytes;
-use crossbeam_channel::{bounded, Sender as CrossbeamSender};
 use foldhash::fast::FixedState;
 use quick_cache::sync::Cache;
 use std::hash::BuildHasher;
@@ -358,121 +358,19 @@ pub struct DBOptions {
     /// writes can complete even if disk space runs low.
     pub min_disk_space_bytes: Option<u64>,
 
-    /// Global block cache capacity (number of blocks)
-    ///
-    /// Caches SSTable data blocks across all SSTables for faster reads.
-    /// Each block is typically 4KB, so 16,384 blocks = ~64MB.
-    ///
-    /// Default: `16_384` (64MB with 4KB blocks)
-    ///
-    /// Recommended:
-    /// - Memory-constrained: 4,096 (16MB)
-    /// - Default: 16,384 (64MB)
-    /// - Large workloads: 65,536 (256MB)
-    /// - omendb (graph workloads): 65,536+ (frequent prefix scans)
-    ///
-    /// **Impact**: 10-20x improvement for disk-heavy workloads like prefix scans.
-    /// Hot blocks stay in memory, avoiding repeated disk I/O.
+    pub max_open_files: Option<usize>,
+    /// Capacity of the block cache (L1 Parsed Cache)
     pub block_cache_capacity: usize,
-
-    /// Cloud storage backend configuration (optional)
-    ///
-    /// When enabled, SSTables are stored in cloud object storage (S3, GCS, Azure).
-    /// WAL and VLog remain on local disk for performance.
-    ///
-    /// Default: `None` (local disk only)
-    ///
-    /// Requires: `--features object-store`
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// use seerdb::{DBOptions, StorageConfig};
-    ///
-    /// // Store SSTables in S3
-    /// let opts = DBOptions {
-    ///     storage_config: Some(StorageConfig::S3 {
-    ///         bucket: "my-seerdb-data".to_string(),
-    ///         region: "us-west-2".to_string(),
-    ///         endpoint: None, // Use AWS default
-    ///         prefix: "production/".to_string(),
-    ///     }),
-    ///     ..Default::default()
-    /// };
-    /// ```
+    /// Capacity of the LeanStore BufferPool (L2 Raw Page Cache) in bytes
+    /// If None, BufferPool is disabled (default)
+    pub buffer_pool_capacity: Option<usize>,
     #[cfg(feature = "object-store")]
     pub storage_config: Option<StorageConfig>,
-
-    /// Group commit delay in microseconds
-    ///
-    /// Waits this long before fsyncing WAL to collect concurrent writes into a single batch.
-    /// This dramatically improves write throughput (2-10x typical) by reducing fsync overhead,
-    /// while preserving full durability guarantees.
-    ///
-    /// **How it works**:
-    /// 1. First writer triggers a delay timer
-    /// 2. Additional concurrent writes join the same batch during delay
-    /// 3. Single fsync at end flushes all writes together
-    /// 4. All writers wake up and return success
-    ///
-    /// **Trade-off**: Small latency increase (delay) for massive throughput gain (fewer fsyncs).
-    ///
-    /// Default: `0` (disabled - fsync immediately, no batching)
-    ///
-    /// **Tuning guide**:
-    /// - **Rule of thumb**: Set to ~50% of average fsync time
-    /// - **NVME**: 50-100 μs
-    /// - **SSD**: 100-500 μs
-    /// - **HDD**: 5000-10000 μs
-    /// - **Cloud (EBS/PD)**: 200-1000 μs
-    ///
-    /// **How to measure**:
-    /// ```bash
-    /// # Measure your disk's average fsync time
-    /// cargo build --release --example stress_test
-    /// # Run benchmark with fsync enabled, observe avg fsync time
-    /// # Set group_commit_delay_us to ~50% of that value
-    /// ```
-    ///
-    /// **When to use**:
-    /// - ✅ High-throughput transactional workloads (concurrent writes)
-    /// - ✅ Cannot afford to lose committed transactions (durability required)
-    /// - ❌ Single-threaded writes (no benefit)
-    /// - ❌ Can tolerate data loss (use `SyncPolicy::None` instead - faster)
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use seerdb::DBOptions;
-    ///
-    /// // Enable group commit for SSD
-    /// let opts = DBOptions {
-    ///     group_commit_delay_us: 200,  // 200μs delay
-    ///     group_commit_max_batch_size: 1000,
-    ///     ..Default::default()
-    /// };
-    /// ```
-    ///
-    /// **Performance expectations** (from PostgreSQL & RocksDB benchmarks):
-    /// - 2-3x improvement typical (SSD)
-    /// - 5-10x improvement possible (HDD or high concurrency)
-    /// - Reduces fsync calls by 40-90%
     pub group_commit_delay_us: u64,
-
-    /// Maximum batch size for group commit
-    ///
-    /// Forces fsync when this many writes are batched, even if delay hasn't elapsed.
-    /// Prevents unbounded memory usage and latency.
-    ///
-    /// Default: `1000`
-    ///
-    /// Recommended:
-    /// - Low memory: 100-500
-    /// - Default: 1000
-    /// - High throughput: 2000-5000
-    ///
-    /// **Trade-off**: Larger batches = better throughput but more memory & latency.
     pub group_commit_max_batch_size: usize,
+    pub l0_slowdown_writes_trigger: usize,
+    pub l0_stop_writes_trigger: usize,
+    pub compaction_filter: Option<Arc<dyn crate::compaction::CompactionFilter>>,
 }
 
 /// Cloud storage backend configuration
@@ -535,6 +433,7 @@ impl Default for DBOptions {
         Self {
             data_dir: PathBuf::from("./seerdb_data"),
             memtable_capacity: 256 * 1024 * 1024, // 256MB (16MB per partition with 16-way partitioning)
+            max_open_files: None,
             wal_sync_policy: SyncPolicy::SyncData,
             base_level_size: 10 * 1024 * 1024, // 10MB
             size_ratio: 10,
@@ -550,6 +449,10 @@ impl Default for DBOptions {
             storage_config: None, // Local disk only by default
             group_commit_delay_us: 0,      // Disabled by default (fsync immediately)
             group_commit_max_batch_size: 1000,
+            l0_slowdown_writes_trigger: 20, // Start slowing down at 20 L0 files
+            l0_stop_writes_trigger: 36,     // Stop writes at 36 L0 files
+            compaction_filter: None,
+            buffer_pool_capacity: None, // Disabled by default (use quick_cache)
         }
     }
 }
@@ -653,10 +556,6 @@ pub struct DB {
     flush_tx: Option<Sender<FlushTask>>,
     /// Background flush worker thread
     flush_worker: Option<JoinHandle<()>>,
-    /// Channel for lock-free WAL writes (pub(crate) for batch API access)
-    pub(crate) wal_tx: CrossbeamSender<WALMessage>,
-    /// Background WAL writer thread
-    wal_worker: Option<JoinHandle<()>>,
     /// Flush mutex to serialize flush operations and prevent concurrent flush races
     flush_mutex: Arc<Mutex<()>>,
     /// LSM mutex to serialize LSM tree updates and prevent concurrent update races
@@ -680,8 +579,6 @@ pub struct DB {
     max_flushed_seq: Arc<AtomicU64>,
     /// Global sequence number counter (increments on every write)
     next_seq: Arc<AtomicU64>,
-    /// Health status of background WAL writer thread (true = healthy, false = panicked)
-    wal_healthy: Arc<AtomicBool>,
     /// Health status of background flush worker thread (true = healthy, false = panicked)
     #[allow(dead_code)] // Reserved for future health monitoring API
     flush_healthy: Arc<AtomicBool>,
@@ -701,6 +598,13 @@ pub struct DB {
     /// Key: (sstable_path_hash, block_offset), Value: Block data (raw bytes)
     /// Using path hash to avoid PathBuf cloning overhead
     global_block_cache: Arc<Cache<(u64, u64), Bytes>>,
+    /// Optional LeanStore BufferPool (L2 Raw Page Cache)
+    /// If enabled, this replaces file read paths with buffer managed paths.
+    buffer_pool: Option<Arc<BufferPool>>,
+    /// Optional compaction filter
+    compaction_filter: Option<Arc<dyn crate::compaction::CompactionFilter>>,
+    /// Pipelined WAL for high-concurrency writes (Group Commit with Leader/Follower)
+    pub(crate) pipelined_wal: PipelinedWAL,
     /// Cloud storage backend (only available with --features object-store)
     /// When Some, SSTables are written to cloud storage (S3/GCS/Azure)
     /// WAL always remains on local disk for durability
@@ -886,56 +790,25 @@ impl DB {
         let next_seq = Arc::new(AtomicU64::new(1));
 
         // Initialize background thread health tracking
-        let wal_healthy = Arc::new(AtomicBool::new(true));
+        // wal_healthy removed - using PipelinedWAL which runs on client threads
         let flush_healthy = Arc::new(AtomicBool::new(true));
         let compaction_healthy = Arc::new(AtomicBool::new(true));
 
         // Initialize pending deletions queue (for Bug #7b fix)
         let pending_deletions = Arc::new(Mutex::new(Vec::new()));
 
-        // Start background compaction worker if enabled
-        let (compaction_tx, compaction_worker) = crate::background_workers::spawn_compaction_worker(
-            options.background_compaction,
-            Arc::clone(&lsm),
-            Arc::clone(&lsm_mutex),
-            Arc::clone(&sstable_counter),
-            options.data_dir.clone(),
-            Arc::clone(&metrics),
-            Arc::clone(&max_flushed_seq),
-            Arc::clone(&compaction_healthy),
-            Arc::clone(&pending_deletions),
-        );
-
-        // Start background flush worker if enabled
-        let (flush_tx, flush_worker) = crate::background_workers::spawn_flush_worker(
-            options.background_flush,
-            Arc::clone(&memtables),
-            Arc::clone(&immutable_memtables),
-            Arc::clone(&wal),
-            Arc::clone(&lsm),
-            Arc::clone(&lsm_mutex),
-            Arc::clone(&vlog),
-            Arc::clone(&sstable_counter),
-            options.data_dir.clone(),
-            Arc::clone(&metrics),
-            options.memtable_capacity,
-            options.vlog_threshold,
-            Arc::clone(&flush_mutex),
-            Arc::clone(&max_flushed_seq),
-            Arc::clone(&flush_healthy),
-        );
-
-        // Start background WAL writer (always enabled for lock-free writes)
-        // Convert group_commit_delay_us to Duration
-        let group_commit_delay =
-            std::time::Duration::from_micros(options.group_commit_delay_us);
-
-        let (wal_tx, wal_worker) = crate::background_workers::spawn_wal_writer(
-            Arc::clone(&wal),
-            Arc::clone(&wal_healthy),
-            group_commit_delay,
-            options.group_commit_max_batch_size,
-        );
+        let compaction_filter = options.compaction_filter.clone();
+        
+        // Initialize BufferPool if capacity is set
+        let buffer_pool = options.buffer_pool_capacity.map(|capacity| {
+            let pool_opts = BufferPoolOptions {
+                capacity_bytes: capacity,
+                // Default 16KB frame for now. 
+                // In future, we should match SSTable block size or use multi-size pool.
+                frame_size: 16 * 1024, 
+            };
+            BufferPool::new(pool_opts)
+        });
 
         // Create cloud storage backend if configured (feature-gated)
         #[cfg(feature = "object-store")]
@@ -985,6 +858,97 @@ impl DB {
             }
         };
 
+        // Start background compaction worker if enabled
+        #[cfg(feature = "object-store")]
+        let (compaction_tx, compaction_worker) = crate::background_workers::spawn_compaction_worker(
+            options.background_compaction,
+            Arc::clone(&lsm),
+            Arc::clone(&lsm_mutex),
+            Arc::clone(&sstable_counter),
+            options.data_dir.clone(),
+            Arc::clone(&metrics),
+            Arc::clone(&max_flushed_seq),
+            Arc::clone(&compaction_healthy),
+            Arc::clone(&pending_deletions),
+            compaction_filter.clone(),
+            storage_backend.clone(),
+        );
+
+        #[cfg(not(feature = "object-store"))]
+        let (compaction_tx, compaction_worker) = crate::background_workers::spawn_compaction_worker(
+            options.background_compaction,
+            Arc::clone(&lsm),
+            Arc::clone(&lsm_mutex),
+            Arc::clone(&sstable_counter),
+            options.data_dir.clone(),
+            Arc::clone(&metrics),
+            Arc::clone(&max_flushed_seq),
+            Arc::clone(&compaction_healthy),
+            Arc::clone(&pending_deletions),
+            compaction_filter.clone(),
+        );
+
+        // Start background flush worker if enabled
+        #[cfg(feature = "object-store")]
+        let (flush_tx, flush_worker) = crate::background_workers::spawn_flush_worker(
+            options.background_flush,
+            Arc::clone(&memtables),
+            Arc::clone(&immutable_memtables),
+            Arc::clone(&wal),
+            Arc::clone(&lsm),
+            Arc::clone(&lsm_mutex),
+            Arc::clone(&vlog),
+            Arc::clone(&sstable_counter),
+            options.data_dir.clone(),
+            Arc::clone(&metrics),
+            options.memtable_capacity,
+            options.vlog_threshold,
+            Arc::clone(&flush_mutex),
+            Arc::clone(&max_flushed_seq),
+            Arc::clone(&flush_healthy),
+            compaction_tx.clone(),
+            storage_backend.clone(),
+        );
+
+        #[cfg(not(feature = "object-store"))]
+        let (flush_tx, flush_worker) = crate::background_workers::spawn_flush_worker(
+            options.background_flush,
+            Arc::clone(&memtables),
+            Arc::clone(&immutable_memtables),
+            Arc::clone(&wal),
+            Arc::clone(&lsm),
+            Arc::clone(&lsm_mutex),
+            Arc::clone(&vlog),
+            Arc::clone(&sstable_counter),
+            options.data_dir.clone(),
+            Arc::clone(&metrics),
+            options.memtable_capacity,
+            options.vlog_threshold,
+            Arc::clone(&flush_mutex),
+            Arc::clone(&max_flushed_seq),
+            Arc::clone(&flush_healthy),
+            compaction_tx.clone(),
+        );
+
+        // Start background WAL writer (always enabled for lock-free writes)
+        // Convert group_commit_delay_us to Duration
+        // let group_commit_delay =
+        //    std::time::Duration::from_micros(options.group_commit_delay_us);
+
+        // Configure PipelinedWAL delay based on SyncPolicy
+        // For SyncPolicy::None, we skip delay for max throughput (fire-and-forget)
+        let group_commit_delay = if options.wal_sync_policy == SyncPolicy::None {
+            std::time::Duration::ZERO
+        } else {
+            std::time::Duration::from_micros(options.group_commit_delay_us)
+        };
+
+        let pipelined_wal = PipelinedWAL::new(
+            Arc::clone(&wal),
+            group_commit_delay,
+            options.group_commit_max_batch_size,
+        );
+
         let db = Self {
             options: options.clone(),
             wal,
@@ -998,8 +962,7 @@ impl DB {
             compaction_worker,
             flush_tx,
             flush_worker,
-            wal_tx,
-            wal_worker: Some(wal_worker),
+            pipelined_wal,
             flush_mutex,
             lsm_mutex,
             sstable_cache: Arc::new(Cache::new(1000)), // Cache up to 1000 SSTables
@@ -1008,13 +971,14 @@ impl DB {
             read_count: std::sync::atomic::AtomicU64::new(0),
             max_flushed_seq,
             next_seq,
-            wal_healthy,
             flush_healthy,
             compaction_healthy,
             pending_deletions,
             last_disk_check: Arc::new(AtomicU64::new(0)),
             cached_available_space: Arc::new(AtomicU64::new(u64::MAX)), // Start with "infinite" space
             global_block_cache: Arc::new(Cache::new(options.block_cache_capacity)),
+            buffer_pool,
+            compaction_filter,
             #[cfg(feature = "object-store")]
             storage_backend,
         };
@@ -1029,6 +993,98 @@ impl DB {
         info!("Database opened successfully");
 
         Ok(db)
+    }
+
+    /// Helper for PipelinedWAL callback to apply records to memtable
+    ///
+    /// This is called by the Leader thread in the group commit pipeline.
+    /// It applies all records in the batch to the memtable.
+    pub(crate) fn apply_wal_records(&self, records: &[Record]) {
+        for record in records {
+            match record {
+                Record::Put { key, value } => {
+                     let _ = self.put_internal(key.clone(), value.clone());
+                }
+                Record::Delete { key } => {
+                     let _ = self.delete_internal(key.clone());
+                }
+                Record::Batch { operations } => {
+                    for op in operations {
+                        match op {
+                             crate::wal::BatchOp::Put { key, value } => {
+                                 let _ = self.put_internal(key.clone(), value.clone());
+                             }
+                             crate::wal::BatchOp::Delete { key } => {
+                                 let _ = self.delete_internal(key.clone());
+                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Check if write should be stalled or stopped due to backpressure
+    ///
+    /// Implements two types of backpressure:
+    /// 1. **L0 Backpressure**: Slows down or stops writes when L0 has too many files (compaction lag)
+    /// 2. **Memtable Backpressure**: Stops writes when memtables are full and flush is in progress
+    fn check_write_stall(&self) {
+        // Loop until backpressure is relieved
+        loop {
+            // Check worker health
+            if !self.compaction_healthy.load(Ordering::SeqCst) {
+                error!("Compaction worker is dead - breaking stall loop to avoid deadlock");
+                break;
+            }
+            if !self.flush_healthy.load(Ordering::SeqCst) {
+                error!("Flush worker is dead - breaking stall loop to avoid deadlock");
+                break;
+            }
+
+            // 1. Check L0 stall (Compaction lag)
+            let l0_count = {
+                let lsm = self.lsm.load();
+                if let Some(level) = lsm.level(0) {
+                    level.sstables().len()
+                } else {
+                    0
+                }
+            };
+
+            if l0_count >= self.options.l0_stop_writes_trigger {
+                // STOP writes: compaction is severely lagging
+                // Sleep 10ms and retry
+                debug!("Stalling writes: L0 count {} >= {}", l0_count, self.options.l0_stop_writes_trigger);
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                continue;
+            } else if l0_count >= self.options.l0_slowdown_writes_trigger {
+                // SLOWDOWN writes: compaction is lagging
+                // Sleep 1ms per write to throttle throughput
+                std::thread::sleep(std::time::Duration::from_millis(1));
+                // Don't loop for slowdown, just delay once per write
+            }
+
+            // 2. Check Memtable stall (Flush lag)
+            // If immutable memtables exist (flush in progress) AND active memtable is full
+            let immut_occupied = self.immutable_memtables.load().is_some();
+
+            if immut_occupied {
+                // Flush in progress - check if we are also full
+                // We can use a relaxed check for "any partition full"
+                let active_full = self.memtables.iter().any(|mt| mt.load().should_flush());
+
+                if active_full {
+                    // STOP writes: cannot flush because previous flush is still running
+                    // Sleep 1ms and retry
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                    continue;
+                }
+            }
+
+            // No blocking conditions met
+            break;
+        }
     }
 
     /// Write a key-value pair to the database
@@ -1081,6 +1137,9 @@ impl DB {
     /// - Latency spikes: 1-10 milliseconds during memtable flush
     /// - Use [`flush()`](Self::flush) explicitly to control flush timing
     pub fn put(&self, key: impl AsRef<[u8]>, value: impl AsRef<[u8]>) -> Result<()> {
+        // Apply backpressure (stall writes if system is overloaded)
+        self.check_write_stall();
+
         let start = Instant::now();
 
         let key = Bytes::copy_from_slice(key.as_ref());
@@ -1138,89 +1197,22 @@ impl DB {
         // Uses periodic caching (10s interval) to avoid performance impact
         self.check_disk_space_cached()?;
 
-        // Check WAL writer thread health BEFORE writing
-        // If WAL died, writes would be lost even though we return Ok()
-        if !self.wal_healthy.load(Ordering::SeqCst) {
-            return Err(DBError::BackgroundThreadPanic {
-                thread_name: "wal-writer".to_string(),
-            });
-        }
-
-        // Write to WAL first (durability) - lock-free via channel
+        // Create record
         let record = Record::Put {
             key: key.clone(),
             value: value.clone(),
         };
         let wal_bytes = record.encode().len() as u64;
 
-        // Fast path for SyncPolicy::None - fire-and-forget (no ack needed)
-        // Group commit with ack only for durable writes (SyncPolicy::SyncData/SyncAll)
-        match self.options.wal_sync_policy {
-            SyncPolicy::None => {
-                // Fast path: fire-and-forget, no acknowledgement
-                self.wal_tx.send(WALMessage::Record(record)).map_err(|_| {
-                    DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
-                        std::io::ErrorKind::BrokenPipe,
-                        "WAL writer thread died",
-                    )))
-                })?;
-            }
-            SyncPolicy::SyncData | SyncPolicy::SyncAll => {
-                // Slow path: group commit with acknowledgement for durability
-                let (ack_tx, ack_rx) = crossbeam_channel::bounded(1);
-
-                // Send to WAL writer (will batch with concurrent writes)
-                self.wal_tx
-                    .send(WALMessage::WriteAndAck { record, ack_tx })
-                    .map_err(|_| {
-                        DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
-                            std::io::ErrorKind::BrokenPipe,
-                            "WAL writer thread died",
-                        )))
-                    })?;
-
-                // Wait for WAL flush completion (group commit - durability guaranteed!)
-                ack_rx
-                    .recv()
-                    .map_err(|_| {
-                        DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
-                            std::io::ErrorKind::BrokenPipe,
-                            "WAL writer thread died during flush",
-                        )))
-                    })?
-                    .map_err(DBError::Wal)?;
-            }
-        }
+        // Pipelined Group Commit (WAL + Memtable)
+        // The callback is executed by the Leader thread for all records in the batch
+        // Memtable write happens inside this callback
+        self.pipelined_wal.put(record, |batch| {
+            self.apply_wal_records(batch);
+        }).map_err(DBError::Wal)?;
 
         // Track physical bytes written to WAL
         self.metrics.record_physical_bytes(wal_bytes);
-
-        // Write to correct partition (lock-free with ArcSwap)
-        let partition = partition_for_key(&key);
-        let mt = self.memtables[partition].load(); // Lock-free Arc load
-        mt.put(key, value); // SkipMap is already lock-free
-                            // Arc automatically dropped, no lock to release!
-
-        // Track write operation for Dostoevsky adaptive compaction
-        self.write_count
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-        // Check if ANY partition should be flushed (lock-free check)
-        let should_flush = self.memtables.iter().any(|mt| mt.load().should_flush());
-        if should_flush {
-            if let Some(ref tx) = self.flush_tx {
-                // Background flush: swap memtable immediately (fast), then signal background thread
-                if self.try_swap_memtable()? {
-                    // Successfully swapped - signal background thread to build SSTable
-                    debug!("Memtable swapped, signaling background flush");
-                    let _ = tx.send(FlushTask::Flush);
-                }
-                // If swap failed, another thread is already flushing - skip
-            } else {
-                // Synchronous flush: block until done
-                self.flush()?;
-            }
-        }
 
         // Record latency
         self.metrics.record_put(start.elapsed());
@@ -1373,13 +1365,25 @@ impl DB {
                             // Cache miss: open SSTable (called only once per unique path)
                             // Pass global block cache for shared block caching across all SSTables
                             let global_cache = Some(Arc::clone(&self.global_block_cache));
-                            let sstable = if has_vlog {
-                                let vlog = VLog::open(&vlog_path)?;
-                                SSTable::open_with_global_cache(sstable_path, global_cache)?
-                                    .with_vlog(vlog)
+                            let buffer_pool = self.buffer_pool.clone();
+                            
+                            // Open SSTable with appropriate caching strategy
+                            let mut sstable = if let Some(pool) = buffer_pool {
+                                // LeanStore mode: Use BufferPool (L2)
+                                // Note: open_with_buffer_pool currently disables global_cache (L1)
+                                // TODO: We might want both enabled in future (L1 Parsed + L2 Raw)
+                                SSTable::open_with_buffer_pool(sstable_path, Some(pool))?
                             } else {
+                                // Standard mode: Use Global Block Cache (L1)
                                 SSTable::open_with_global_cache(sstable_path, global_cache)?
                             };
+                            
+                            // Attach VLog if enabled
+                            if has_vlog {
+                                let vlog = VLog::open(&vlog_path)?;
+                                sstable = sstable.with_vlog(vlog);
+                            }
+
                             Ok(Arc::new(Mutex::new(sstable)))
                         },
                     )?;
@@ -1470,77 +1474,19 @@ impl DB {
     /// - Space freed when compaction merges away all older versions
     /// - Large values in vLog are not immediately freed
     pub fn delete(&self, key: impl AsRef<[u8]>) -> Result<()> {
+        // Apply backpressure (stall writes if system is overloaded)
+        self.check_write_stall();
+
         let start = Instant::now();
         let key = Bytes::copy_from_slice(key.as_ref());
 
         // Write to WAL (durability) - lock-free via channel
         let record = Record::Delete { key: key.clone() };
 
-        // Fast path for SyncPolicy::None - fire-and-forget (no ack needed)
-        // Group commit with ack only for durable writes (SyncPolicy::SyncData/SyncAll)
-        match self.options.wal_sync_policy {
-            SyncPolicy::None => {
-                // Fast path: fire-and-forget, no acknowledgement
-                self.wal_tx.send(WALMessage::Record(record)).map_err(|_| {
-                    DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
-                        std::io::ErrorKind::BrokenPipe,
-                        "WAL writer thread died",
-                    )))
-                })?;
-            }
-            SyncPolicy::SyncData | SyncPolicy::SyncAll => {
-                // Slow path: group commit with acknowledgement for durability
-                let (ack_tx, ack_rx) = crossbeam_channel::bounded(1);
-
-                // Send to WAL writer (will batch with concurrent writes)
-                self.wal_tx
-                    .send(WALMessage::WriteAndAck { record, ack_tx })
-                    .map_err(|_| {
-                        DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
-                            std::io::ErrorKind::BrokenPipe,
-                            "WAL writer thread died",
-                        )))
-                    })?;
-
-                // Wait for WAL flush completion (group commit - durability guaranteed!)
-                ack_rx
-                    .recv()
-                    .map_err(|_| {
-                        DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
-                            std::io::ErrorKind::BrokenPipe,
-                            "WAL writer thread died during flush",
-                        )))
-                    })?
-                    .map_err(DBError::Wal)?;
-            }
-        }
-
-        // Write tombstone to correct partition (lock-free with ArcSwap)
-        let partition = partition_for_key(&key);
-        let mt = self.memtables[partition].load(); // Lock-free Arc load
-        mt.delete(key);
-        // Arc automatically dropped, no lock to release!
-
-        // Track write operation for Dostoevsky adaptive compaction
-        self.write_count
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-        // Check if ANY partition should be flushed (lock-free check)
-        let should_flush = self.memtables.iter().any(|mt| mt.load().should_flush());
-        if should_flush {
-            if let Some(ref tx) = self.flush_tx {
-                // Background flush: swap memtable immediately (fast), then signal background thread
-                if self.try_swap_memtable()? {
-                    // Successfully swapped - signal background thread to build SSTable
-                    debug!("Memtable swapped, signaling background flush");
-                    let _ = tx.send(FlushTask::Flush);
-                }
-                // If swap failed, another thread is already flushing - skip
-            } else {
-                // Synchronous flush: block until done
-                self.flush()?;
-            }
-        }
+        // Pipelined Group Commit (WAL + Memtable)
+        self.pipelined_wal.put(record, |batch| {
+            self.apply_wal_records(batch);
+        }).map_err(DBError::Wal)?;
 
         // Record latency
         self.metrics.record_delete(start.elapsed());
@@ -1837,24 +1783,8 @@ impl DB {
                     self.lsm.store(Arc::new(lsm_clone));
                 }
 
-                // CRITICAL FIX (Bug #8): Barrier synchronization before clearing WAL
-                // Send barrier message and wait for background thread to flush all pending records
-                let (ack_tx, ack_rx) = bounded(1); // Oneshot channel
-                self.wal_tx.send(WALMessage::Barrier(ack_tx)).map_err(|_| {
-                    DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
-                        std::io::ErrorKind::BrokenPipe,
-                        "WAL writer thread died",
-                    )))
-                })?;
-                // Wait for acknowledgement (blocks until all pending records written)
-                ack_rx.recv().map_err(|_| {
-                    DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
-                        std::io::ErrorKind::BrokenPipe,
-                        "WAL writer thread died during barrier",
-                    )))
-                })?;
-
                 // Now safe to clear WAL (all records written to disk)
+                // Note: With PipelinedWAL, we don't need a barrier because put() blocks until WAL write.
                 let mut wal = self.wal.lock().expect("WAL mutex poisoned");
                 wal.clear()?;
                 drop(wal);
@@ -1943,24 +1873,9 @@ impl DB {
         // Clear immutable partitions + WAL after successful flush (LOCK-FREE!)
         self.immutable_memtables.store(Arc::new(None));
 
-        // CRITICAL FIX (Bug #8): Barrier synchronization before clearing WAL
-        // Send barrier message and wait for background thread to flush all pending records
-        let (ack_tx, ack_rx) = bounded(1); // Oneshot channel
-        self.wal_tx.send(WALMessage::Barrier(ack_tx)).map_err(|_| {
-            DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                "WAL writer thread died",
-            )))
-        })?;
-        // Wait for acknowledgement (blocks until all pending records written)
-        ack_rx.recv().map_err(|_| {
-            DBError::Wal(crate::wal::WALError::Io(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                "WAL writer thread died during barrier",
-            )))
-        })?;
-
         // Now safe to clear WAL (all records written to disk)
+        // Note: With PipelinedWAL, we don't need a barrier because put() blocks until WAL write.
+        // flush() acquires wal lock, so it waits for any concurrent WAL writes to complete.
         let mut wal = self.wal.lock().expect("WAL mutex poisoned");
         wal.clear()?;
         drop(wal);
@@ -2272,6 +2187,7 @@ impl DB {
                 &self.metrics,
                 &self.max_flushed_seq,
                 &self.pending_deletions,
+                &self.compaction_filter,
                 &self.storage_backend,
             )
         }
@@ -2286,6 +2202,7 @@ impl DB {
                 &self.metrics,
                 &self.max_flushed_seq,
                 &self.pending_deletions,
+                &self.compaction_filter,
             )
         }
     }
@@ -2301,6 +2218,7 @@ impl DB {
         metrics: &Arc<MetricsCollector>,
         max_flushed_seq: &Arc<AtomicU64>,
         pending_deletions: &Arc<Mutex<Vec<(PathBuf, std::time::Instant)>>>,
+        filter: &Option<Arc<dyn crate::compaction::CompactionFilter>>,
         storage_backend: &Option<Arc<dyn crate::storage::Storage>>,
     ) -> Result<()> {
         Self::do_compact_level_impl(
@@ -2312,6 +2230,7 @@ impl DB {
             metrics,
             max_flushed_seq,
             pending_deletions,
+            filter,
             storage_backend,
         )
     }
@@ -2327,6 +2246,7 @@ impl DB {
         metrics: &Arc<MetricsCollector>,
         max_flushed_seq: &Arc<AtomicU64>,
         pending_deletions: &Arc<Mutex<Vec<(PathBuf, std::time::Instant)>>>,
+        filter: &Option<Arc<dyn crate::compaction::CompactionFilter>>,
     ) -> Result<()> {
         Self::do_compact_level_impl(
             lsm,
@@ -2337,6 +2257,7 @@ impl DB {
             metrics,
             max_flushed_seq,
             pending_deletions,
+            filter,
         )
     }
 
@@ -2351,6 +2272,7 @@ impl DB {
         metrics: &Arc<MetricsCollector>,
         max_flushed_seq: &Arc<AtomicU64>,
         pending_deletions: &Arc<Mutex<Vec<(PathBuf, std::time::Instant)>>>,
+        filter: &Option<Arc<dyn crate::compaction::CompactionFilter>>,
         storage_backend: &Option<Arc<dyn crate::storage::Storage>>,
     ) -> Result<()> {
         let compaction_start = Instant::now();
@@ -2360,7 +2282,14 @@ impl DB {
 
         // Get SSTables to compact
         let level = lsm_arc.level(level_num).ok_or(DBError::NotOpened)?;
-        let all_input_paths: Vec<PathBuf> = level.sstables().to_vec();
+        let mut all_input_paths: Vec<PathBuf> = level.sstables().to_vec();
+
+        // Limit number of files to compact at once to avoid "Too many open files"
+        // and to keep compaction duration predictable.
+        const MAX_COMPACTION_FILES: usize = 16;
+        if all_input_paths.len() > MAX_COMPACTION_FILES {
+            all_input_paths.truncate(MAX_COMPACTION_FILES);
+        }
 
         if all_input_paths.is_empty() {
             return Ok(());
@@ -2423,7 +2352,8 @@ impl DB {
             use crate::compaction::compact_sstables_buffered;
 
             // Build SSTable in memory
-            let bytes = compact_sstables_buffered(&input_paths)?;
+            // Use output level (level_num + 1) for compaction
+            let bytes = compact_sstables_buffered(&input_paths, level_num + 1, filter.clone())?;
             let size = bytes.len() as u64;
 
             // Write to local disk (single syscall)
@@ -2442,7 +2372,7 @@ impl DB {
             (output_path, size)
         } else {
             // No cloud storage - use traditional compaction
-            compact_sstables(&input_paths, &output_path)?
+            compact_sstables(&input_paths, &output_path, level_num + 1, filter.clone())?
         };
 
         // Track physical bytes written during compaction
@@ -2500,6 +2430,7 @@ impl DB {
         metrics: &Arc<MetricsCollector>,
         max_flushed_seq: &Arc<AtomicU64>,
         pending_deletions: &Arc<Mutex<Vec<(PathBuf, std::time::Instant)>>>,
+        filter: &Option<Arc<dyn crate::compaction::CompactionFilter>>,
     ) -> Result<()> {
         let compaction_start = Instant::now();
 
@@ -2508,7 +2439,14 @@ impl DB {
 
         // Get SSTables to compact
         let level = lsm_arc.level(level_num).ok_or(DBError::NotOpened)?;
-        let all_input_paths: Vec<PathBuf> = level.sstables().to_vec();
+        let mut all_input_paths: Vec<PathBuf> = level.sstables().to_vec();
+
+        // Limit number of files to compact at once to avoid "Too many open files"
+        // and to keep compaction duration predictable.
+        const MAX_COMPACTION_FILES: usize = 16;
+        if all_input_paths.len() > MAX_COMPACTION_FILES {
+            all_input_paths.truncate(MAX_COMPACTION_FILES);
+        }
 
         if all_input_paths.is_empty() {
             return Ok(());
@@ -2562,7 +2500,7 @@ impl DB {
         drop(counter);
 
         // Compact SSTables
-        let (result_path, size) = compact_sstables(&input_paths, &output_path)?;
+        let (result_path, size) = compact_sstables(&input_paths, &output_path, level_num + 1, filter.clone())?;
 
         // Track physical bytes written during compaction
         metrics.record_physical_bytes(size);
@@ -3465,39 +3403,88 @@ impl DB {
     /// // Snapshot sees old value (from SSTable)
     /// assert_eq!(snapshot.get(b"key").unwrap().unwrap().as_ref(), b"value1");
     /// ```
-    pub fn snapshot(&self) -> crate::snapshot::Snapshot {
-        // Capture current sequence number
-        let seq_num = self.next_seq.load(Ordering::Acquire);
+    /// Create a consistent point-in-time snapshot of the database
+    ///
+    /// This method forces a memtable switch to ensure consistency:
+    /// 1. Waits for any pending background flush to complete
+    /// 2. Swaps the active memtable with a new empty one
+    /// 3. Captures the old memtable (now immutable) and current SSTables
+    /// 4. Triggers a background flush of the old memtable
+    ///
+    /// The returned Snapshot is isolated from subsequent writes.
+    ///
+    /// # Performance
+    ///
+    /// - If `background_flush` is enabled: Fast (memory swap only)
+    /// - If `background_flush` is disabled: Slow (synchronous flush to disk)
+    pub fn snapshot(&self) -> Result<Snapshot> {
+        // 1. Wait for any pending background flush
+        if self.options.background_flush {
+            loop {
+                let immut = self.immutable_memtables.load();
+                if immut.is_none() {
+                    break;
+                }
+                drop(immut);
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
 
-        // Capture SSTable paths at snapshot time (lock-free via ArcSwap)
-        // This creates a point-in-time view of the LSM tree structure
-        let lsm_arc = self.lsm.load();
+        // 2. Acquire flush mutex to serialize swaps
+        let _flush_lock = self.flush_mutex.lock().expect("Flush mutex poisoned");
+
+        // 3. Swap ALL 16 partitions atomically (lock-free with ArcSwap!)
+        let capacity_per_partition = self.options.memtable_capacity / NUM_PARTITIONS;
+        let mut old_partitions = Vec::with_capacity(NUM_PARTITIONS);
+
+        for partition_mt in self.memtables.iter() {
+            let old_arc = partition_mt.swap(Arc::new(Memtable::new(capacity_per_partition)));
+            old_partitions.push(old_arc);
+        }
+
+        let old_partitions_arc = Arc::new(old_partitions);
+
+        // Store in immutable_memtables (so flush worker can find it)
+        self.immutable_memtables
+            .store(Arc::new(Some(Arc::clone(&old_partitions_arc))));
+
+        // 4. Capture SSTables
+        let lsm = self.lsm.load();
         let mut sstable_paths = Vec::new();
-        for level_idx in 0..lsm_arc.num_levels() {
-            if let Some(level) = lsm_arc.level(level_idx) {
+        for i in 0..lsm.num_levels() {
+            if let Some(level) = lsm.level(i) {
                 sstable_paths.push(level.sstables().to_vec());
             } else {
                 sstable_paths.push(Vec::new());
             }
         }
 
-        // Get vLog path if enabled
-        let has_vlog = self.has_vlog.load(Ordering::Relaxed);
-        let vlog_path = if has_vlog {
-            Some(self.options.data_dir.clone())
-        } else {
-            None
-        };
-
-        crate::snapshot::Snapshot::new(
-            Vec::new(), // No memtables - only SSTable data is consistent
-            None,       // No immutable memtables
+        // 5. Create Snapshot
+        // We pass empty active memtables because we just swapped them out.
+        // The data is now in immutable_memtables.
+        let snapshot = Snapshot::new(
+            Vec::new(), 
+            Some(Arc::clone(&old_partitions_arc)),
             sstable_paths,
-            self.sstable_cache.clone(),
-            vlog_path,
-            has_vlog,
-            seq_num,
-        )
+            Arc::clone(&self.sstable_cache),
+            if self.options.vlog_threshold.is_some() {
+                Some(self.options.data_dir.join("values.vlog"))
+            } else {
+                None
+            },
+            self.has_vlog.load(Ordering::Relaxed),
+            self.next_seq.load(Ordering::Relaxed),
+        );
+
+        // 6. Trigger flush
+        if let Some(ref tx) = self.flush_tx {
+            debug!("Snapshot created, triggering background flush");
+            let _ = tx.send(FlushTask::Flush);
+        } else {
+            debug!("Snapshot created (synchronous mode), flush deferred");
+        }
+
+        Ok(snapshot)
     }
 
     /// Create a fully consistent point-in-time snapshot
@@ -3531,7 +3518,7 @@ impl DB {
         self.flush()?;
 
         // Now create snapshot with guaranteed consistency
-        Ok(self.snapshot())
+        self.snapshot()
     }
 }
 
@@ -3567,25 +3554,6 @@ impl Drop for DB {
             debug!("Waiting for background compaction thread to finish");
             if let Err(e) = worker.join() {
                 error!("Compaction worker thread panicked during shutdown: {:?}", e);
-            }
-        }
-
-        // Shutdown WAL writer - drop the sender to close the channel
-        debug!("Closing WAL writer channel");
-        // Replace our sender with a dummy one, dropping the original
-        let (dummy_tx, _dummy_rx) = crossbeam_channel::unbounded::<WALMessage>();
-        let _old_tx = std::mem::replace(&mut self.wal_tx, dummy_tx);
-        drop(_old_tx); // Explicitly drop to close channel
-
-        // Wait for WAL worker thread to finish
-        // join() provides proper synchronization - thread won't exit until all records are written
-        if let Some(worker) = self.wal_worker.take() {
-            debug!("Waiting for background WAL writer thread to finish");
-            if let Err(e) = worker.join() {
-                error!(
-                    "WAL writer thread panicked during shutdown: {:?} - DATA LOSS MAY HAVE OCCURRED",
-                    e
-                );
             }
         }
 
@@ -4342,11 +4310,11 @@ mod tests {
 
         db.put(b"key1", b"value1").unwrap();
         db.flush().unwrap(); // Force flush to increment sequence
-        let snap1 = db.snapshot();
+        let snap1 = db.snapshot().unwrap();
 
         db.put(b"key2", b"value2").unwrap();
         db.flush().unwrap(); // Force flush to increment sequence
-        let snap2 = db.snapshot();
+        let snap2 = db.snapshot().unwrap();
 
         // Snap2 should have higher sequence number (after more writes)
         assert!(snap2.sequence_number() >= snap1.sequence_number());
@@ -4711,7 +4679,7 @@ mod tests {
         // First read - should miss cache (cold start)
         let stats_before = db.stats();
         let initial_hits = stats_before.cache_hits;
-        let initial_misses = stats_before.cache_misses;
+        let _initial_misses = stats_before.cache_misses;
 
         // Read a key from disk
         let _ = db.get(b"key:0025").unwrap();

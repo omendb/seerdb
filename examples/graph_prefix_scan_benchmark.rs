@@ -1,4 +1,4 @@
-// Benchmark to simulate omendb's HNSW edge storage pattern
+// Benchmark to simulate Graph HNSW edge storage pattern
 // Tests prefix scan performance with data spread across multiple SSTables
 // This is the workload where block cache should provide 10-20x improvement
 
@@ -12,7 +12,7 @@ const NUM_LEVELS: usize = 4;
 const VALUE_SIZE: usize = 64;
 
 fn main() {
-    println!("=== omendb Prefix Scan Benchmark ===");
+    println!("=== Graph Prefix Scan Benchmark ===");
     println!("Simulating HNSW graph edge storage pattern\n");
 
     let dir = tempdir().unwrap();
@@ -190,7 +190,7 @@ fn main() {
     println!();
 
     println!("Performance Analysis:");
-    println!("  Target: >200 scans/sec for omendb (was 22 QPS baseline)");
+    println!("  Target: >200 scans/sec for graph workloads (was 22 QPS baseline)");
     println!("  Cold cache should be slower (disk I/O)");
     println!("  Hot cache should be much faster (10-20x improvement expected)");
     println!("  Random access shows real-world HNSW traversal pattern");

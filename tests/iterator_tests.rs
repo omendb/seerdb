@@ -1,7 +1,6 @@
 // Iterator and range scan tests
 // Tests: basic iteration, range scans, seeking, edge cases, concurrent modifications
 
-use bytes::Bytes;
 use seerdb::{DBOptions, DB};
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -20,7 +19,7 @@ fn test_empty_iteration() {
         data_dir: PathBuf::from(temp_dir.path()),
         ..Default::default()
     };
-    let db = DB::open(opts).unwrap();
+    let _db = DB::open(opts).unwrap();
 
     // Empty database should have no entries
     // TODO: Uncomment when iterator API is public

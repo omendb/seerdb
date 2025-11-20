@@ -2205,6 +2205,7 @@ dependencies = [
  "criterion",
  "crossbeam-channel",
  "crossbeam-skiplist",
+ "dashmap",
  "dhat",
  "fjall",
  "foldhash",
@@ -2212,6 +2213,7 @@ dependencies = [
  "hdrhistogram",
  "lz4_flex",
  "object_store",
+ "parking_lot 0.12.5",
  "proptest",
  "quick_cache",
  "rand 0.8.5",
@@ -2229,7 +2231,6 @@ dependencies = [
  "twox-hash",
  "url",
  "varint-rs",
- "varint-simd",
 ]
 
 [[package]]
@@ -2823,15 +2824,6 @@ name = "varint-rs"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f54a172d0620933a27a4360d3db3e2ae0dd6cceae9730751a036bbf182c4b23"
-
-[[package]]
-name = "varint-simd"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "655d0cf8bfc2bd1f079e767f7ff613cbfa0ef06ca3ceaf1fd6b6cde08cbd012a"
-dependencies = [
- "rustc_version",
-]
 
 [[package]]
 name = "vcpkg"

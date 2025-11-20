@@ -11,7 +11,7 @@
 // Expected improvement: +5-15% overall throughput in key-heavy operations
 
 use std::cmp::Ordering;
-use std::simd::{cmp::SimdPartialEq, u8x16};
+use std::simd::{cmp::SimdPartialEq, cmp::SimdPartialOrd, u8x16};
 
 /// SIMD vector size (16 bytes for u8x16)
 const SIMD_WIDTH: usize = 16;
@@ -63,6 +63,113 @@ pub fn compare_keys(a: &[u8], b: &[u8]) -> Ordering {
 
     // If all compared bytes are equal, compare lengths
     len_a.cmp(&len_b)
+}
+
+/// Decode a varint from a byte slice using SIMD to find the length
+/// Returns (value, bytes_read) if successful
+///
+/// Optimized using std::simd to quickly scan for the varint terminator (MSB=0)
+/// avoiding branch mispredictions in the loop.
+#[inline]
+pub fn decode_varint(data: &[u8]) -> Option<(u64, usize)> {
+    if data.is_empty() {
+        return None;
+    }
+
+    // Fast path for single-byte varints (very common)
+    if data[0] < 128 {
+        return Some((data[0] as u64, 1));
+    }
+
+    // SIMD path: Load 16 bytes, find first byte with MSB=0
+    // We need at least 16 bytes to use simple unaligned load.
+    // If buffer is smaller, we fall back to scalar.
+    if data.len() >= 16 {
+        let v = u8x16::from_slice(&data[..16]);
+        // Check MSB (byte < 128). 0x80 is the continuation bit.
+        // Values < 128 have MSB=0 (terminator).
+        let mask = v.simd_lt(u8x16::splat(128));
+        let bitmask = mask.to_bitmask();
+        
+        // If bitmask is 0, all 16 bytes have MSB=1 (>= 128).
+        // That means varint is at least 16 bytes long, which overflows u64 (max 10 bytes).
+        if bitmask == 0 {
+            return None; 
+        }
+        
+        // Find index of first set bit (first terminator)
+        let len = bitmask.trailing_zeros() as usize + 1;
+        
+        if len > 10 {
+            return None; // Too long for u64
+        }
+        
+        // Unrolled decoding based on known length
+        // We know the length, so we can avoid loop and branch checks
+        let mut value: u64 = 0;
+        
+        // Using explicit match for small sizes which are most common
+        match len {
+            1 => return Some((data[0] as u64, 1)),
+            2 => {
+                value = (data[0] & 0x7F) as u64;
+                value |= (data[1] as u64) << 7;
+                return Some((value, 2));
+            }
+            3 => {
+                value = (data[0] & 0x7F) as u64;
+                value |= ((data[1] & 0x7F) as u64) << 7;
+                value |= (data[2] as u64) << 14;
+                return Some((value, 3));
+            }
+            4 => {
+                value = (data[0] & 0x7F) as u64;
+                value |= ((data[1] & 0x7F) as u64) << 7;
+                value |= ((data[2] & 0x7F) as u64) << 14;
+                value |= (data[3] as u64) << 21;
+                return Some((value, 4));
+            }
+            5 => {
+                value = (data[0] & 0x7F) as u64;
+                value |= ((data[1] & 0x7F) as u64) << 7;
+                value |= ((data[2] & 0x7F) as u64) << 14;
+                value |= ((data[3] & 0x7F) as u64) << 21;
+                value |= (data[4] as u64) << 28;
+                return Some((value, 5));
+            }
+            // For larger sizes (6-10), use a loop or further unrolling
+            // Since they are rare, a small loop with fixed bounds is fine
+            _ => {
+                let mut shift = 0;
+                for i in 0..len {
+                    let byte = data[i];
+                    if i == len - 1 {
+                        value |= (byte as u64) << shift;
+                    } else {
+                        value |= ((byte & 0x7F) as u64) << shift;
+                    }
+                    shift += 7;
+                }
+                return Some((value, len));
+            }
+        }
+    }
+    
+    // Scalar fallback for short buffers (< 16 bytes)
+    let mut value: u64 = 0;
+    let mut shift = 0;
+    for (i, &byte) in data.iter().enumerate() {
+        if i >= 10 {
+            return None; // Too long
+        }
+        if byte < 128 {
+            value |= (byte as u64) << shift;
+            return Some((value, i + 1));
+        }
+        value |= ((byte & 0x7F) as u64) << shift;
+        shift += 7;
+    }
+    None
 }
 
 /// Calculate shared prefix length between two keys using SIMD
@@ -278,5 +385,40 @@ mod tests {
                 a, b
             );
         }
+    }
+
+    #[test]
+    fn test_decode_varint() {
+        let mut large_data = vec![0u8; 32];
+        
+        // Test single byte
+        large_data[0] = 0x05;
+        assert_eq!(decode_varint(&large_data), Some((5, 1)));
+        
+        // Test 2 bytes
+        large_data[0] = 0x85;
+        large_data[1] = 0x01;
+        assert_eq!(decode_varint(&large_data), Some((133, 2)));
+        
+        // Test 3 bytes
+        large_data[0] = 0x80;
+        large_data[1] = 0x80;
+        large_data[2] = 0x01;
+        assert_eq!(decode_varint(&large_data), Some((16384, 3)));
+
+        // Test 5 bytes
+        large_data[0] = 0x80;
+        large_data[1] = 0x80;
+        large_data[2] = 0x80;
+        large_data[3] = 0x80;
+        large_data[4] = 0x01;
+        // 1 << 28
+        assert_eq!(decode_varint(&large_data), Some((268435456, 5)));
+        
+        // Test too long (all continuation bits)
+        for i in 0..16 {
+            large_data[i] = 0x80;
+        }
+        assert_eq!(decode_varint(&large_data), None);
     }
 }

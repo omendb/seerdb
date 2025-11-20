@@ -303,7 +303,7 @@ fn test_many_concurrent_snapshots() {
             barrier.wait();
             let mut snapshots = vec![];
             for _ in 0..10 {
-                let snap = db.snapshot();
+                let snap = db.snapshot().unwrap();
                 snapshots.push(snap);
                 thread::sleep(Duration::from_millis(1));
             }

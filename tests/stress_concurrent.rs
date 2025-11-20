@@ -333,7 +333,7 @@ fn test_concurrent_flushes() {
     }
 
     // 5 reader threads (reading during flushes)
-    for thread_id in 0..5 {
+    for _thread_id in 0..5 {
         let db_clone = Arc::clone(&db);
         let barrier_clone = Arc::clone(&barrier);
 

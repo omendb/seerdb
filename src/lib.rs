@@ -115,6 +115,7 @@ pub mod alex;
 mod background_workers;
 pub mod batch;
 pub mod bloom;
+pub mod buffer;
 pub mod compaction;
 pub mod db;
 mod db_helpers;

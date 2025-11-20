@@ -2,12 +2,15 @@
 // Implements leveled compaction to keep read amplification bounded
 
 pub mod merge;
+pub mod filter;
 
 use crate::sstable::{BufferedSSTableBuilder, SSTable, SSTableBuilder};
 use bytes::Bytes;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use thiserror::Error;
 
+pub use filter::{CompactionFilter, FilterDecision};
 pub use merge::MergeIterator;
 
 #[derive(Debug, Error)]
@@ -29,12 +32,16 @@ pub type Result<T> = std::result::Result<T, CompactionError>;
 /// # Arguments
 /// * `input_paths` - Paths to SSTables to compact (newer first)
 /// * `output_path` - Path for output SSTable
+/// * `compaction_level` - The level being compacted TO (passed to filter)
+/// * `filter` - Optional compaction filter
 ///
 /// # Returns
 /// Path to the new SSTable and its size in bytes
 pub fn compact_sstables(
     input_paths: &[PathBuf],
     output_path: impl AsRef<Path>,
+    compaction_level: usize,
+    filter: Option<Arc<dyn CompactionFilter>>,
 ) -> Result<(PathBuf, u64)> {
     if input_paths.is_empty() {
         return Err(CompactionError::NoInput);
@@ -48,7 +55,7 @@ pub fn compact_sstables(
     }
 
     // Create merge iterator
-    let merge = MergeIterator::new(sstables)?;
+    let merge = MergeIterator::new(sstables, compaction_level, filter)?;
 
     // Build new SSTable from merged entries
     let output_path = output_path.as_ref().to_path_buf();
@@ -80,10 +87,16 @@ pub fn compact_sstables(
 ///
 /// # Arguments
 /// * `input_paths` - Paths to SSTables to compact (newer first)
+/// * `compaction_level` - The level being compacted TO (passed to filter)
+/// * `filter` - Optional compaction filter
 ///
 /// # Returns
 /// Complete SSTable as bytes (caller writes to file and/or uploads to cloud)
-pub fn compact_sstables_buffered(input_paths: &[PathBuf]) -> Result<Bytes> {
+pub fn compact_sstables_buffered(
+    input_paths: &[PathBuf],
+    compaction_level: usize,
+    filter: Option<Arc<dyn CompactionFilter>>,
+) -> Result<Bytes> {
     if input_paths.is_empty() {
         return Err(CompactionError::NoInput);
     }
@@ -96,7 +109,7 @@ pub fn compact_sstables_buffered(input_paths: &[PathBuf]) -> Result<Bytes> {
     }
 
     // Create merge iterator
-    let merge = MergeIterator::new(sstables)?;
+    let merge = MergeIterator::new(sstables, compaction_level, filter)?;
 
     // Build new SSTable in memory
     let mut builder = BufferedSSTableBuilder::new();
@@ -583,7 +596,7 @@ mod tests {
 
         // Compact
         let output_path = dir.path().join("output.sst");
-        let (result_path, size) = compact_sstables(&[path1, path2], &output_path).unwrap();
+        let (result_path, size) = compact_sstables(&[path1, path2], &output_path, 0, None).unwrap();
 
         assert_eq!(result_path, output_path);
         assert!(size > 0);
@@ -637,7 +650,7 @@ mod tests {
 
         // Compact (older first, newer second - like L0 order)
         let output_path = dir.path().join("output.sst");
-        compact_sstables(&[path1, path2], &output_path).unwrap();
+        compact_sstables(&[path1, path2], &output_path, 0, None).unwrap();
 
         // Verify output has newer value (from higher source_id)
         let mut output_sst = SSTable::open(&output_path).unwrap();
