@@ -640,6 +640,11 @@ impl BufferedSSTableBuilder {
     }
 
     pub fn add(&mut self, key: Bytes, value: Bytes) -> Result<()> {
+        let encoded_value = self.encode_entry(&key, FLAG_INLINE, &value);
+        self.add_raw(key, encoded_value)
+    }
+
+    pub fn add_raw(&mut self, key: Bytes, encoded_value: Bytes) -> Result<()> {
         if self.min_key.is_none() {
             self.min_key = Some(key.clone());
         }
@@ -1323,7 +1328,7 @@ impl SSTable {
                 let length = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
 
                 if let Some(ref vlog) = self.vlog {
-                    let mut vlog_guard = vlog.lock().unwrap();
+                    let mut vlog_guard = vlog.lock().expect("vlog mutex poisoned");
                     let pointer = ValuePointer { offset, length };
                     let value = vlog_guard
                         .read(pointer)
@@ -1371,7 +1376,7 @@ impl SSTable {
             
             let frame_ref = pool.get_page(page_id, || {
                 // Load from disk via shared file handle
-                let mut file = self.file.lock().unwrap();
+                let mut file = self.file.lock().expect("file mutex poisoned");
                 file.seek(SeekFrom::Start(offset))?;
                 
                 // Note: We assume block size fits in frame for now (or handle appropriately)
@@ -1385,7 +1390,7 @@ impl SSTable {
             Bytes::copy_from_slice(&guard) // Copy out to bytes (Parsing overhead paid here)
         } else {
             // Standard Path: Direct File IO (OS Cache)
-            let mut file = self.file.lock().unwrap();
+            let mut file = self.file.lock().expect("file mutex poisoned");
             file.seek(SeekFrom::Start(offset))?;
 
             let mut buf = vec![0u8; size as usize];
@@ -1459,8 +1464,8 @@ impl SSTable {
         let mut tail_buf = [0u8; 12];
         file.read_exact(&mut tail_buf)?;
         
-        let magic = u32::from_le_bytes(tail_buf[0..4].try_into().unwrap());
-        let version = u32::from_le_bytes(tail_buf[4..8].try_into().unwrap());
+        let magic = u32::from_le_bytes(tail_buf[0..4].try_into().expect("slice length is correct"));
+        let version = u32::from_le_bytes(tail_buf[4..8].try_into().expect("slice length is correct"));
         // Last 4 bytes are padding
 
         if magic != MAGIC {
@@ -1479,18 +1484,18 @@ impl SSTable {
         file.read_exact(&mut footer)?;
 
         // Common fields (24 bytes)
-        let _index_blocks_offset = u64::from_le_bytes(footer[0..8].try_into().unwrap());
-        let top_level_offset = u64::from_le_bytes(footer[8..16].try_into().unwrap());
-        let bloom_offset = u64::from_le_bytes(footer[16..24].try_into().unwrap());
+        let _index_blocks_offset = u64::from_le_bytes(footer[0..8].try_into().expect("footer size guaranteed"));
+        let top_level_offset = u64::from_le_bytes(footer[8..16].try_into().expect("footer size guaranteed"));
+        let bloom_offset = u64::from_le_bytes(footer[16..24].try_into().expect("footer size guaranteed"));
 
         let (prefix_bloom_offset, metadata_offset, stored_checksum) = if version >= 2 {
-            let prefix_bloom = u64::from_le_bytes(footer[24..32].try_into().unwrap());
-            let metadata = u64::from_le_bytes(footer[32..40].try_into().unwrap());
-            let checksum = u32::from_le_bytes(footer[40..44].try_into().unwrap());
+            let prefix_bloom = u64::from_le_bytes(footer[24..32].try_into().expect("footer size guaranteed"));
+            let metadata = u64::from_le_bytes(footer[32..40].try_into().expect("footer size guaranteed"));
+            let checksum = u32::from_le_bytes(footer[40..44].try_into().expect("footer size guaranteed"));
             (prefix_bloom, metadata, checksum)
         } else {
-            let metadata = u64::from_le_bytes(footer[24..32].try_into().unwrap());
-            let checksum = u32::from_le_bytes(footer[32..36].try_into().unwrap());
+            let metadata = u64::from_le_bytes(footer[24..32].try_into().expect("footer size guaranteed"));
+            let checksum = u32::from_le_bytes(footer[32..36].try_into().expect("footer size guaranteed"));
             (0, metadata, checksum)
         };
 
@@ -1638,7 +1643,7 @@ impl SSTable {
                     continue;
                 }
 
-                let key_len = u32::from_le_bytes(value_bytes[..4].try_into().unwrap()) as usize;
+                let key_len = u32::from_le_bytes(value_bytes[..4].try_into().expect("slice length checked")) as usize;
                 let offset_start = 4 + key_len;
 
                 if value_bytes.len() < offset_start + 12 {
@@ -1648,12 +1653,12 @@ impl SSTable {
                 let offset = u64::from_le_bytes(
                     value_bytes[offset_start..offset_start + 8]
                         .try_into()
-                        .unwrap(),
+                        .expect("slice length checked"),
                 );
                 let size = u32::from_le_bytes(
                     value_bytes[offset_start + 8..offset_start + 12]
                         .try_into()
-                        .unwrap(),
+                        .expect("slice length checked"),
                 );
 
                 if offset + (size as u64) > file_size {
@@ -1756,7 +1761,7 @@ impl SSTableRangeIterator {
         // Cache miss - record and load from disk
         self.cache_misses.fetch_add(1, Ordering::Relaxed);
 
-        let mut file = self.file.lock().unwrap();
+        let mut file = self.file.lock().expect("file mutex poisoned");
         file.seek(SeekFrom::Start(offset))?;
 
         let mut buf = vec![0u8; size as usize];
@@ -1836,10 +1841,10 @@ impl SSTableRangeIterator {
     }
 
     fn advance_to_next_data_block(&mut self) -> Result<bool> {
-        if self.index_entry_idx >= self.index_block_entries.len() {
-            if !self.advance_to_next_index_block()? {
-                return Ok(false);
-            }
+        if self.index_entry_idx >= self.index_block_entries.len()
+            && !self.advance_to_next_index_block()?
+        {
+            return Ok(false);
         }
 
         if self.index_entry_idx < self.index_block_entries.len() {
@@ -1908,7 +1913,7 @@ impl Iterator for SSTableRangeIterator {
                         let length = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
 
                         if let Some(ref vlog) = self.vlog {
-                            let mut vlog_guard = vlog.lock().unwrap();
+                            let mut vlog_guard = vlog.lock().expect("vlog mutex poisoned");
                             let pointer = ValuePointer { offset, length };
                             match vlog_guard.read(pointer) {
                                 Ok(value) => Some(value),
@@ -1992,7 +1997,7 @@ impl SSTable {
                             let length = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
 
                             if let Some(ref vlog) = self.vlog {
-                                let mut vlog_guard = vlog.lock().unwrap();
+                                let mut vlog_guard = vlog.lock().expect("vlog mutex poisoned");
                                 let pointer = ValuePointer { offset, length };
                                 vlog_guard
                                     .read(pointer)

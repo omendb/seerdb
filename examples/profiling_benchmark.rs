@@ -89,7 +89,7 @@ fn main() {
     for i in 0..num_scans {
         let prefix = format!("key_{:04}", i);
         let mut count = 0;
-        let iter = db.prefix(prefix.as_bytes());
+        let iter = db.prefix(prefix.as_bytes()).unwrap();
         for result in iter {
             let _entry = result.unwrap();
             count += 1;
@@ -107,9 +107,9 @@ fn main() {
     // Stats
     let stats = db.stats();
     println!("Database Stats:");
-    println!("  Memtable entries: {}", stats.memtable_entries);
-    println!("  Memtable size: {} bytes", stats.memtable_size);
-    println!("  Total SSTables: {}", stats.num_sstables);
+    println!("  Memtable entries: {}", db.memtable_len());
+    println!("  Memtable size: {} bytes", stats.memtable_size_bytes);
+    println!("  Total SSTables: {}", stats.total_sstables);
     println!("  Cache hits: {}", stats.cache_hits);
     println!("  Cache misses: {}", stats.cache_misses);
     println!("  Cache hit rate: {:.2}%",

@@ -141,8 +141,8 @@ pub fn decode_varint(data: &[u8]) -> Option<(u64, usize)> {
             // Since they are rare, a small loop with fixed bounds is fine
             _ => {
                 let mut shift = 0;
-                for i in 0..len {
-                    let byte = data[i];
+                for (i, val) in data.iter().enumerate().take(len) {
+                    let byte = *val;
                     if i == len - 1 {
                         value |= (byte as u64) << shift;
                     } else {

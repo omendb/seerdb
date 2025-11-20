@@ -527,7 +527,6 @@ impl Default for DBOptions {
 /// # Ok(())
 /// # }
 /// ```
-
 pub struct DB {
     /// Database options
     pub(crate) options: DBOptions,
@@ -802,7 +801,7 @@ impl DB {
         let pending_deletions = Arc::new(Mutex::new(Vec::new()));
 
         let compaction_filter = options.compaction_filter.clone();
-        let merge_operator = options.merge_operator.clone();
+        let _merge_operator = options.merge_operator.clone();
         
         // Initialize BufferPool if capacity is set
         let buffer_pool = options.buffer_pool_capacity.map(|capacity| {
@@ -2502,7 +2501,7 @@ impl DB {
         // By queuing deletions with timestamps, we ensure files are only deleted
         // after a safe delay (5 seconds), giving readers time to finish.
         {
-            let mut pending = pending_deletions.lock().unwrap();
+            let mut pending = pending_deletions.lock().expect("pending_deletions lock poisoned");
             let now = std::time::Instant::now();
             for path in input_paths {
                 pending.push((path, now));
@@ -2622,7 +2621,7 @@ impl DB {
 
         // PRODUCTION FIX (Bug #7b): Queue SSTables for delayed deletion
         {
-            let mut pending = pending_deletions.lock().unwrap();
+            let mut pending = pending_deletions.lock().expect("pending_deletions lock poisoned");
             let now = std::time::Instant::now();
             for path in input_paths {
                 pending.push((path, now));
@@ -2711,7 +2710,7 @@ impl DB {
     ///
     /// - [`health()`](Self::health) - Health checks with thresholds
     /// - [`DBStats`] - Full structure documentation
-    /// Estimate current memory usage in bytes
+    ///   Estimate current memory usage in bytes
     ///
     /// Includes:
     /// - Active memtables
@@ -2770,7 +2769,7 @@ impl DB {
         // Get current time (seconds since UNIX epoch)
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .expect("System time before UNIX EPOCH")
             .as_secs();
 
         // Get last check time (atomic load, very fast)
@@ -2779,7 +2778,7 @@ impl DB {
         // If checked within last 10 seconds, use cached value
         if now.saturating_sub(last_check) < CHECK_INTERVAL_SECS {
             let cached_space = self.cached_available_space.load(Ordering::Relaxed);
-            let min_space = self.options.min_disk_space_bytes.unwrap();
+            let min_space = self.options.min_disk_space_bytes.expect("min_disk_space_bytes checked above");
 
             if cached_space < min_space {
                 return Err(DBError::DiskSpaceFull {
@@ -2794,7 +2793,7 @@ impl DB {
         // This uses sysinfo which is slow, but we only do it every 10 seconds
         use sysinfo::{DiskExt, System, SystemExt};
 
-        let min_space = self.options.min_disk_space_bytes.unwrap();
+        let min_space = self.options.min_disk_space_bytes.expect("min_disk_space_bytes checked above");
         let mut sys = System::new();
         sys.refresh_disks_list();
 
@@ -3477,7 +3476,7 @@ impl DB {
             let iter = self.prefix(prefix)?;
             for item in iter {
                 let (key, value) = item.map_err(|e| {
-                    DBError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                    DBError::Io(std::io::Error::other(e.to_string()))
                 })?;
                 prefix_results.push((key, value));
             }
@@ -4858,7 +4857,7 @@ mod tests {
 
         // We should have at least one cache hit from the second read
         assert!(
-            stats_after.cache_hits >= initial_hits + 1,
+            stats_after.cache_hits > initial_hits,
             "Expected cache hit: before={}, after={}",
             initial_hits,
             stats_after.cache_hits

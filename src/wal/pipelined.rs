@@ -25,22 +25,22 @@ impl Writer {
 
     fn signal_done(&self, res: Result<u64>) {
         {
-            let mut result = self.result.lock().unwrap();
+            let mut result = self.result.lock().expect("mutex poisoned");
             *result = Some(res);
         }
         {
-            let mut done = self.done.lock().unwrap();
+            let mut done = self.done.lock().expect("mutex poisoned");
             *done = true;
         }
         self.thread.unpark();
     }
     
     fn is_done(&self) -> bool {
-        *self.done.lock().unwrap()
+        *self.done.lock().expect("mutex poisoned")
     }
     
     fn take_result(&self) -> Result<u64> {
-        self.result.lock().unwrap().take().unwrap()
+        self.result.lock().expect("mutex poisoned").take().expect("result must be set before waking writer")
     }
 }
 
@@ -77,7 +77,7 @@ impl PipelinedWAL {
 
         // 1. Enqueue
         let is_leader = {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.lock().expect("mutex poisoned");
             state.queue.push_back(writer.clone());
             if !state.writer_active {
                 state.writer_active = true;
@@ -116,7 +116,7 @@ impl PipelinedWAL {
                 let deadline = Instant::now() + self.delay;
                 
                 loop {
-                    let mut state = self.state.lock().unwrap();
+                    let mut state = self.state.lock().expect("mutex poisoned");
                     if state.queue.is_empty() {
                         state.writer_active = false;
                         return;
@@ -135,7 +135,7 @@ impl PipelinedWAL {
                 }
             } else {
                 // No delay - greedy consumption
-                let mut state = self.state.lock().unwrap();
+                let mut state = self.state.lock().expect("mutex poisoned");
                 if state.queue.is_empty() {
                     state.writer_active = false;
                     return;
@@ -171,8 +171,7 @@ impl PipelinedWAL {
                 Err(e) => {
                     let err_str = e.to_string();
                     for writer in batch_writers.iter() {
-                        let err = crate::wal::WALError::Io(std::io::Error::new(
-                            std::io::ErrorKind::Other,
+                        let err = crate::wal::WALError::Io(std::io::Error::other(
                             err_str.clone(),
                         ));
                         writer.signal_done(Err(err));

@@ -213,9 +213,9 @@ impl MetricsCollector {
 
     /// Get latency percentiles (microseconds)
     pub fn get_latency_percentiles(&self) -> LatencyPercentiles {
-        let put_hist = self.put_latencies.lock().unwrap();
-        let get_hist = self.get_latencies.lock().unwrap();
-        let delete_hist = self.delete_latencies.lock().unwrap();
+        let put_hist = self.put_latencies.lock().expect("mutex poisoned");
+        let get_hist = self.get_latencies.lock().expect("mutex poisoned");
+        let delete_hist = self.delete_latencies.lock().expect("mutex poisoned");
 
         let put_stats = (
             put_hist.value_at_percentile(50.0),

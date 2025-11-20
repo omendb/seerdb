@@ -129,6 +129,14 @@ harness = false
 name = "baseline_benchmark"
 required-features = ["baseline-benchmarks"]
 
+[[example]]
+name = "dhat_profile_writes"
+required-features = ["dhat-heap"]
+
+[[example]]
+name = "dhat_profile_scans"
+required-features = ["dhat-heap"]
+
 [profile.release]
 opt-level = 3
 lto = true

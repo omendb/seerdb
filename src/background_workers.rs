@@ -15,10 +15,9 @@ use crate::sstable::BufferedSSTableBuilder;
 #[cfg(feature = "object-store")]
 use crate::storage::Storage;
 use crate::vlog::VLog;
-use crate::wal::{Record, WAL};
+use crate::wal::WAL;
 use arc_swap::ArcSwap;
 use bytes::Bytes;
-use crossbeam_channel::{unbounded, Sender as CrossbeamSender};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Sender};

@@ -32,7 +32,7 @@ use varint_rs::VarintWriter;
 /// Helper to write varint to BytesMut
 fn write_varint(buf: &mut BytesMut, value: u64) {
     let mut temp = Vec::new();
-    temp.write_u64_varint(value).unwrap();
+    temp.write_u64_varint(value).expect("write to memory failed");
     buf.extend_from_slice(&temp);
 }
 
@@ -48,7 +48,7 @@ fn read_varint(data: &[u8], offset: &mut usize) -> Option<u64> {
             *offset += len;
             return Some(val);
         }
-        return None;
+        None
     }
     #[cfg(not(feature = "simd"))]
     {

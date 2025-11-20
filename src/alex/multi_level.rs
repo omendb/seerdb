@@ -291,8 +291,8 @@ impl InnerNode {
 
         // Create split keys (first key of each leaf except the first)
         let mut split_keys = Vec::new();
-        for i in 1..leaf_keys.len() {
-            split_keys.push(leaf_keys[i].0);
+        for leaf_key in leaf_keys.iter().skip(1) {
+            split_keys.push(leaf_key.0);
         }
 
         Ok(Self {
@@ -383,8 +383,8 @@ impl InnerNode {
     fn extract_split_keys(groups: &[Vec<(i64, usize)>]) -> Vec<i64> {
         let mut split_keys = Vec::new();
 
-        for i in 1..groups.len() {
-            if let Some((key, _)) = groups[i].first() {
+        for group in groups.iter().skip(1) {
+            if let Some((key, _)) = group.first() {
                 split_keys.push(*key);
             }
         }

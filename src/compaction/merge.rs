@@ -53,7 +53,7 @@ impl MergeIterator {
                 let mut j = i + 1;
                 
                 // Find all versions of this key
-                while j < all_entries.len() && &all_entries[j].0 == key {
+                while j < all_entries.len() && all_entries[j].0 == key {
                     j += 1;
                 }
                 

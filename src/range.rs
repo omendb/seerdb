@@ -123,7 +123,7 @@ impl RangeIterator {
         }
 
         // Create k-way merge iterator
-        let merge = KWayMergeIterator::new(iterators).map_err(|e| std::io::Error::other(e))?;
+        let merge = KWayMergeIterator::new(iterators).map_err(std::io::Error::other)?;
 
         Ok(RangeIterator { inner: merge })
     }
@@ -137,7 +137,7 @@ impl Iterator for RangeIterator {
         // Just unwrap the Option<Bytes> (always Some after tombstone filtering)
         self.inner.next().map(|result| {
             result
-                .map(|(key, value_opt)| (key, value_opt.unwrap()))
+                .map(|(key, value_opt)| (key, value_opt.expect("filtered by k-way merge")))
                 .map_err(|e| e as Box<dyn std::error::Error>)
         })
     }

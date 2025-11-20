@@ -141,7 +141,7 @@ pub(crate) fn cleanup_old_deletions(
 ) {
     const DELETION_DELAY: std::time::Duration = std::time::Duration::from_secs(5);
 
-    let mut pending = pending_deletions.lock().unwrap();
+    let mut pending = pending_deletions.lock().expect("pending_deletions lock poisoned");
     let now = std::time::Instant::now();
 
     // Separate files into (ready_to_delete, still_pending)
