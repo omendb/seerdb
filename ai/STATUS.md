@@ -59,8 +59,15 @@
     - ❌ NOT a drop-in OS cache replacement for single-SSTable random reads
   - **Status**: Working as designed. Benchmark workload doesn't benefit from BufferPool.
 
+**Recent Work (Nov 20, 2025 - Part 5: Documentation)**:
+- **Documentation**: ✅ Completed public API documentation updates.
+  - Added comprehensive documentation for RangeIterator with LSM semantics, performance notes, and examples.
+  - Documented range_keys_only and prefix_keys_only methods with performance benefits and examples.
+  - All key public APIs now have complete documentation with examples.
+  - All 178 tests passing.
+
 **Next Focus**:
-1. **Documentation** - Update public API docs.
+All active work complete!
 
 **Environment Notes**:
 - **Mac (M3 Max, 128GB)**: Large-scale tests, development, tokio + LocalFileSystem.

@@ -32,11 +32,67 @@ where
 
 /// Range iterator that merges memtable and SSTable data using k-way merge
 ///
-/// LSM semantics:
-/// - Newer entries (memtable, then L0, L1, ... LN) override older entries
-/// - Tombstones hide older values
+/// Provides efficient streaming iteration over key ranges in the database,
+/// automatically merging data from memtables and all LSM levels.
 ///
-/// Truly lazy iteration: Loads blocks on-demand, no upfront materialization
+/// # LSM Semantics
+///
+/// - Newer entries (memtable, then L0, L1, ... LN) override older entries
+/// - Tombstones hide older values (deleted keys)
+/// - Only the most recent value for each key is returned
+///
+/// # Performance
+///
+/// - **Lazy loading**: Loads SSTable blocks on-demand, no upfront materialization
+/// - **K-way merge**: O(k log k) per entry where k = number of memtables + SSTables
+/// - **Memory efficient**: O(k) memory usage, streams results without buffering
+/// - **Bloom filter optimization**: Skips SSTables that don't contain keys in range
+///
+/// # Examples
+///
+/// Basic range iteration:
+///
+/// ```rust,no_run
+/// use seerdb::{DB, DBOptions};
+///
+/// let db = DB::open(DBOptions::default()).unwrap();
+/// db.put(b"a", b"1").unwrap();
+/// db.put(b"b", b"2").unwrap();
+/// db.put(b"c", b"3").unwrap();
+///
+/// // Iterate over range [b, c)
+/// for result in db.range(b"b", Some(b"c")).unwrap() {
+///     let (key, value) = result.unwrap();
+///     println!("{:?} => {:?}", key, value);
+/// }
+/// // Output: b => 2
+/// ```
+///
+/// Prefix iteration:
+///
+/// ```rust,no_run
+/// use seerdb::{DB, DBOptions};
+///
+/// let db = DB::open(DBOptions::default()).unwrap();
+/// db.put(b"user:1", b"alice").unwrap();
+/// db.put(b"user:2", b"bob").unwrap();
+/// db.put(b"post:1", b"hello").unwrap();
+///
+/// // Iterate over all keys starting with "user:"
+/// for result in db.prefix(b"user:").unwrap() {
+///     let (key, value) = result.unwrap();
+///     println!("{:?} => {:?}", key, value);
+/// }
+/// // Output: user:1 => alice, user:2 => bob
+/// ```
+///
+/// # Error Handling
+///
+/// Each iteration returns a `Result` that may contain:
+/// - [`crate::sstable::SSTableError`]: SSTable corruption or I/O error
+/// - [`crate::vlog::VLogError`]: Failed to read large value from vLog
+///
+/// Iterator terminates on first error.
 pub struct RangeIterator {
     // K-way merge iterator (O(k log k) per entry, O(k) memory)
     inner: KWayMergeIterator<

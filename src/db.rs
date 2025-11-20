@@ -3243,6 +3243,38 @@ impl DB {
         self.range_internal(start_key, end_key, true)
     }
 
+    /// Iterate over keys in a range without reading values
+    ///
+    /// This is an optimized version of [`range()`](Self::range) that only returns keys,
+    /// skipping value reads. This is useful for:
+    /// - Checking key existence in bulk
+    /// - Counting keys in a range
+    /// - Collecting keys for later processing
+    ///
+    /// # Performance
+    ///
+    /// Significantly faster than `range()` when values are large or stored in vLog:
+    /// - No vLog lookups for large values
+    /// - Reduced memory usage (only keys loaded)
+    /// - Same bloom filter and index optimizations as `range()`
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use seerdb::{DB, DBOptions};
+    ///
+    /// let db = DB::open(DBOptions::default()).unwrap();
+    /// db.put(b"key1", b"large_value_1").unwrap();
+    /// db.put(b"key2", b"large_value_2").unwrap();
+    /// db.put(b"key3", b"large_value_3").unwrap();
+    ///
+    /// // Collect keys without reading values
+    /// let keys: Vec<_> = db.range_keys_only(b"key", Some(b"key9"))
+    ///     .unwrap()
+    ///     .map(|r| r.unwrap().0)
+    ///     .collect();
+    /// assert_eq!(keys.len(), 3);
+    /// ```
     pub fn range_keys_only(&self, start_key: &[u8], end_key: Option<&[u8]>) -> Result<RangeIterator> {
         self.range_internal(start_key, end_key, false)
     }
@@ -3419,6 +3451,38 @@ impl DB {
         }
     }
 
+    /// Iterate over keys with a given prefix without reading values
+    ///
+    /// This is an optimized version of [`prefix()`](Self::prefix) that only returns keys,
+    /// skipping value reads. This is useful for:
+    /// - Listing all keys under a prefix
+    /// - Counting entries with a common prefix
+    /// - Collecting keys for batched operations
+    ///
+    /// # Performance
+    ///
+    /// Significantly faster than `prefix()` when values are large:
+    /// - No vLog lookups for large values
+    /// - Reduced memory usage (only keys loaded)
+    /// - Prefix bloom filter optimization still applies
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use seerdb::{DB, DBOptions};
+    ///
+    /// let db = DB::open(DBOptions::default()).unwrap();
+    /// db.put(b"user:1:name", b"alice").unwrap();
+    /// db.put(b"user:1:email", b"alice@example.com").unwrap();
+    /// db.put(b"user:2:name", b"bob").unwrap();
+    ///
+    /// // List all user:1 keys
+    /// let keys: Vec<_> = db.prefix_keys_only(b"user:1:")
+    ///     .unwrap()
+    ///     .map(|r| r.unwrap().0)
+    ///     .collect();
+    /// assert_eq!(keys.len(), 2);
+    /// ```
     pub fn prefix_keys_only(&self, prefix: &[u8]) -> Result<RangeIterator> {
         let end_key = increment_bytes(prefix);
         match end_key {
