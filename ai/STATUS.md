@@ -1,21 +1,22 @@
 # STATUS - seerdb
 
-**Last Updated**: November 19, 2025
-**Current Phase**: Research & Planning
+**Last Updated**: November 20, 2025
+**Current Phase**: Optimization & Features
 
 **Recent Work (Nov 20, 2025)**:
-- **Merge Operator**: ✅ Implemented full `merge(key, operand)` API with `MergeOperator` trait.
-  - Supports lazy merge on read (`get`) and compaction (partial merge).
-  - Implemented stacking in Memtable (optimized write path).
-  - Verified with unit tests (in-memory, stacking, flush/recovery).
-- **LeanStore**: Phase 1 Integrated (BufferPool + Clock Eviction).
-- **WAL Pipelining**: Group Commit enabled (30x scaling).
-- **Cleanup**: Archived old research, consolidated docs.
+- **Compaction Audit**: ✅ Analyzed architecture. SeerDB uses **Tiered Compaction**, which is write-optimized and immune to the random-write scaling issues affecting Leveled compaction.
+  - Verified with `compaction_stress_test` (stable throughput).
+  - Decision: Stick with Tiered for now, prioritize **Prefix Bloom Filters** to mitigate Read Amp.
+- **Merge Operator**: ✅ Merged to `main`.
+- **Prefix Bloom Filters**: ✅ Implemented format v2 and persistence.
+  - Optimization disabled temporarily due to test regressions (correctness first).
+  - Foundation laid for high-performance graph traversals.
+- **LeanStore**: Phase 1 Integrated.
+- **Code Quality**: ✅ Addressed static analysis warnings and duplication.
 
 **Next Focus**: 
-- Evaluate "Lipah" (LeanStore evolution) and `qpdb`.
-- Decide on deeper buffer manager integration vs. alternatives.
-- Create `ai/PLAN_V2.md`.
+- **Enable Prefix Bloom Optimization**: Debug and enable for read path.
+- **Lazy Leveling** (Future): Evaluate for better read performance.
 
 **Success Metrics**:
 - ✅ **Performance**: 878K writes/sec (2.47x RocksDB), 2.2M reads/sec (2.07x RocksDB).

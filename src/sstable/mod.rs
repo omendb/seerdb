@@ -42,13 +42,16 @@ pub type Result<T> = std::result::Result<T, SSTableError>;
 
 /// Magic number for SSTable format: "SSTB"
 const MAGIC: u32 = 0x53535442;
-const VERSION: u32 = 0x00000001; // v1: Format versions don't matter until we release
+const VERSION: u32 = 0x00000002; // v2: Added prefix bloom filter
 
 /// Entry value type flags
 pub const FLAG_INLINE: u8 = 0x00;
 pub const FLAG_POINTER: u8 = 0x01;
 pub const FLAG_TOMBSTONE: u8 = 0x02;
 pub const FLAG_MERGE: u8 = 0x03;
+
+/// Default prefix length for prefix bloom filter
+pub const DEFAULT_PREFIX_LEN: usize = 3;
 
 /// Helper: Handle vLog separation logic (shared by both SSTableBuilder and BufferedSSTableBuilder)
 ///
@@ -142,6 +145,8 @@ pub struct SSTableBuilder {
     index_block: BlockBuilder,
     top_level_index: Vec<TopLevelIndexEntry>,
     bloom: BloomFilter,
+    prefix_bloom: BloomFilter,
+    prefix_len: usize,
     vlog_threshold: Option<usize>,
     num_entries: u64,
     current_offset: u64,
@@ -164,7 +169,7 @@ impl SSTableBuilder {
             .truncate(true)
             .open(path)?;
 
-        let header = Self::create_header();
+        let header = Self::create_header(DEFAULT_PREFIX_LEN);
         file.write_all(&header)?;
         let header_size = header.len() as u64;
 
@@ -174,6 +179,8 @@ impl SSTableBuilder {
             index_block: BlockBuilder::with_capacity(DEFAULT_BLOCK_SIZE),
             top_level_index: Vec::new(),
             bloom: BloomFilter::new(10000, 0.01),
+            prefix_bloom: BloomFilter::new(10000, 0.01),
+            prefix_len: DEFAULT_PREFIX_LEN,
             vlog_threshold: None,
             num_entries: 0,
             current_offset: header_size,
@@ -186,6 +193,17 @@ impl SSTableBuilder {
 
     pub fn with_vlog_threshold(mut self, threshold: usize) -> Self {
         self.vlog_threshold = Some(threshold);
+        self
+    }
+
+    pub fn with_prefix_len(mut self, len: usize) -> Self {
+        self.prefix_len = len;
+        // Re-create header with correct prefix_len
+        // Note: This rewrites the header to the file, which is fine since we're at the start
+        let header = Self::create_header(len);
+        let _ = self.file.seek(SeekFrom::Start(0));
+        let _ = self.file.write_all(&header);
+        let _ = self.file.seek(SeekFrom::Start(self.current_offset));
         self
     }
 
@@ -204,6 +222,10 @@ impl SSTableBuilder {
         self.max_key = Some(key.clone());
 
         self.bloom.insert(&key);
+        if self.prefix_len > 0 && key.len() >= self.prefix_len {
+            self.prefix_bloom.insert(&key[..self.prefix_len]);
+        }
+
         let entry = self.encode_entry(&key, FLAG_INLINE, &value);
 
         if !self.data_block.add(&key, &entry) {
@@ -234,6 +256,9 @@ impl SSTableBuilder {
         self.max_key = Some(key.clone());
 
         self.bloom.insert(&key);
+        if self.prefix_len > 0 && key.len() >= self.prefix_len {
+            self.prefix_bloom.insert(&key[..self.prefix_len]);
+        }
 
         if !self.data_block.add(&key, &encoded_value) {
             self.flush_data_block()?;
@@ -414,6 +439,13 @@ impl SSTableBuilder {
         self.file.write_all(&bloom_bytes)?;
         self.current_offset += 8 + bloom_bytes.len() as u64;
 
+        let prefix_bloom_offset = self.current_offset;
+        let prefix_bloom_bytes = self.prefix_bloom.to_bytes();
+        self.file
+            .write_all(&(prefix_bloom_bytes.len() as u64).to_le_bytes())?;
+        self.file.write_all(&prefix_bloom_bytes)?;
+        self.current_offset += 8 + prefix_bloom_bytes.len() as u64;
+
         // Write min_key/max_key metadata
         let metadata_offset = self.current_offset;
         self.write_metadata()?;
@@ -426,7 +458,12 @@ impl SSTableBuilder {
         self.file.write_all(&self.max_sequence.to_le_bytes())?; // Offset 24-31
         self.file.seek(SeekFrom::Start(footer_offset))?; // Return to footer position
 
-        self.write_footer(top_level_offset, bloom_offset, metadata_offset)?;
+        self.write_footer(
+            top_level_offset,
+            bloom_offset,
+            prefix_bloom_offset,
+            metadata_offset,
+        )?;
 
         // CRITICAL: Fsync to ensure durability (sync data + metadata)
         // This guarantees all SSTable data is persisted to disk before returning
@@ -478,6 +515,7 @@ impl SSTableBuilder {
         &mut self,
         top_level_offset: u64,
         bloom_offset: u64,
+        prefix_bloom_offset: u64,
         metadata_offset: u64,
     ) -> Result<()> {
         let footer_start = self.current_offset;
@@ -496,26 +534,29 @@ impl SSTableBuilder {
         self.file.seek(SeekFrom::Start(footer_start))?;
 
         // OPTIMIZATION: Batch footer writes into single buffer (8 syscalls → 1 syscall)
-        let mut footer_buffer = Vec::with_capacity(48); // Footer is exactly 48 bytes
+        let mut footer_buffer = Vec::with_capacity(56);
         footer_buffer.extend_from_slice(&self.index_blocks_start.to_le_bytes());
         footer_buffer.extend_from_slice(&top_level_offset.to_le_bytes());
         footer_buffer.extend_from_slice(&bloom_offset.to_le_bytes());
+        footer_buffer.extend_from_slice(&prefix_bloom_offset.to_le_bytes());
         footer_buffer.extend_from_slice(&metadata_offset.to_le_bytes());
         footer_buffer.extend_from_slice(&checksum.to_le_bytes());
         footer_buffer.extend_from_slice(&MAGIC.to_le_bytes());
         footer_buffer.extend_from_slice(&VERSION.to_le_bytes());
-        footer_buffer.extend_from_slice(&0u32.to_le_bytes());
+        footer_buffer.extend_from_slice(&0u32.to_le_bytes()); // Padding
 
         self.file.write_all(&footer_buffer)?;
 
         Ok(())
     }
 
-    fn create_header() -> Vec<u8> {
+    fn create_header(prefix_len: usize) -> Vec<u8> {
         let mut header = Vec::with_capacity(32);
         header.extend_from_slice(&MAGIC.to_le_bytes()); // 4 bytes: magic
         header.extend_from_slice(&VERSION.to_le_bytes()); // 4 bytes: version
-        header.extend_from_slice(&0u64.to_le_bytes()); // 8 bytes: reserved
+        // Store prefix_len in reserved field (4 bytes prefix_len + 4 bytes reserved)
+        header.extend_from_slice(&(prefix_len as u32).to_le_bytes());
+        header.extend_from_slice(&0u32.to_le_bytes());
         header.extend_from_slice(&0u64.to_le_bytes()); // 8 bytes: num_entries (filled in finish())
         header.extend_from_slice(&0u64.to_le_bytes()); // 8 bytes: max_sequence (filled in finish())
         header
@@ -534,6 +575,8 @@ pub struct BufferedSSTableBuilder {
     index_block: BlockBuilder,
     top_level_index: Vec<TopLevelIndexEntry>,
     bloom: BloomFilter,
+    prefix_bloom: BloomFilter,
+    prefix_len: usize,
     vlog_threshold: Option<usize>,
     num_entries: u64,
     current_offset: u64,
@@ -546,7 +589,7 @@ pub struct BufferedSSTableBuilder {
 impl BufferedSSTableBuilder {
     /// Create a new buffered SSTable builder
     pub fn new() -> Self {
-        let header = Self::create_header();
+        let header = Self::create_header(DEFAULT_PREFIX_LEN);
         let header_size = header.len() as u64;
         let mut buffer = BytesMut::with_capacity(64 * 1024); // Start with 64KB
         buffer.extend_from_slice(&header);
@@ -557,6 +600,8 @@ impl BufferedSSTableBuilder {
             index_block: BlockBuilder::with_capacity(DEFAULT_BLOCK_SIZE),
             top_level_index: Vec::new(),
             bloom: BloomFilter::new(10000, 0.01),
+            prefix_bloom: BloomFilter::new(10000, 0.01),
+            prefix_len: DEFAULT_PREFIX_LEN,
             vlog_threshold: None,
             num_entries: 0,
             current_offset: header_size,
@@ -572,6 +617,14 @@ impl BufferedSSTableBuilder {
         self
     }
 
+    pub fn with_prefix_len(mut self, len: usize) -> Self {
+        self.prefix_len = len;
+        // Rewrite header
+        let header = Self::create_header(len);
+        self.buffer[0..32].copy_from_slice(&header);
+        self
+    }
+
     pub fn with_max_sequence(mut self, seq: u64) -> Self {
         self.max_sequence = seq;
         self
@@ -584,6 +637,9 @@ impl BufferedSSTableBuilder {
         self.max_key = Some(key.clone());
 
         self.bloom.insert(&key);
+        if self.prefix_len > 0 && key.len() >= self.prefix_len {
+            self.prefix_bloom.insert(&key[..self.prefix_len]);
+        }
         let entry = self.encode_entry(&key, FLAG_INLINE, &value);
 
         if !self.data_block.add(&key, &entry) {
@@ -610,6 +666,9 @@ impl BufferedSSTableBuilder {
         self.max_key = Some(key.clone());
 
         self.bloom.insert(&key);
+        if self.prefix_len > 0 && key.len() >= self.prefix_len {
+            self.prefix_bloom.insert(&key[..self.prefix_len]);
+        }
 
         if !self.data_block.add(&key, &encoded_value) {
             self.flush_data_block()?;
@@ -793,6 +852,13 @@ impl BufferedSSTableBuilder {
         self.buffer.extend_from_slice(&bloom_bytes);
         self.current_offset += 8 + bloom_bytes.len() as u64;
 
+        let prefix_bloom_offset = self.current_offset;
+        let prefix_bloom_bytes = self.prefix_bloom.to_bytes();
+        self.buffer
+            .extend_from_slice(&(prefix_bloom_bytes.len() as u64).to_le_bytes());
+        self.buffer.extend_from_slice(&prefix_bloom_bytes);
+        self.current_offset += 8 + prefix_bloom_bytes.len() as u64;
+
         let metadata_offset = self.current_offset;
         self.write_metadata();
 
@@ -801,7 +867,13 @@ impl BufferedSSTableBuilder {
         self.buffer[16..24].copy_from_slice(&self.num_entries.to_le_bytes());
         self.buffer[24..32].copy_from_slice(&self.max_sequence.to_le_bytes());
 
-        self.write_footer(top_level_offset, bloom_offset, metadata_offset, footer_offset);
+        self.write_footer(
+            top_level_offset,
+            bloom_offset,
+            prefix_bloom_offset,
+            metadata_offset,
+            footer_offset,
+        );
 
         Ok(self.buffer.freeze())
     }
@@ -856,30 +928,34 @@ impl BufferedSSTableBuilder {
         &mut self,
         top_level_offset: u64,
         bloom_offset: u64,
+        prefix_bloom_offset: u64,
         metadata_offset: u64,
         footer_offset: u64,
     ) {
         // Compute checksum over all data before footer
         let checksum = crc32c::crc32c(&self.buffer[..footer_offset as usize]);
 
-        let mut footer_buffer = Vec::with_capacity(48);
+        let mut footer_buffer = Vec::with_capacity(56);
         footer_buffer.extend_from_slice(&self.index_blocks_start.to_le_bytes());
         footer_buffer.extend_from_slice(&top_level_offset.to_le_bytes());
         footer_buffer.extend_from_slice(&bloom_offset.to_le_bytes());
+        footer_buffer.extend_from_slice(&prefix_bloom_offset.to_le_bytes());
         footer_buffer.extend_from_slice(&metadata_offset.to_le_bytes());
         footer_buffer.extend_from_slice(&checksum.to_le_bytes());
         footer_buffer.extend_from_slice(&MAGIC.to_le_bytes());
         footer_buffer.extend_from_slice(&VERSION.to_le_bytes());
-        footer_buffer.extend_from_slice(&0u32.to_le_bytes());
+        footer_buffer.extend_from_slice(&0u32.to_le_bytes()); // Padding
 
         self.buffer.extend_from_slice(&footer_buffer);
     }
 
-    fn create_header() -> Vec<u8> {
+    fn create_header(prefix_len: usize) -> Vec<u8> {
         let mut header = Vec::with_capacity(32);
         header.extend_from_slice(&MAGIC.to_le_bytes());
         header.extend_from_slice(&VERSION.to_le_bytes());
-        header.extend_from_slice(&0u64.to_le_bytes()); // reserved
+        // Store prefix_len in reserved field (4 bytes prefix_len + 4 bytes reserved)
+        header.extend_from_slice(&(prefix_len as u32).to_le_bytes());
+        header.extend_from_slice(&0u32.to_le_bytes());
         header.extend_from_slice(&0u64.to_le_bytes()); // num_entries (filled later)
         header.extend_from_slice(&0u64.to_le_bytes()); // max_sequence (filled later)
         header
@@ -918,6 +994,8 @@ pub struct SSTable {
     #[allow(dead_code)] // Disabled due to key collision issues (Bug #9), binary search used instead
     alex_index: Option<AlexTree>, // ALEX learned index for faster lookups
     bloom: BloomFilter,
+    prefix_bloom: Option<BloomFilter>,
+    prefix_len: usize,
     num_entries: u64,
     vlog: Option<Arc<Mutex<VLog>>>,
     block_cache: Arc<Cache<u64, Block>>, // LRU cache with size limits
@@ -983,10 +1061,16 @@ impl SSTable {
         // This eliminates repeated open/close overhead (7.1x faster than opening per read)
         let mut file = File::open(&path)?;
 
-        let (num_entries, max_sequence) = Self::read_header(&mut file)?;
-        let (top_level_offset, bloom_offset, metadata_offset) = Self::read_footer(&mut file)?;
+        let (num_entries, max_sequence, prefix_len) = Self::read_header(&mut file)?;
+        let (top_level_offset, bloom_offset, prefix_bloom_offset, metadata_offset) =
+            Self::read_footer(&mut file)?;
         let top_level_index = Self::load_top_level_index(&mut file, top_level_offset)?;
         let bloom = Self::load_bloom_filter(&mut file, bloom_offset)?;
+        let prefix_bloom = if prefix_bloom_offset > 0 {
+            Some(Self::load_bloom_filter(&mut file, prefix_bloom_offset)?)
+        } else {
+            None
+        };
         let (min_key, max_key) = Self::load_metadata(&mut file, metadata_offset)?;
 
         // Build ALEX learned index for faster top-level index lookups
@@ -1016,6 +1100,8 @@ impl SSTable {
             top_level_index,
             alex_index,
             bloom,
+            prefix_bloom,
+            prefix_len,
             num_entries,
             vlog: None,
             block_cache,
@@ -1050,6 +1136,11 @@ impl SSTable {
         self.max_key.as_ref()
     }
 
+    /// Get the configured prefix length for this SSTable
+    pub fn prefix_len(&self) -> usize {
+        self.prefix_len
+    }
+
     /// Check if this SSTable's key range overlaps with [start_key, end_key)
     pub fn overlaps_range(&self, start_key: &[u8], end_key: Option<&[u8]>) -> bool {
         // If we don't have metadata, assume it overlaps (conservative)
@@ -1079,6 +1170,18 @@ impl SSTable {
         self.bloom.contains(key)
     }
 
+    /// Check if a prefix might be in this SSTable (prefix bloom filter check)
+    /// Returns true if the prefix might exist, false if definitely not.
+    /// If prefix filter is not present or prefix is too short, returns true (conservative).
+    pub fn may_contain_prefix(&self, prefix: &[u8]) -> bool {
+        if let Some(ref pb) = self.prefix_bloom {
+            if prefix.len() >= self.prefix_len {
+                return pb.contains(&prefix[..self.prefix_len]);
+            }
+        }
+        true
+    }
+
     /// Get block cache statistics
     pub fn cache_stats(&self) -> (u64, u64, f64) {
         let hits = self.cache_hits.load(Ordering::Relaxed);
@@ -1095,7 +1198,9 @@ impl SSTable {
     pub fn get(&mut self, key: &[u8]) -> Result<Option<Bytes>> {
         match self.get_entry(key)? {
             Some((data, flag)) => {
-                if flag == FLAG_MERGE {
+                if flag == FLAG_TOMBSTONE {
+                    Ok(None)
+                } else if flag == FLAG_MERGE {
                     // Legacy get() cannot handle merge operands without an operator
                     // For now, treat as "Found" but return data (caller beware)
                     // Ideally DB should use get_entry() to handle merges
@@ -1315,7 +1420,7 @@ impl SSTable {
         Ok(block)
     }
 
-    fn read_header(file: &mut File) -> Result<(u64, u64)> {
+    fn read_header(file: &mut File) -> Result<(u64, u64, usize)> {
         file.seek(SeekFrom::Start(0))?;
         let mut header = [0u8; 32];
         file.read_exact(&mut header)?;
@@ -1323,9 +1428,15 @@ impl SSTable {
         let magic = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
         let version = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
 
-        if magic != MAGIC || version != VERSION {
+        if magic != MAGIC {
             return Err(SSTableError::InvalidFormat);
         }
+        // Backward compatibility for v1
+        let prefix_len = if version >= 2 {
+            u32::from_le_bytes([header[8], header[9], header[10], header[11]]) as usize
+        } else {
+            0
+        };
 
         let num_entries = u64::from_le_bytes([
             header[16], header[17], header[18], header[19], header[20], header[21], header[22],
@@ -1337,42 +1448,65 @@ impl SSTable {
             header[31],
         ]);
 
-        Ok((num_entries, max_sequence))
+        Ok((num_entries, max_sequence, prefix_len))
     }
 
-    fn read_footer(file: &mut File) -> Result<(u64, u64, u64)> {
+    fn read_footer(file: &mut File) -> Result<(u64, u64, u64, u64)> {
         let file_size = file.metadata()?.len();
-        file.seek(SeekFrom::Start(file_size - 48))?; // v4: 48 bytes (added metadata_offset)
 
-        let mut footer = [0u8; 48];
-        file.read_exact(&mut footer)?;
-
-        let _index_blocks_offset = u64::from_le_bytes([
-            footer[0], footer[1], footer[2], footer[3], footer[4], footer[5], footer[6], footer[7],
-        ]);
-        let top_level_offset = u64::from_le_bytes([
-            footer[8], footer[9], footer[10], footer[11], footer[12], footer[13], footer[14],
-            footer[15],
-        ]);
-        let bloom_offset = u64::from_le_bytes([
-            footer[16], footer[17], footer[18], footer[19], footer[20], footer[21], footer[22],
-            footer[23],
-        ]);
-        let metadata_offset = u64::from_le_bytes([
-            footer[24], footer[25], footer[26], footer[27], footer[28], footer[29], footer[30],
-            footer[31],
-        ]);
-
-        let stored_checksum = u32::from_le_bytes([footer[32], footer[33], footer[34], footer[35]]);
-        let magic = u32::from_le_bytes([footer[36], footer[37], footer[38], footer[39]]);
-        let version = u32::from_le_bytes([footer[40], footer[41], footer[42], footer[43]]);
-
-        if magic != MAGIC || version != VERSION {
+        // Read last 48 bytes first (common minimal footer size)
+        // v1: 48 bytes. Magic at offset 36 (from start of 48 byte buffer).
+        // v2: 56 bytes. Magic at offset 44 (from start of 56 byte buffer).
+        //
+        // Magic is always 12 bytes from the end.
+        // Version is always 8 bytes from the end.
+        
+        if file_size < 48 {
             return Err(SSTableError::InvalidFormat);
         }
 
-        // Validate checksum over entire file content (before footer)
-        let footer_start = file_size - 48;
+        // Check Magic and Version at the end of file
+        file.seek(SeekFrom::Start(file_size - 12))?;
+        let mut tail_buf = [0u8; 12];
+        file.read_exact(&mut tail_buf)?;
+        
+        let magic = u32::from_le_bytes(tail_buf[0..4].try_into().unwrap());
+        let version = u32::from_le_bytes(tail_buf[4..8].try_into().unwrap());
+        // Last 4 bytes are padding
+
+        if magic != MAGIC {
+            return Err(SSTableError::InvalidFormat);
+        }
+
+        // Determine footer size based on version
+        let footer_size = if version >= 2 { 56 } else { 48 };
+
+        if file_size < footer_size {
+            return Err(SSTableError::InvalidFormat);
+        }
+
+        file.seek(SeekFrom::Start(file_size - footer_size))?;
+        let mut footer = vec![0u8; footer_size as usize];
+        file.read_exact(&mut footer)?;
+
+        // Common fields (24 bytes)
+        let _index_blocks_offset = u64::from_le_bytes(footer[0..8].try_into().unwrap());
+        let top_level_offset = u64::from_le_bytes(footer[8..16].try_into().unwrap());
+        let bloom_offset = u64::from_le_bytes(footer[16..24].try_into().unwrap());
+
+        let (prefix_bloom_offset, metadata_offset, stored_checksum) = if version >= 2 {
+            let prefix_bloom = u64::from_le_bytes(footer[24..32].try_into().unwrap());
+            let metadata = u64::from_le_bytes(footer[32..40].try_into().unwrap());
+            let checksum = u32::from_le_bytes(footer[40..44].try_into().unwrap());
+            (prefix_bloom, metadata, checksum)
+        } else {
+            let metadata = u64::from_le_bytes(footer[24..32].try_into().unwrap());
+            let checksum = u32::from_le_bytes(footer[32..36].try_into().unwrap());
+            (0, metadata, checksum)
+        };
+
+        // Validate checksum
+        let footer_start = file_size - footer_size;
         file.seek(SeekFrom::Start(0))?;
         let mut computed_checksum = 0u32;
         let mut buf = vec![0u8; 4096];
@@ -1392,7 +1526,12 @@ impl SSTable {
             });
         }
 
-        Ok((top_level_offset, bloom_offset, metadata_offset))
+        Ok((
+            top_level_offset,
+            bloom_offset,
+            prefix_bloom_offset,
+            metadata_offset,
+        ))
     }
 
     fn load_metadata(file: &mut File, offset: u64) -> Result<(Option<Bytes>, Option<Bytes>)> {

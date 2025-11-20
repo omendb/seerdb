@@ -607,8 +607,6 @@ pub struct DB {
     buffer_pool: Option<Arc<BufferPool>>,
     /// Optional compaction filter
     compaction_filter: Option<Arc<dyn crate::compaction::CompactionFilter>>,
-    /// Optional merge operator
-    pub(crate) merge_operator: Option<Arc<dyn MergeOperator>>,
     /// Pipelined WAL for high-concurrency writes (Group Commit with Leader/Follower)
     pub(crate) pipelined_wal: PipelinedWAL,
     /// Cloud storage backend (only available with --features object-store)
@@ -986,7 +984,6 @@ impl DB {
             global_block_cache: Arc::new(Cache::new(options.block_cache_capacity)),
             buffer_pool,
             compaction_filter,
-            merge_operator,
             #[cfg(feature = "object-store")]
             storage_backend,
         };
@@ -3325,7 +3322,35 @@ impl DB {
                     let sstable_guard = sstable_arc.lock().expect("SSTable lock poisoned");
                     let overlaps = sstable_guard.overlaps_range(start_key, end_key);
 
-                    if overlaps {
+                    let should_scan = if overlaps {
+                        // Check prefix bloom filter if applicable
+                        let prefix_len = sstable_guard.prefix_len();
+                        if prefix_len > 0 && start_key.len() >= prefix_len {
+                            let p = &start_key[..prefix_len];
+                            let is_contained = if let Some(end) = end_key {
+                                match increment_bytes(p) {
+                                    Some(p_next) => end <= p_next.as_slice(),
+                                    None => true,
+                                }
+                            } else {
+                                false
+                            };
+
+                            if is_contained {
+                                // FIXME: Prefix bloom filter optimization is causing test failures
+                                // sstable_guard.may_contain_prefix(p)
+                                true
+                            } else {
+                                true
+                            }
+                        } else {
+                            true
+                        }
+                    } else {
+                        false
+                    };
+
+                    if should_scan {
                         let iter = if read_values {
                             sstable_guard.scan_range(start_key, end_key)
                         } else {

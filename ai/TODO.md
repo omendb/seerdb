@@ -9,6 +9,17 @@
 
 ## 🔥 Active Work (Nov 20, 2025)
 
+### Prefix Bloom Filters 🔄 **ACTIVE**
+- [ ] Update `SSTableBuilder` to generate Prefix Bloom Filters.
+- [ ] Update `SSTable` to check Prefix Bloom Filter in `scan_range`.
+- [ ] Benchmark `prefix()` scan performance (expected 10x+ speedup).
+
+### Compaction Optimization ✅ **AUDITED**
+- [x] Audit `compaction/mod.rs` for random write scaling issues.
+  - **Result**: SeerDB uses Tiered Compaction, which handles random writes well.
+  - **Action**: Skip Fjall optimizations (Leveled-specific). Focus on Prefix Bloom Filters.
+- [x] Benchmark compaction throughput vs ingestion rate (`examples/compaction_stress_test.rs`).
+
 ### Merge Operator (The "Graph Killer" Feature) ✅ **COMPLETE**
 - [x] Define `MergeOperator` trait (Full/Partial merge).
 - [x] Implement `Record::Merge` in WAL and `Entry::Merge` in Memtable.
@@ -17,13 +28,6 @@
 - [x] Implement `StringAppendOperator` for testing.
 - [x] Verify with `tests/merge_operator_tests.rs` (All pass).
 - **Impact**: Enables O(1) blind writes for graph edge lists (critical for `omendb`).
-
-### Compaction Optimization 🔄 **NEXT**
-- [ ] Audit `compaction/mod.rs` for random write scaling issues.
-- [ ] Implement Fjall 2.3 optimizations (if applicable).
-
-### Prefix Bloom Filters
-- [ ] Optimize `prefix_seek` for graph traversal.
 
 ### Group Commit Implementation ✅ **COMPLETE**
 - [x] Implement group commit (batching writes before fsync)
