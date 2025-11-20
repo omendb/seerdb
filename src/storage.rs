@@ -12,6 +12,98 @@ use std::path::{Path, PathBuf};
 #[cfg(feature = "object-store")]
 use std::sync::Arc;
 
+#[cfg(feature = "object-store")]
+use rand::Rng;
+
+/// Retry configuration for object store operations
+///
+/// Controls retry behavior for transient failures (network timeouts, 503, etc.)
+#[cfg(feature = "object-store")]
+#[derive(Debug, Clone)]
+pub struct RetryConfig {
+    /// Maximum number of retry attempts (0 = no retries, fail immediately)
+    pub max_attempts: u32,
+    /// Base delay in milliseconds for exponential backoff
+    pub base_delay_ms: u64,
+    /// Maximum delay cap in milliseconds (prevents excessive waits)
+    pub max_delay_ms: u64,
+    /// Enable jitter to prevent thundering herd (adds random 0-50% to delay)
+    pub jitter: bool,
+}
+
+#[cfg(feature = "object-store")]
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: 3,
+            base_delay_ms: 100,
+            max_delay_ms: 5000,
+            jitter: true,
+        }
+    }
+}
+
+#[cfg(feature = "object-store")]
+impl RetryConfig {
+    /// No retries - fail immediately on any error
+    pub fn none() -> Self {
+        Self {
+            max_attempts: 0,
+            ..Default::default()
+        }
+    }
+
+    /// Aggressive retries for unreliable networks
+    pub fn aggressive() -> Self {
+        Self {
+            max_attempts: 5,
+            base_delay_ms: 50,
+            max_delay_ms: 10000,
+            jitter: true,
+        }
+    }
+
+    /// Calculate delay for attempt N with exponential backoff and optional jitter
+    fn delay_for_attempt(&self, attempt: u32) -> std::time::Duration {
+        let base_delay = self.base_delay_ms * 2u64.pow(attempt);
+        let delay = std::cmp::min(base_delay, self.max_delay_ms);
+
+        if self.jitter {
+            let jitter_range = delay / 2; // 0-50% jitter
+            let jitter = rand::thread_rng().gen_range(0..=jitter_range);
+            std::time::Duration::from_millis(delay + jitter)
+        } else {
+            std::time::Duration::from_millis(delay)
+        }
+    }
+}
+
+/// Classify object_store errors into retryable vs permanent
+#[cfg(feature = "object-store")]
+fn is_retryable_error(err: &object_store::Error) -> bool {
+    use object_store::Error;
+
+    match err {
+        // Transient network errors - should retry
+        Error::Generic { source, .. } => {
+            let msg = source.to_string().to_lowercase();
+            msg.contains("timeout")
+                || msg.contains("connection reset")
+                || msg.contains("connection refused")
+                || msg.contains("temporarily unavailable")
+        }
+        // Permanent errors - fail fast
+        Error::NotFound { .. } => false,
+        Error::AlreadyExists { .. } => false,
+        Error::Precondition { .. } => false,
+        Error::NotModified { .. } => false,
+        Error::InvalidPath { .. } => false,
+        Error::UnknownConfigurationKey { .. } => false,
+        // Conservative: treat unknown errors as non-retryable
+        _ => false,
+    }
+}
+
 /// Storage trait for pluggable storage implementations
 ///
 /// Enables:
@@ -240,27 +332,44 @@ impl LocalStorage {
 /// - Writes buffer entire SSTable in memory before upload (64MB max)
 /// - Reads use range requests (ideal for block-based access)
 /// - Uses tokio runtime internally (sync wrapper over async)
-/// - Includes retry logic with exponential backoff
+/// - Includes retry logic with exponential backoff and jitter
 #[cfg(feature = "object-store")]
 pub struct ObjectStoreBackend {
     store: Arc<dyn object_store::ObjectStore>,
     runtime: tokio::runtime::Handle,
     prefix: String,
+    retry_config: RetryConfig,
 }
 
 #[cfg(feature = "object-store")]
 impl ObjectStoreBackend {
-    /// Create a new ObjectStoreBackend
+    /// Create a new ObjectStoreBackend with default retry configuration
     ///
     /// # Arguments
     ///
     /// * `store` - The object_store implementation (S3, GCS, Azure, etc.)
     /// * `prefix` - Optional path prefix for all objects (e.g., "seerdb/data/")
     pub fn new(store: Arc<dyn object_store::ObjectStore>, prefix: String) -> Self {
+        Self::with_retry_config(store, prefix, RetryConfig::default())
+    }
+
+    /// Create a new ObjectStoreBackend with custom retry configuration
+    ///
+    /// # Arguments
+    ///
+    /// * `store` - The object_store implementation (S3, GCS, Azure, etc.)
+    /// * `prefix` - Optional path prefix for all objects (e.g., "seerdb/data/")
+    /// * `retry_config` - Retry behavior configuration
+    pub fn with_retry_config(
+        store: Arc<dyn object_store::ObjectStore>,
+        prefix: String,
+        retry_config: RetryConfig,
+    ) -> Self {
         Self {
             store,
             runtime: tokio::runtime::Handle::current(),
             prefix,
+            retry_config,
         }
     }
 
@@ -296,6 +405,7 @@ impl ObjectStoreBackend {
             store: Arc::new(store),
             runtime: tokio::runtime::Handle::current(),
             prefix,
+            retry_config: RetryConfig::default(),
         })
     }
 
@@ -327,6 +437,7 @@ impl ObjectStoreBackend {
             store: Arc::new(store),
             runtime: tokio::runtime::Handle::current(),
             prefix,
+            retry_config: RetryConfig::default(),
         })
     }
 
@@ -350,6 +461,7 @@ impl ObjectStoreBackend {
             store: Arc::new(store),
             runtime: tokio::runtime::Handle::current(),
             prefix,
+            retry_config: RetryConfig::default(),
         })
     }
 
@@ -362,6 +474,35 @@ impl ObjectStoreBackend {
         };
         object_store::path::Path::from(path_str)
     }
+
+    /// Execute an async operation with retry logic
+    ///
+    /// Automatically retries on transient errors with exponential backoff + jitter.
+    /// Returns immediately on permanent errors (NotFound, auth failures, etc.)
+    async fn retry_async<F, T, Fut>(&self, operation: F) -> Result<T>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = std::result::Result<T, object_store::Error>>,
+    {
+        let mut attempt = 0;
+
+        loop {
+            match operation().await {
+                Ok(result) => return Ok(result),
+                Err(e) => {
+                    // Check if we should retry
+                    if attempt >= self.retry_config.max_attempts || !is_retryable_error(&e) {
+                        return Err(crate::db::DBError::ObjectStore(e.to_string()));
+                    }
+
+                    // Sleep with exponential backoff + jitter
+                    let delay = self.retry_config.delay_for_attempt(attempt);
+                    tokio::time::sleep(delay).await;
+                    attempt += 1;
+                }
+            }
+        }
+    }
 }
 
 #[cfg(feature = "object-store")]
@@ -371,46 +512,32 @@ impl Storage for ObjectStoreBackend {
         let range = offset as usize..(offset as usize + size as usize);
 
         self.runtime.block_on(async {
-            let bytes = self
-                .store
-                .get_range(&object_path, range)
-                .await
-                .map_err(|e| crate::db::DBError::ObjectStore(e.to_string()))?;
-            Ok(bytes.to_vec())
+            self.retry_async(|| async {
+                let bytes = self.store.get_range(&object_path, range.clone()).await?;
+                Ok(bytes.to_vec())
+            })
+            .await
         })
     }
 
     fn write_sstable(&self, path: &Path, data: &[u8]) -> Result<()> {
         let object_path = self.to_object_path(path);
-
-        // Retry with exponential backoff
-        let max_attempts = 3;
-        let mut attempt = 0;
+        let data = data.to_vec(); // Clone for async closure
 
         self.runtime.block_on(async {
-            loop {
-                match self.store.put(&object_path, data.to_vec().into()).await {
-                    Ok(_) => return Ok(()),
-                    Err(e) if attempt < max_attempts => {
-                        attempt += 1;
-                        let delay = std::time::Duration::from_millis(100 * 2u64.pow(attempt));
-                        tokio::time::sleep(delay).await;
-                    }
-                    Err(e) => return Err(crate::db::DBError::ObjectStore(e.to_string())),
-                }
-            }
+            self.retry_async(|| async {
+                self.store.put(&object_path, data.clone().into()).await?;
+                Ok(())
+            })
+            .await
         })
     }
 
     fn delete_sstable(&self, path: &Path) -> Result<()> {
         let object_path = self.to_object_path(path);
 
-        self.runtime.block_on(async {
-            self.store
-                .delete(&object_path)
-                .await
-                .map_err(|e| crate::db::DBError::ObjectStore(e.to_string()))
-        })
+        self.runtime
+            .block_on(async { self.retry_async(|| self.store.delete(&object_path)).await })
     }
 
     fn sync(&self, _path: &Path) -> Result<()> {
@@ -423,10 +550,17 @@ impl Storage for ObjectStoreBackend {
         let object_path = self.to_object_path(path);
 
         self.runtime.block_on(async {
-            match self.store.head(&object_path).await {
+            // Note: We don't retry NotFound errors (they're permanent)
+            // but retry_async will handle this correctly via is_retryable_error
+            match self
+                .retry_async(|| async { self.store.head(&object_path).await })
+                .await
+            {
                 Ok(_) => Ok(true),
-                Err(object_store::Error::NotFound { .. }) => Ok(false),
-                Err(e) => Err(crate::db::DBError::ObjectStore(e.to_string())),
+                Err(crate::db::DBError::ObjectStore(msg)) if msg.contains("not found") => {
+                    Ok(false)
+                }
+                Err(e) => Err(e),
             }
         })
     }
@@ -437,21 +571,21 @@ impl Storage for ObjectStoreBackend {
         self.runtime.block_on(async {
             use futures::TryStreamExt;
 
-            let mut sstables = Vec::new();
-            let mut stream = self.store.list(Some(&prefix));
+            // Retry the entire list operation (stream creation + consumption)
+            self.retry_async(|| async {
+                let mut sstables = Vec::new();
+                let mut stream = self.store.list(Some(&prefix));
 
-            while let Some(meta) = stream
-                .try_next()
-                .await
-                .map_err(|e| crate::db::DBError::ObjectStore(e.to_string()))?
-            {
-                let path_str = meta.location.to_string();
-                if path_str.ends_with(".sst") {
-                    sstables.push(PathBuf::from(path_str));
+                while let Some(meta) = stream.try_next().await? {
+                    let path_str = meta.location.to_string();
+                    if path_str.ends_with(".sst") {
+                        sstables.push(PathBuf::from(path_str));
+                    }
                 }
-            }
 
-            Ok(sstables)
+                Ok(sstables)
+            })
+            .await
         })
     }
 }
@@ -537,6 +671,7 @@ mod tests {
                     store,
                     runtime: tokio::runtime::Handle::current(),
                     prefix: String::new(),
+                    retry_config: RetryConfig::default(),
                 }
             });
             (rt, backend)
@@ -616,6 +751,7 @@ mod tests {
                     store: store.clone(),
                     runtime: tokio::runtime::Handle::current(),
                     prefix: "seerdb/data".to_string(),
+                    retry_config: RetryConfig::default(),
                 }
             });
             let _guard = rt.enter();

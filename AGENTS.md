@@ -47,8 +47,8 @@
 ---
 
 ## Environment
-- **Mac (M3 Max)**: Primary Development. Tests `tokio` + `LocalFileSystem` object store.
-- **Fedora (i9-13900KF)**: Performance & Linux SOTA. Tests `io_uring` + `io_uring` backend.
+- **Mac (M3 Max, 128GB)**: Primary Development. Large-scale tests. Tests `tokio` + `LocalFileSystem`.
+- **Fedora (i9-13900KF, 32GB)**: Performance benchmarks & Linux SOTA. Tests `io_uring` backend.
 
 ## Workflow Rules
 - NO AI attribution in commits/PRs (strip manually)

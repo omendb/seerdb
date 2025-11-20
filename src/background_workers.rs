@@ -194,6 +194,12 @@ pub(crate) fn run_background_flush_partitioned(
                         Entry::Tombstone => {
                             builder.add_tombstone(key.clone())?;
                         }
+                        Entry::Merge(ops) => {
+                            // Store merge operands as individual merge entries
+                            for op in ops {
+                                builder.add_merge(key.clone(), op.clone())?;
+                            }
+                        }
                     }
                 }
 
@@ -260,6 +266,12 @@ pub(crate) fn run_background_flush_partitioned(
                         }
                         Entry::Tombstone => {
                             builder.add_tombstone(key.clone())?;
+                        }
+                        Entry::Merge(ops) => {
+                            // Store merge operands as individual merge entries
+                            for op in ops {
+                                builder.add_merge(key.clone(), op.clone())?;
+                            }
                         }
                     }
                 }
