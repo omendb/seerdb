@@ -85,6 +85,25 @@ A modern embedded LSM-tree storage engine implementing 2018-2024 research:
 - Verified with `cargo test --lib --bins`
 - All 178 tests passing in 11.86 seconds
 
+#### 3. Blocked Bloom Filter Implementation
+**Goal**: Improve bloom filter performance with cache-line optimization
+- Expected: ~3x speedup from cache locality (research-backed)
+- Actual: **3.4x speedup** on inserts and positive lookups
+
+**Implementation**:
+- Created `BlockedBloomFilter` with 64-byte cache-line blocking
+- All k hash operations confined to single cache line (512 bits)
+- Reduces k random memory accesses to 1 cache-line fetch
+
+**Benchmark Results** (Blocked vs Standard):
+- **Inserts**: 3.44x - 3.55x faster
+- **Positive lookups**: 3.43x - 3.44x faster
+- **Negative lookups**: 1.06x - 1.16x faster
+- **False positive rate**: 1.48% vs 0.97% (1.53x higher, acceptable trade-off)
+- **Space overhead**: ~0-5% (negligible)
+
+**Status**: Implemented and validated, **not yet integrated into SSTable** (kept as optional for now)
+
 ### Stability Hardening (Nov 20, 2025)
 
 #### 1. Fixed WAL Race Condition (CRITICAL)

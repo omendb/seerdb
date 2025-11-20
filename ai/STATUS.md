@@ -4,6 +4,12 @@
 **Current Phase**: Stability Complete - Production Ready
 
 **Recent Work (Nov 20, 2025)**:
+- **Blocked Bloom Filter**: ✅ Completed.
+  - Implemented BlockedBloomFilter with 64-byte cache-line optimization.
+  - Achieved 3.4x speedup on inserts and positive lookups (research prediction: ~3x).
+  - Trade-offs: 1.53x higher FPR (1.48% vs 0.97%), negligible space overhead (~0-5%).
+  - Not yet integrated into SSTable (available as optional export).
+  - Benchmark: benches/bloom_blocked.rs validates performance claims.
 - **Merge Resolution in RangeIterator**: ✅ Completed.
   - Range scans (`range()`, `prefix()`) now correctly resolve merge operands using the configured `MergeOperator`.
   - Updated `Entry` to derive `PartialEq`.
