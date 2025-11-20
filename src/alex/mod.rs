@@ -51,6 +51,7 @@ pub mod alex_tree;
 pub mod gapped_node;
 pub mod linear_model;
 pub mod multi_level;
+mod simd_search;
 // pub mod simd_search; // Temporarily disabled
 
 // Re-exports
