@@ -12,7 +12,7 @@
 1. `STATUS.md` - Current state and recent progress (all 4 profiling phases complete)
 2. `TODO.md` - What's next: optimization priorities and timeline
 3. `REAL_WORKLOAD_COMPARISONS.md` - Performance analysis (Phase 4 findings)
-4. `OMENDB_REQUIREMENTS_ANALYSIS.md` - Why omendb doesn't need durability
+4. `OMENDB_REQUIREMENTS_ANALYSIS.md` - Why graph workloads don't need durability
 
 ---
 
@@ -84,8 +84,8 @@ ai/
 
 1. **`STATUS.md`** - Current state, metrics, recent progress
    - Last updated: November 18, 2025
-   - Contains: Phase 4 findings, performance reality check, omendb analysis
-   - Key insight: seerdb is ALREADY fast for omendb with `SyncPolicy::None`
+   - Contains: Phase 4 findings, performance reality check, graph analysis
+   - Key insight: seerdb is ALREADY fast for graph workloads with `SyncPolicy::None`
 
 2. **`TODO.md`** - Active optimization priorities and timeline
    - Last updated: November 18, 2025
@@ -112,20 +112,20 @@ ai/
    - Contains: seerdb vs RocksDB vs fjall on realistic workloads, performance discrepancy analysis
    - Read: When evaluating production readiness or performance claims
 
-3d. **`OMENDB_REQUIREMENTS_ANALYSIS.md`** - omendb durability analysis
+3d. **`GRAPH_REQUIREMENTS_ANALYSIS.md`** - Graph durability analysis
    - Date: November 18, 2025
    - Contains: Do we need durability? SOTA for vector databases, configuration recommendations
-   - Read: When configuring seerdb for omendb or vector database workloads
+   - Read: When configuring seerdb for graph or vector database workloads
 
 4. **`OPTIMIZATION_PREFIX_ITERATION.md`** - Prefix iteration optimizations (completed)
    - Date: November 17, 2025
    - Contains: Key-only iteration (5.68x), read-ahead prefetching, batch API
    - Read: When working on range iteration optimizations
 
-5. **`OMENDB_PERFORMANCE_IMPACT.md`** - omendb integration results
+5. **`GRAPH_PERFORMANCE_IMPACT.md`** - Graph integration results
    - Date: November 17, 2025
-   - Contains: seerdb integration into omendb, cache hit rate analysis
-   - Read: When evaluating omendb-specific performance
+   - Contains: seerdb integration into vector DB, cache hit rate analysis
+   - Read: When evaluating graph-specific performance
 
 ---
 
@@ -225,8 +225,8 @@ ai/
   - Phase 2: Memory (dhat) - Peak 30-32 MB, no leaks
   - Phase 3: Locks (concurrent benchmark) - WAL bottleneck (28.7% efficiency)
   - Phase 4: Real workloads - **Critical finding**: 2-4x slower with durability
-- ✅ **omendb requirements analysis**: DOES NOT need durability
-  - seerdb is ALREADY fast for omendb (878K writes/sec with `SyncPolicy::None`)
+- ✅ **Graph requirements analysis**: DOES NOT need durability
+  - seerdb is ALREADY fast for graph workloads (878K writes/sec with `SyncPolicy::None`)
   - Configuration guide: `/Users/nick/github/omendb/SEERDB_CONFIGURATION.md`
 - ✅ **Strategic direction**: Two-track plan (in TODO.md)
   - Track 1: Ship omendb NOW (878K writes/sec, 31K scans/sec)

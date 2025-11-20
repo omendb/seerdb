@@ -9,7 +9,7 @@
 ## Problem Statement
 
 **Current seerdb performance**: 30,943 prefix scans/sec, 97.38% cache hit rate (excellent)
-**omendb @ 10K scale**: 1002ms per query (target: <200ms) - 11.4x read amplification
+**Graph workloads @ 10K scale**: 1002ms per query (target: <200ms) - 11.4x read amplification
 
 **Root cause**: Iterator creation overhead + sequential block access patterns
 
@@ -124,7 +124,7 @@ it := txn.NewIterator(opts)
 
 **Complexity**: Medium (200 lines)
 **Expected impact**: 3-5x for multiple small prefix scans
-**Workloads helped**: HNSW graph traversal (omendb specific)
+**Workloads helped**: HNSW graph traversal (graph specific)
 
 **Implementation**:
 1. `db.prefix_batch(&[prefix1, prefix2, ...])` API
@@ -143,7 +143,7 @@ it := txn.NewIterator(opts)
 
 ## Validation Plan
 
-**Benchmark**: Existing `examples/omendb_prefix_scan_benchmark.rs`
+**Benchmark**: Existing `examples/graph_prefix_scan_benchmark.rs`
 
 **Metrics**:
 - Cold cache: baseline (disk I/O bound)

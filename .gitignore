@@ -10,3 +10,4 @@ flamegraph*.svg
 
 # Benchmark results
 /criterion
+ai/tmp/

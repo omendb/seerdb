@@ -735,7 +735,7 @@ let file = OpenOptions::new()
 
 ### Current State
 - Unreleased, free to refactor
-- Will be used as storage engine for omendb (cloud vector DB with LSM-VEC)
+- Will be used as storage engine for cloud vector DB with Graph-based LSM
 - Focus: Vector-optimized storage
 
 ### Recommended Architecture
@@ -804,8 +804,8 @@ let file = OpenOptions::new()
 ```rust
 // Phase 4: Polish and integration
 - Connect to existing HNSW implementation
-- LSM-VEC algorithm integration
-- Benchmarking against omendb's current storage
+- Graph-based LSM algorithm integration
+- Benchmarking against current storage
 - Performance tuning
 
 // Deliverable: Production-ready storage engine
@@ -843,9 +843,9 @@ COLD TIER (on NVMe, compressed)
   - Optimized for cost
 ```
 
-**3. Integration with LSM-VEC**
+**3. Integration with Graph-based LSM**
 
-LSM-VEC requires efficient writes and range scans. seerdb should:
+Graph-based LSM requires efficient writes and range scans. seerdb should:
 - Batch writes to SSTables (like LSM-tree)
 - Support bloom filters for fast negative lookups
 - Efficient compaction for space reclamation
@@ -1106,7 +1106,7 @@ struct WAL:
 **Decision Point (2 months):**
 1. Evaluate Mojo experiment results
 2. Complete seerdb core implementation
-3. Begin integration with omendb
+3. Begin integration with vector database
 
 ---
 
@@ -1153,7 +1153,7 @@ struct WAL:
 
 ### Your Projects
 
-- omendb: https://github.com/omendb/omendb
+- vector-db: https://github.com/example/vector-db
 - seerdb: https://github.com/omendb/seerdb
 - bw-tree experiment: https://github.com/nijaru/bw-tree
 
@@ -1163,7 +1163,7 @@ struct WAL:
 
 **For Claude Code to investigate:**
 
-1. **LSM-VEC Integration**: How exactly does LSM-VEC work, and what storage engine requirements does it impose?
+1. **Graph-based LSM Integration**: How exactly does Graph-based LSM work, and what storage engine requirements does it impose?
 
 2. **RaBitQ Compression**: Can we do better than 8x? What's the trade-off between compression ratio and search accuracy?
 

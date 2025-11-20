@@ -411,3 +411,66 @@ cargo run --example bloom_comparison --release
 ---
 
 *Last Updated: November 4, 2025 - Performance benchmarking complete*
+
+## Pre-LeanStore Baseline ✅ COMPLETE
+
+**Date**: November 19, 2025
+**Hardware**: M3 Max, 128GB RAM, macOS (Darwin)
+**Context**: Baseline measurements before LeanStore (buffer management) implementation.
+**Version**: 0.0.1-alpha (Post-WAL Pipelining)
+
+### 1. YCSB Workload (100k ops, 1KB values)
+| Workload | Throughput | Latency | Note |
+|----------|------------|---------|------|
+| **Update Heavy** (50/50) | 94,932 ops/sec | 10.53 µs | Balanced load |
+| **Read Mostly** (95/5) | 84,722 ops/sec | 11.80 µs | Read dominance |
+| **Read Latest** | 203,685 ops/sec | 4.91 µs | High memtable hits |
+
+### 2. Group Commit (Durability Focused)
+*Workload: 10 threads, 1KB writes, SyncPolicy::SyncData*
+*   **Throughput**: 1,888 ops/sec (at 200μs delay)
+*   **Latency Impact**: ~5.3s for 10k total ops (high contention/fsync bottleneck)
+*   *Note*: Matches "Status" file observations (~2k ops/sec for low thread count).
+
+### 3. Block Cache Efficiency (Pre-LeanStore)
+*Workload: 100k keys, 16MB Cache (approx)*
+| Pattern | Throughput | Hit Rate | Note |
+|---------|------------|----------|------|
+| **Sequential** | 151,536 ops/sec | 83.20% | Prefetching/OS cache helping |
+| **Random** | 172,427 ops/sec | 81.44% | Surprisingly high (likely OS page cache) |
+| **Repeated** | 1,453,390 ops/sec | 87.62% | Hot block resident |
+
+### Goals for LeanStore
+1.  **Remove Double Buffering**: Eliminate OS page cache overhead.
+2.  **Memory Control**: Strict heap limits (currently relying on `quick_cache` + OS).
+3.  **Performance**: Expect modest throughput gain in YCSB, major gain in memory efficiency/determinism.
+
+## LeanStore Buffer Manager Prototype ✅ COMPLETE
+
+**Date**: November 19, 2025
+**Hardware**: M3 Max, 128GB RAM, macOS
+**Status**: Initial prototype validation
+
+### Architecture
+- **BufferPool**: Manage fixed-size frames (16KB default).
+- **Eviction**: Clock (Second Chance) Policy.
+- **Concurrency**: DashMap (Page Table) + RwLock (Frame Data) + Atomic (Pin Count).
+- **Safety**: Safe Rust (mostly), no pointer swizzling yet.
+
+### Benchmark Results
+*Workload: 100k random reads, 256MB file, 64MB cache (25% working set)*
+
+| System | Throughput | Latency | Note |
+|--------|------------|---------|------|
+| **BufferPool Prototype** | **506,966 ops/sec** | ~1.97 µs | Includes IO (OS Cache hit) + Locking + Copy |
+| **Reference (quick_cache)**| ~172,427 ops/sec | ~5.8 µs | From previous cache benchmark (parsing overhead included) |
+
+### Analysis
+1.  **High Throughput**: 500k ops/sec for a fully locked/concurrent buffer manager is excellent.
+2.  **Lock Contention**: `RwLock` on Frame Data and `DashMap` on Page Table scale well for this single-threaded bench.
+3.  **Double Buffering**: Currently relies on OS Page Cache (`File::read_exact_at`).
+    - Next step: `O_DIRECT` to remove OS overhead.
+
+### Integration Plan
+1.  **SSTable Adapter**: Map variable-sized compressed blocks to fixed 16KB pages.
+2.  **Pointer Swizzling**: Replace `PageId` lookups with `FrameRef` logic.

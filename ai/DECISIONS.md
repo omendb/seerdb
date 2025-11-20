@@ -77,6 +77,27 @@ Thread safety and isolation guarantees:
 
 ---
 
+### I/O Architecture (`ai/decisions/io_architecture.md`)
+**Decision**: Maintain Synchronous Core Architecture (blocking `std::fs`)
+**Date**: November 19, 2025
+
+**Context**: Evaluated moving to Async I/O (`tokio::fs` or `io_uring`) for Linux performance optimization.
+
+**Analysis**:
+1. **User Experience**: Embedded DBs (RocksDB, SQLite) use synchronous APIs for simplicity. Forcing `async/await` on users creates friction.
+2. **Fake Async**: `tokio::fs` is just a thread pool wrapper around blocking I/O. It adds overhead (context switching, channel passing) without true hardware async benefits on local NVMe for small ops.
+3. **io_uring Complexity**: True async (`io_uring`) is Linux-only, complex to implement, and requires "unsafe" dependencies. It conflicts with cross-platform goals.
+4. **Current Performance**: We are already CPU-bound or lock-bound (878K writes/sec), not I/O bound in a way that async fixes easily. WAL pipelining already solved the sync bottleneck.
+
+**Decision**:
+- **Reject** `io_uring` and full Async refactor for now.
+- **Keep** Synchronous API + Background Threads (Flush/Compaction) architecture.
+- **Result**: Best of both worlds - non-blocking writes (via background threads) with simple synchronous user API.
+
+**Impact**: Simpler code, cross-platform compatibility, zero runtime overhead on non-Linux systems.
+
+---
+
 ### Superseded & Completed (`ai/decisions/superseded-2025-11.md`)
 Historical decisions from research phase:
 - **Learned bloom filters** - Superseded by traditional blooms (arbitrary keys issue)

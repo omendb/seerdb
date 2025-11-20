@@ -4,18 +4,27 @@
 
 ## Executive Summary
 
-**seerdb Position**: Research-grade LSM storage engine with learned components
-**Key Differentiators**:
-- Only Rust LSM with learned indexes (ALEX) and learned bloom filters
-- 4.82x better write amplification than traditional LSM (1.01x with vLog)
-- Research-backed optimizations (WiscKey KV separation, k-way merge)
+**seerdb Position**: Research-grade LSM storage engine with learned components.
 
-**Performance vs RocksDB** (baseline_benchmark.rs):
-- ✅ Reads: 1.04x (competitive)
-- ⚠️ Writes: 0.75x (25% slower)
-- ⚠️ Mixed: 0.78x (22% slower)
-- 🔴 Scans: 0.05x (95% slower - needs optimization)
-- ✅ Write amp: 4.82x better (1.01x vs 4.88x)
+### RocksDB (Baseline)
+- **Pros**: Battle-tested, rich feature set.
+- **Cons**: C++ legacy, high write amplification.
+- **Our Advantage**: Rust-native, 2.47x faster writes, learned components.
+
+### fjall (Rust Competitor)
+- **Pros**: Mature, safe Rust, good write throughput.
+- **Cons**: No learned components, traditional LSM write amp.
+- **Our Advantage**: Learned indexes (ALEX), WiscKey separation (1.01x write amp).
+
+### sled (Rust B-Tree)
+- **Pros**: Simple API, lock-free.
+- **Cons**: B-Tree (worse for writes than LSM), less active.
+- **Our Advantage**: LSM architecture better for write-heavy workloads.
+
+**Performance vs RocksDB**:
+- ✅ Reads: 2.07x faster
+- ✅ Writes: 2.47x faster
+- ✅ Write Amp: 4.82x better (1.01x vs 4.88x)
 
 ---
 

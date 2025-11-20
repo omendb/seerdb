@@ -11,8 +11,8 @@
 │ Put                  │ put()       │ insert()     │ insert() │ put()        │
 │ Delete               │ delete()    │ remove()     │ remove() │ delete()     │
 │ Batch Writes         │ WriteBatch  │ N/A          │ txn()    │ batch()      │
-│ Range Iterator       │ Iterator    │ range()      │ range()  │ ❌ MISSING   │
-│ Prefix Iterator      │ Iterator    │ prefix()     │ scan()   │ ❌ MISSING   │
+│ Range Iterator       │ Iterator    │ range()      │ range()  │ ✅ range()   │
+│ Prefix Iterator      │ Iterator    │ prefix()     │ scan()   │ ✅ prefix()  │
 │ Flush                │ Flush()     │ persist()    │ flush()  │ flush()      │
 │ Statistics           │ Property()  │ N/A          │ N/A      │ get_stats()  │
 │ Health Check         │ N/A         │ N/A          │ N/A      │ check_health()│
@@ -25,7 +25,7 @@
 ┌──────────────────────┬─────────────┬──────────────┬──────────┬──────────────┬──────────────┐
 │ Feature              │ RocksDB     │ fjall        │ sled     │ seerdb       │ Priority     │
 ├──────────────────────┼─────────────┼──────────────┼──────────┼──────────────┼──────────────┤
-│ Snapshots            │ ✅ Yes      │ N/A          │ N/A      │ ❌ No        │ 0.0.2 (High) │
+│ Snapshots            │ ✅ Yes      │ N/A          │ N/A      │ ✅ Yes (COW) │ Done         │
 │ MVCC Transactions    │ ✅ Yes      │ ✅ Yes       │ CAS only │ ❌ No        │ 0.0.3 (Med)  │
 │ Column Families      │ ✅ Yes      │ Partitions   │ Trees    │ ❌ No (N/A)  │ Not planned  │
 │ Merge Operators      │ ✅ Yes      │ N/A          │ N/A      │ ❌ No        │ 0.0.3 (Low)  │
@@ -47,7 +47,7 @@
 │ RocksDB              │ Read Uncommitted (fast) │ Snapshots for RC          │
 │ fjall                │ Snapshot Isolation      │ Full MVCC when enabled   │
 │ sled                 │ Read Committed          │ CAS atomic operations    │
-│ seerdb (Current)     │ Read Committed          │ Per-operation snapshot   │
+│ seerdb (Current)     │ Snapshot Isolation      │ COW-based snapshots      │
 │ seerdb (0.0.2+)      │ Snapshot Isolation      │ Full MVCC planned        │
 └──────────────────────┴─────────────────────────┴──────────────────────────┘
 ```
