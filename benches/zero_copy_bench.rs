@@ -1,23 +1,29 @@
 use bytes::Bytes;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use seerdb::sstable::block::{Block, BlockBuilder};
+use rand::{Rng, SeedableRng};
+use rand::rngs::StdRng;
 
 fn bench_block_parsing(c: &mut Criterion) {
-    let mut group = c.benchmark_group("block_parsing_full_cycle");
+    let mut group = c.benchmark_group("block_parsing_cost");
 
-    // Prepare data
+    // Prepare random data (moderately compressible)
+    let mut rng = StdRng::seed_from_u64(42);
     let mut keys = Vec::new();
     let mut values = Vec::new();
-    for i in 0..100 {
+    for i in 0..50 {
         keys.push(format!("key{:04}", i).into_bytes());
-        values.push(vec![b'x'; 100]); // 100 bytes value
+        // Random values
+        let mut val = vec![0u8; 64];
+        rng.fill(&mut val[..]);
+        values.push(val);
     }
 
     // 1. Compressed Block
     let mut builder = BlockBuilder::new();
     builder.set_compression(true);
     for (k, v) in keys.iter().zip(values.iter()) {
-        builder.add(k, v);
+        if !builder.add(k, v) { break; }
     }
     let compressed_bytes = builder.finish();
 
@@ -25,27 +31,23 @@ fn bench_block_parsing(c: &mut Criterion) {
     let mut builder = BlockBuilder::new();
     builder.set_compression(false);
     for (k, v) in keys.iter().zip(values.iter()) {
-        builder.add(k, v);
+        if !builder.add(k, v) { break; }
     }
     let uncompressed_bytes = builder.finish();
     
     println!("Compressed size: {}", compressed_bytes.len());
     println!("Uncompressed size: {}", uncompressed_bytes.len());
 
-    group.bench_function("compressed_parse_iter", |b| {
+    // Benchmark Block::new() only (Parsing + Decompression)
+    group.bench_function("compressed_new", |b| {
         b.iter(|| {
-            let block = Block::from_bytes(black_box(compressed_bytes.clone())).unwrap();
-            black_box(block.iter().count());
+            Block::from_bytes(black_box(compressed_bytes.clone())).unwrap()
         })
     });
 
-    group.bench_function("uncompressed_parse_iter", |b| {
+    group.bench_function("uncompressed_new", |b| {
         b.iter(|| {
-            // In real zero-copy, we don't clone bytes, but for fair comparison 
-            // with from_bytes API we do. The main difference is decompression vs no-decompression
-            // and allocation vs slicing.
-            let block = Block::from_bytes(black_box(uncompressed_bytes.clone())).unwrap();
-            black_box(block.iter().count());
+            Block::from_bytes(black_box(uncompressed_bytes.clone())).unwrap()
         })
     });
 
