@@ -1,9 +1,13 @@
 # TODO - seerdb
 
 **Last Updated**: November 20, 2025
-**Current Focus**: Performance Optimization (WAL Pipelining)
+**Current Focus**: Cloud Storage Robustness
 **Version**: 0.0.1-alpha
 **Status**: 178 tests passing, 81.54% coverage
+
+**Environment**:
+- **Mac (M3 Max, 128GB)**: Development, large-scale tests, tokio + LocalFileSystem
+- **Fedora (i9-13900KF, 32GB)**: Performance benchmarks, SOTA verification, io_uring
 
 ---
 
@@ -19,14 +23,21 @@
 - [x] Add `is_empty()` and `num_entries()` helper methods.
 - [x] All 178 tests passing.
 
-### Cloud Storage Robustness 🔄 **NEXT**
+### Cloud Storage Robustness 🔄 **ACTIVE**
 - [ ] Deepen S3/Object Store integration robustness.
 - [ ] Validate `object_store` integration with stress tests.
 - [ ] Ensure graceful handling of network failures/latency.
+- [ ] Test retry logic and partial upload recovery.
 
-### Benchmarks (Linux) 🔄 **NEXT**
-- [ ] Verify "SOTA" performance claims on Linux workstation (io_uring path).
-- [ ] Run `graph_prefix_scan_benchmark` on Linux.
+### BufferPool Benchmarks (Fedora - 32GB RAM) 🔄 **NEXT**
+- [ ] Verify BufferPool vs OS Cache on Linux (io_uring).
+- [ ] Validate Phase 3 zero-copy results on Linux.
+- [ ] Test memory pressure behavior with 32GB constraint.
+
+### SOTA Benchmarks (Fedora) 🔄 **NEXT**
+- [ ] Verify "878K writes/sec, 2.2M reads/sec" claims on Linux (io_uring path).
+- [ ] Run `graph_prefix_scan_benchmark` on Fedora.
+- [ ] Compare io_uring vs tokio backends.
 
 ### Prefix Bloom Filters ✅ **COMPLETE**
 - [x] Update `SSTableBuilder` to generate Prefix Bloom Filters.

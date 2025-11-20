@@ -28,9 +28,13 @@
 - **Prefix Bloom Filters**: ✅ Implemented, Enabled, and Benchmarked (30k scans/sec vs 22 ops/sec baseline).
 
 **Next Focus**:
-- **BufferPool**: Benchmark vs OS Cache (Verify Linux results).
-- **S3/Cloud Storage**: Robustness and performance.
-- **Lazy Leveling** (Future): Evaluate for better read performance.
+1. **Cloud Storage Robustness** - Deepen S3/Object Store integration, stress tests.
+2. **BufferPool Benchmarks** (Fedora) - Verify vs OS Cache on Linux with io_uring.
+3. **SOTA Benchmarks** (Fedora) - Verify performance claims on Linux.
+
+**Environment Notes**:
+- **Mac (M3 Max, 128GB)**: Large-scale tests, development, tokio + LocalFileSystem.
+- **Fedora (i9-13900KF, 32GB)**: Performance benchmarks, SOTA verification, io_uring backend.
 
 **Success Metrics**:
 - ✅ **Performance**: 878K writes/sec (2.47x RocksDB), 2.2M reads/sec (2.07x RocksDB).
