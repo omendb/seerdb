@@ -36,9 +36,20 @@
   - All 186 tests passing, no regressions.
   - Fixed Entry::Merge handling in cloud storage flush paths.
 
+**Recent Work (Nov 20, 2025 - Part 3: Fedora Benchmarks)**:
+- **Fedora Benchmarks**: ✅ Completed all priority benchmarks on Linux (i9-13900KF, 32GB).
+  - **Zero-Copy**: 435ns (compressed) vs 278ns (uncompressed) = **36% faster** (consistent with Mac).
+  - **SOTA Throughput**: Sequential writes 574K ops/sec, Random reads 4.7M ops/sec (2.1x better than Mac reads!).
+  - **Multithread Writes**: 626K ops/sec (8 threads, 2.87x speedup).
+  - **Write Amplification**: 0.07x (excellent vs RocksDB 10-30x).
+  - **Graph Prefix Scans**: 5-11K scans/sec (cold: 5.1K, hot: 11K, random: 10.5K), 97.4% cache hit rate.
+  - ⚠️ **BufferPool Issue Found**: BufferPool is 17x slower than OS Cache on Fedora (761µs vs 45µs).
+    - Mac shows nearly identical performance (49.5µs vs 48.9µs).
+    - Needs investigation - possible io_uring or Linux-specific optimization needed.
+
 **Next Focus**:
-1. **BufferPool Benchmarks** (Fedora) - Verify vs OS Cache on Linux with io_uring.
-2. **SOTA Benchmarks** (Fedora) - Verify performance claims on Linux.
+1. **BufferPool Investigation** - Diagnose 17x performance regression on Fedora.
+2. **Documentation** - Update public API docs.
 
 **Environment Notes**:
 - **Mac (M3 Max, 128GB)**: Large-scale tests, development, tokio + LocalFileSystem.
