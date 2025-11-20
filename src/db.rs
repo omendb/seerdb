@@ -3392,7 +3392,7 @@ impl DB {
         // Arc automatically dropped (lock-free, no explicit drop needed!)
 
         // Create range iterator with all memtable partitions
-        RangeIterator::new(start_key, end_key, &partition_refs, sstables)
+        RangeIterator::new(start_key, end_key, &partition_refs, sstables, self.options.merge_operator.clone())
     }
 
     /// Iterate over all keys in the database
@@ -3664,6 +3664,7 @@ impl DB {
             },
             self.has_vlog.load(Ordering::Relaxed),
             self.next_seq.load(Ordering::Relaxed),
+            self.options.merge_operator.clone(),
         );
 
         // 6. Trigger flush

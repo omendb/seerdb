@@ -3,7 +3,9 @@
 use crate::memtable::Entry;
 use crate::range_merge::KWayMergeIterator;
 use crate::sstable::SSTableRangeIterator;
+use crate::MergeOperator;
 use bytes::Bytes;
+use std::sync::Arc;
 
 /// Iterator item: (key, value) pair
 pub type RangeItem = (Bytes, Bytes);
@@ -21,9 +23,9 @@ impl<I> SSTableRangeAdapter<I> {
 
 impl<I> Iterator for SSTableRangeAdapter<I>
 where
-    I: Iterator<Item = crate::sstable::Result<(Bytes, Option<Bytes>)>>,
+    I: Iterator<Item = crate::sstable::Result<(Bytes, Entry)>>,
 {
-    type Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>;
+    type Item = Result<(Bytes, Entry), Box<dyn std::error::Error + Send + Sync>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.inner.next().map(|result| result.map_err(Into::into))
@@ -34,71 +36,12 @@ where
 ///
 /// Provides efficient streaming iteration over key ranges in the database,
 /// automatically merging data from memtables and all LSM levels.
-///
-/// # LSM Semantics
-///
-/// - Newer entries (memtable, then L0, L1, ... LN) override older entries
-/// - Tombstones hide older values (deleted keys)
-/// - Only the most recent value for each key is returned
-///
-/// # Performance
-///
-/// - **Lazy loading**: Loads SSTable blocks on-demand, no upfront materialization
-/// - **K-way merge**: O(k log k) per entry where k = number of memtables + SSTables
-/// - **Memory efficient**: O(k) memory usage, streams results without buffering
-/// - **Bloom filter optimization**: Skips SSTables that don't contain keys in range
-///
-/// # Examples
-///
-/// Basic range iteration:
-///
-/// ```rust,no_run
-/// use seerdb::{DB, DBOptions};
-///
-/// let db = DB::open(DBOptions::default()).unwrap();
-/// db.put(b"a", b"1").unwrap();
-/// db.put(b"b", b"2").unwrap();
-/// db.put(b"c", b"3").unwrap();
-///
-/// // Iterate over range [b, c)
-/// for result in db.range(b"b", Some(b"c")).unwrap() {
-///     let (key, value) = result.unwrap();
-///     println!("{:?} => {:?}", key, value);
-/// }
-/// // Output: b => 2
-/// ```
-///
-/// Prefix iteration:
-///
-/// ```rust,no_run
-/// use seerdb::{DB, DBOptions};
-///
-/// let db = DB::open(DBOptions::default()).unwrap();
-/// db.put(b"user:1", b"alice").unwrap();
-/// db.put(b"user:2", b"bob").unwrap();
-/// db.put(b"post:1", b"hello").unwrap();
-///
-/// // Iterate over all keys starting with "user:"
-/// for result in db.prefix(b"user:").unwrap() {
-///     let (key, value) = result.unwrap();
-///     println!("{:?} => {:?}", key, value);
-/// }
-/// // Output: user:1 => alice, user:2 => bob
-/// ```
-///
-/// # Error Handling
-///
-/// Each iteration returns a `Result` that may contain:
-/// - [`crate::sstable::SSTableError`]: SSTable corruption or I/O error
-/// - [`crate::vlog::VLogError`]: Failed to read large value from vLog
-///
-/// Iterator terminates on first error.
 pub struct RangeIterator {
     // K-way merge iterator (O(k log k) per entry, O(k) memory)
     inner: KWayMergeIterator<
         Box<
             dyn Iterator<
-                Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>,
+                Item = Result<(Bytes, Entry), Box<dyn std::error::Error + Send + Sync>>,
             >,
         >,
     >,
@@ -110,59 +53,41 @@ impl RangeIterator {
     /// # Arguments
     /// * `start_key` - Start of range (inclusive)
     /// * `end_key` - End of range (exclusive), None for open-ended
-    /// * `memtables` - Memtable partitions to extract range data from (supports partitioned memtables)
-    /// * `sstable_iters` - Pre-created SSTable range iterators (in priority order: L0, L1, ..., LN)
+    /// * `memtables` - Memtable partitions to extract range data from
+    /// * `sstable_iters` - Pre-created SSTable range iterators
+    /// * `merge_operator` - Optional merge operator for resolving merge entries
     pub fn new(
         start_key: &[u8],
         end_key: Option<&[u8]>,
         memtables: &[&crate::memtable::Memtable],
         sstable_iters: Vec<SSTableRangeIterator>,
+        merge_operator: Option<Arc<dyn MergeOperator>>,
     ) -> crate::db::Result<Self> {
         let mut iterators: Vec<
             Box<
                 dyn Iterator<
-                    Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>,
+                    Item = Result<(Bytes, Entry), Box<dyn std::error::Error + Send + Sync>>,
                 >,
             >,
         > = Vec::new();
 
         // Level 0: Each memtable partition as a SEPARATE iterator (for proper deduplication)
-        // K-way merge will deduplicate by picking the first (newest) occurrence of each key
         for memtable in memtables {
-            let partition_entries: Vec<(Bytes, Option<Bytes>)> = if let Some(end_key) = end_key {
+            let partition_entries: Vec<(Bytes, Entry)> = if let Some(end_key) = end_key {
                 memtable
                     .range(start_key, end_key)
-                    .map(|(key, entry)| match entry {
-                        Entry::Value(value) => (key, Some(value)),
-                        Entry::Tombstone => (key, None),
-                        Entry::Merge(_) => {
-                            // TODO: Implement merge resolution in RangeIterator
-                            // Currently we treat Merge as Tombstone to avoid returning raw operands
-                            // This means range scans will NOT see merged values yet
-                            (key, None) 
-                        },
-                    })
+                    .map(|(key, entry)| (key, entry.clone()))
                     .collect()
             } else {
                 memtable
                     .range_from(start_key)
-                    .map(|(key, entry)| match entry {
-                        Entry::Value(value) => (key, Some(value)),
-                        Entry::Tombstone => (key, None),
-                        Entry::Merge(_) => {
-                            // TODO: Implement merge resolution in RangeIterator
-                            // Currently we treat Merge as Tombstone to avoid returning raw operands
-                            // This means range scans will NOT see merged values yet
-                            (key, None) 
-                        },
-                    })
+                    .map(|(key, entry)| (key, entry.clone()))
                     .collect()
             };
 
-            // Each partition gets its own iterator for k-way merge
             let partition_iter: Box<
                 dyn Iterator<
-                    Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>,
+                    Item = Result<(Bytes, Entry), Box<dyn std::error::Error + Send + Sync>>,
                 >,
             > = Box::new(partition_entries.into_iter().map(Ok));
             iterators.push(partition_iter);
@@ -172,14 +97,14 @@ impl RangeIterator {
         for sst_iter in sstable_iters {
             let adapted: Box<
                 dyn Iterator<
-                    Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>,
+                    Item = Result<(Bytes, Entry), Box<dyn std::error::Error + Send + Sync>>,
                 >,
             > = Box::new(SSTableRangeAdapter::new(sst_iter));
             iterators.push(adapted);
         }
 
         // Create k-way merge iterator
-        let merge = KWayMergeIterator::new(iterators).map_err(std::io::Error::other)?;
+        let merge = KWayMergeIterator::new(iterators, merge_operator).map_err(std::io::Error::other)?;
 
         Ok(RangeIterator { inner: merge })
     }
@@ -190,10 +115,13 @@ impl Iterator for RangeIterator {
 
     fn next(&mut self) -> Option<Self::Item> {
         // K-way merge already filters tombstones and deduplicates
-        // Just unwrap the Option<Bytes> (always Some after tombstone filtering)
         self.inner.next().map(|result| {
             result
-                .map(|(key, value_opt)| (key, value_opt.expect("filtered by k-way merge")))
+                .and_then(|(key, entry)| match entry {
+                    Entry::Value(val) => Ok((key, val)),
+                    Entry::Merge(val) => Ok((key, val.last().cloned().unwrap_or_default())), // Return last raw operand if unresolved
+                    Entry::Tombstone => unreachable!("Tombstones should be filtered by KWayMergeIterator"),
+                })
                 .map_err(|e| e as Box<dyn std::error::Error>)
         })
     }
@@ -208,7 +136,7 @@ mod tests {
     fn test_range_iterator_empty() {
         let memtable = Memtable::new(1024 * 1024);
         let memtables = [&memtable];
-        let range_iter = RangeIterator::new(b"start", None, &memtables, vec![]).unwrap();
+        let range_iter = RangeIterator::new(b"start", None, &memtables, vec![], None).unwrap();
 
         assert_eq!(range_iter.count(), 0);
     }
@@ -224,7 +152,7 @@ mod tests {
 
         let memtables = [&memtable];
         let mut range_iter =
-            RangeIterator::new(b"key1", Some(b"key3"), &memtables, vec![]).unwrap();
+            RangeIterator::new(b"key1", Some(b"key3"), &memtables, vec![], None).unwrap();
 
         let mut results = vec![];
         while let Some(Ok((key, value))) = range_iter.next() {
@@ -246,7 +174,7 @@ mod tests {
         memtable.put(Bytes::from("key3"), Bytes::from("value3"));
 
         let memtables = [&memtable];
-        let mut range_iter = RangeIterator::new(b"key1", None, &memtables, vec![]).unwrap();
+        let mut range_iter = RangeIterator::new(b"key1", None, &memtables, vec![], None).unwrap();
 
         let mut results = vec![];
         while let Some(Ok((key, value))) = range_iter.next() {

@@ -6,6 +6,7 @@ pub mod block;
 use crate::alex::AlexTree;
 use crate::bloom::BloomFilter;
 use crate::buffer::{BufferPool, PageId};
+use crate::memtable::Entry;
 use crate::vlog::{VLog, ValuePointer};
 use block::{Block, BlockBuilder, BlockError, DEFAULT_BLOCK_SIZE};
 use bytes::{Bytes, BytesMut};
@@ -1507,7 +1508,7 @@ impl SSTableRangeIterator {
 }
 
 impl Iterator for SSTableRangeIterator {
-    type Item = Result<(Bytes, Option<Bytes>)>;
+    type Item = Result<(Bytes, Entry)>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -1527,7 +1528,7 @@ impl Iterator for SSTableRangeIterator {
                 }
 
                 if !self.read_values {
-                    return Some(Ok((key.clone(), Some(Bytes::new()))));
+                    return Some(Ok((key.clone(), Entry::Value(Bytes::new()))));
                 }
 
                 if entry_value.is_empty() {
@@ -1537,8 +1538,8 @@ impl Iterator for SSTableRangeIterator {
                 let flag = entry_value[0];
                 let data = entry_value.slice(1..);
 
-                let value_opt = match flag {
-                    FLAG_INLINE => Some(data),
+                let entry = match flag {
+                    FLAG_INLINE => Entry::Value(data),
                     FLAG_POINTER => {
                         if data.len() < 12 {
                             continue;
@@ -1553,18 +1554,19 @@ impl Iterator for SSTableRangeIterator {
                             let mut vlog_guard = vlog.lock().expect("vlog mutex poisoned");
                             let pointer = ValuePointer { offset, length };
                             match vlog_guard.read(pointer) {
-                                Ok(value) => Some(value),
+                                Ok(value) => Entry::Value(value),
                                 Err(e) => return Some(Err(SSTableError::VLog(e.to_string()))),
                             }
                         } else {
                             return Some(Err(SSTableError::VLog("VLog not attached".to_string())));
                         }
                     }
-                    FLAG_TOMBSTONE => None,
+                    FLAG_TOMBSTONE => Entry::Tombstone,
+                    FLAG_MERGE => Entry::Merge(vec![data]),
                     _ => continue,
                 };
 
-                return Some(Ok((key.clone(), value_opt)));
+                return Some(Ok((key.clone(), entry)));
             }
 
             // Need to advance to next data block

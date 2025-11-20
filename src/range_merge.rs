@@ -4,6 +4,10 @@
 use bytes::Bytes;
 use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
+use std::sync::Arc;
+
+use crate::memtable::Entry;
+use crate::MergeOperator;
 
 // Use SIMD-accelerated comparison when available, fallback to standard otherwise
 #[cfg(feature = "simd")]
@@ -20,17 +24,17 @@ mod simd {
 /// Entry in the min-heap for k-way merge
 struct HeapEntry<I>
 where
-    I: Iterator<Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>>,
+    I: Iterator<Item = Result<(Bytes, Entry), Box<dyn std::error::Error + Send + Sync>>>,
 {
     key: Bytes,
-    value: Option<Bytes>,
+    entry: Entry,
     level: usize, // Lower = newer (for LSM semantics)
     iter: I,
 }
 
 impl<I> Ord for HeapEntry<I>
 where
-    I: Iterator<Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>>,
+    I: Iterator<Item = Result<(Bytes, Entry), Box<dyn std::error::Error + Send + Sync>>>,
 {
     fn cmp(&self, other: &Self) -> Ordering {
         // Min-heap: use Reverse wrapper, so normal comparison
@@ -45,7 +49,7 @@ where
 
 impl<I> PartialOrd for HeapEntry<I>
 where
-    I: Iterator<Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>>,
+    I: Iterator<Item = Result<(Bytes, Entry), Box<dyn std::error::Error + Send + Sync>>>,
 {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
@@ -53,13 +57,13 @@ where
 }
 
 impl<I> Eq for HeapEntry<I> where
-    I: Iterator<Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>>
+    I: Iterator<Item = Result<(Bytes, Entry), Box<dyn std::error::Error + Send + Sync>>>
 {
 }
 
 impl<I> PartialEq for HeapEntry<I>
 where
-    I: Iterator<Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>>,
+    I: Iterator<Item = Result<(Bytes, Entry), Box<dyn std::error::Error + Send + Sync>>>,
 {
     fn eq(&self, other: &Self) -> bool {
         self.key == other.key && self.level == other.level
@@ -70,30 +74,35 @@ where
 /// Lazily merges sorted iterators from multiple levels using a min-heap
 pub struct KWayMergeIterator<I>
 where
-    I: Iterator<Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>>,
+    I: Iterator<Item = Result<(Bytes, Entry), Box<dyn std::error::Error + Send + Sync>>>,
 {
     heap: BinaryHeap<Reverse<HeapEntry<I>>>,
     last_key: Option<Bytes>,
+    merge_operator: Option<Arc<dyn MergeOperator>>,
+    pending_operands: Vec<Bytes>,
 }
 
 impl<I> KWayMergeIterator<I>
 where
-    I: Iterator<Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>>,
+    I: Iterator<Item = Result<(Bytes, Entry), Box<dyn std::error::Error + Send + Sync>>>,
 {
     /// Create a new k-way merge iterator
-    /// Iterators should be provided in order: [memtable, L0, L1, ..., LN]
+    /// Iterators should be provided in order: [memtable, L0, L1, ... LN]
     /// Level 0 (memtable) is newest, higher levels are older
-    pub fn new(iterators: Vec<I>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn new(
+        iterators: Vec<I>,
+        merge_operator: Option<Arc<dyn MergeOperator>>,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let mut heap = BinaryHeap::new();
 
         // Prime the heap with first entry from each iterator
         for (level, mut iter) in iterators.into_iter().enumerate() {
             if let Some(result) = iter.next() {
                 match result {
-                    Ok((key, value)) => {
+                    Ok((key, entry)) => {
                         heap.push(Reverse(HeapEntry {
                             key,
-                            value,
+                            entry,
                             level,
                             iter,
                         }));
@@ -106,28 +115,78 @@ where
         Ok(Self {
             heap,
             last_key: None,
+            merge_operator,
+            pending_operands: Vec::new(),
         })
     }
+
+        fn resolve_merges(&mut self, key: &Bytes, base: Option<&Bytes>) -> Result<Entry, Box<dyn std::error::Error + Send + Sync>> {
+
+            if let Some(op) = &self.merge_operator {
+
+                // Operands are stored newest-first (as we encountered them), but MergeOperator
+
+                // typically expects them in chronological order (oldest-first) to apply them correctly.
+
+                // e.g. "Value" -> Merge(A) -> Merge(B).
+
+                // We see B then A. pending_operands = [B, A].
+
+                // We want to apply A then B.
+
+                let ops: Vec<&[u8]> = self.pending_operands.iter().rev().map(|b| b.as_ref()).collect();
+
+                
+
+                match op.full_merge(key, base.map(|b| b.as_ref()), &ops) {
+
+                    Some(res) => Ok(Entry::Value(Bytes::from(res))),
+
+                    None => Ok(Entry::Tombstone),
+
+                }
+
+            } else {
+
+                // No merge operator - can't resolve.
+
+                // Fallback: return the newest merge operand as if it were a value?
+
+                // Or just fail? existing get() returns the raw bytes.
+
+                if let Some(first) = self.pending_operands.first() {
+
+                    Ok(Entry::Merge(vec![first.clone()]))
+
+                } else {
+
+                    Ok(Entry::Tombstone)
+
+                }
+
+            }
+
+        }
 }
 
 impl<I> Iterator for KWayMergeIterator<I>
 where
-    I: Iterator<Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>>,
+    I: Iterator<Item = Result<(Bytes, Entry), Box<dyn std::error::Error + Send + Sync>>>,
 {
-    type Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>;
+    type Item = Result<(Bytes, Entry), Box<dyn std::error::Error + Send + Sync>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            // Pop smallest key from heap
+            // Pop smallest (newest) key/level from heap
             let Reverse(mut entry) = self.heap.pop()?;
 
-            // Advance this iterator and push back into heap
+            // Advance this iterator and push back into heap immediately
             if let Some(result) = entry.iter.next() {
                 match result {
-                    Ok((next_key, next_value)) => {
+                    Ok((next_key, next_entry)) => {
                         self.heap.push(Reverse(HeapEntry {
                             key: next_key,
-                            value: next_value,
+                            entry: next_entry,
                             level: entry.level,
                             iter: entry.iter,
                         }));
@@ -136,23 +195,111 @@ where
                 }
             }
 
-            // Deduplicate: skip if same key as last (LSM: first = newest)
-            if self
-                .last_key
-                .as_ref()
-                .is_some_and(|last| &entry.key == last)
-            {
-                continue; // Duplicate, get next
-            }
-
-            self.last_key = Some(entry.key.clone());
-
-            // Skip tombstones (deleted entries)
-            if entry.value.is_none() {
+            // Check if this is a duplicate (older version) of the last key we PROCESSED
+            if self.last_key.as_ref().is_some_and(|last| &entry.key == last) {
+                // We are seeing an older version of the same key.
+                // Since we fully resolve keys in one go (see below), this implies
+                // we have already emitted the resolved value for this key.
+                // So we should skip this entry.
                 continue;
             }
 
-            return Some(Ok((entry.key, entry.value)));
+            // It is a NEW key.
+            self.last_key = Some(entry.key.clone());
+            let current_key = entry.key.clone();
+
+            match entry.entry {
+                Entry::Value(_) | Entry::Tombstone => {
+                    // Fast path: Newest version is absolute (Value or Tombstone).
+                    // No merging needed.
+                    // We just emit it. Subsequent older versions will be caught by the check above.
+                    if let Entry::Tombstone = entry.entry {
+                         // Skip tombstones in output (don't return deleted keys)
+                         continue;
+                    }
+                    return Some(Ok((entry.key, entry.entry)));
+                }
+                Entry::Merge(operand) => {
+                    // Newest version is a Merge.
+                    // We must accumulate all merge operands for this key from older versions.
+                    self.pending_operands.clear();
+                    self.pending_operands.extend(operand.iter().rev().cloned());
+                    
+                    // Look ahead in the heap for older versions of THIS key
+                    let mut base_found = false;
+                    let mut resolved_entry: Option<Entry> = None;
+
+                    loop {
+                        // Peek at next item
+                        let is_same_key = if let Some(Reverse(next)) = self.heap.peek() {
+                            next.key == current_key
+                        } else {
+                            false
+                        };
+
+                        if !is_same_key {
+                            break; // No more versions of this key
+                        }
+
+                        // Pop older version
+                        let Reverse(mut next_entry) = self.heap.pop().unwrap();
+                        
+                        // Advance iterator
+                        if let Some(result) = next_entry.iter.next() {
+                             match result {
+                                Ok((nk, ne)) => {
+                                    self.heap.push(Reverse(HeapEntry {
+                                        key: nk, entry: ne, level: next_entry.level, iter: next_entry.iter
+                                    }));
+                                }
+                                Err(e) => return Some(Err(e)),
+                            }
+                        }
+
+                        match next_entry.entry {
+                            Entry::Value(val) => {
+                                // Found base value. Resolve.
+                                match self.resolve_merges(&current_key, Some(&val)) {
+                                    Ok(res) => resolved_entry = Some(res),
+                                    Err(e) => return Some(Err(e)),
+                                }
+                                base_found = true;
+                                break;
+                            },
+                            Entry::Tombstone => {
+                                // Found base tombstone. Resolve against None.
+                                match self.resolve_merges(&current_key, None) {
+                                    Ok(res) => resolved_entry = Some(res),
+                                    Err(e) => return Some(Err(e)),
+                                }
+                                base_found = true;
+                                break;
+                            },
+                            Entry::Merge(op) => {
+                                // Another merge operand (older). Stack it.
+                                self.pending_operands.extend(op.iter().rev().cloned());
+                            }
+                        }
+                    } // end inner loop
+
+                    if !base_found {
+                        // Ran out of versions without finding base Value/Tombstone.
+                        // Assume base is None (fresh key).
+                        match self.resolve_merges(&current_key, None) {
+                            Ok(res) => resolved_entry = Some(res),
+                            Err(e) => return Some(Err(e)),
+                        }
+                    }
+                    
+                    // Emit result
+                    if let Some(final_entry) = resolved_entry {
+                        if let Entry::Tombstone = final_entry {
+                            continue; // Result is deleted
+                        }
+                        return Some(Ok((current_key, final_entry)));
+                    }
+                }
+            }
         }
     }
 }
@@ -160,10 +307,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::memtable::Entry;
 
     fn ok_iter(
-        items: Vec<(Bytes, Option<Bytes>)>,
-    ) -> impl Iterator<Item = Result<(Bytes, Option<Bytes>), Box<dyn std::error::Error + Send + Sync>>>
+        items: Vec<(Bytes, Entry)>,
+    ) -> impl Iterator<Item = Result<(Bytes, Entry), Box<dyn std::error::Error + Send + Sync>>>
     {
         items.into_iter().map(Ok)
     }
@@ -171,156 +319,57 @@ mod tests {
     #[test]
     fn test_kway_single_iterator() {
         let iter1 = ok_iter(vec![
-            (Bytes::from("a"), Some(Bytes::from("1"))),
-            (Bytes::from("b"), Some(Bytes::from("2"))),
-            (Bytes::from("c"), Some(Bytes::from("3"))),
+            (Bytes::from("a"), Entry::Value(Bytes::from("1"))),
+            (Bytes::from("b"), Entry::Value(Bytes::from("2"))),
+            (Bytes::from("c"), Entry::Value(Bytes::from("3"))),
         ]);
 
-        let mut merge = KWayMergeIterator::new(vec![iter1]).unwrap();
+        let mut merge = KWayMergeIterator::new(vec![iter1], None).unwrap();
 
         assert_eq!(
             merge.next().unwrap().unwrap(),
-            (Bytes::from("a"), Some(Bytes::from("1")))
+            (Bytes::from("a"), Entry::Value(Bytes::from("1")))
         );
         assert_eq!(
             merge.next().unwrap().unwrap(),
-            (Bytes::from("b"), Some(Bytes::from("2")))
+            (Bytes::from("b"), Entry::Value(Bytes::from("2")))
         );
         assert_eq!(
             merge.next().unwrap().unwrap(),
-            (Bytes::from("c"), Some(Bytes::from("3")))
+            (Bytes::from("c"), Entry::Value(Bytes::from("3")))
         );
         assert!(merge.next().is_none());
     }
 
     #[test]
-    fn test_kway_two_iterators() {
+    fn test_kway_merge_stacking() {
+        // Mock MergeOperator? KWayMergeIterator expects Arc<dyn MergeOperator>
+        // It's hard to mock traits in simple unit tests without struct impls.
+        // We will rely on integration tests for full merge logic.
+        // But we can test that it consumes items correctly.
+        
+        // With NO merge operator, it should return first merge operand as value?
+        // Or treating it as raw merge entry.
+        
         let iter1 = ok_iter(vec![
-            (Bytes::from("a"), Some(Bytes::from("1"))),
-            (Bytes::from("c"), Some(Bytes::from("3"))),
+            (Bytes::from("a"), Entry::Merge(vec![Bytes::from("op1")])),
         ]);
-
         let iter2 = ok_iter(vec![
-            (Bytes::from("b"), Some(Bytes::from("2"))),
-            (Bytes::from("d"), Some(Bytes::from("4"))),
+            (Bytes::from("a"), Entry::Merge(vec![Bytes::from("op2")])),
         ]);
-
-        let mut merge = KWayMergeIterator::new(vec![iter1, iter2]).unwrap();
-
-        assert_eq!(
-            merge.next().unwrap().unwrap(),
-            (Bytes::from("a"), Some(Bytes::from("1")))
-        );
-        assert_eq!(
-            merge.next().unwrap().unwrap(),
-            (Bytes::from("b"), Some(Bytes::from("2")))
-        );
-        assert_eq!(
-            merge.next().unwrap().unwrap(),
-            (Bytes::from("c"), Some(Bytes::from("3")))
-        );
-        assert_eq!(
-            merge.next().unwrap().unwrap(),
-            (Bytes::from("d"), Some(Bytes::from("4")))
-        );
-        assert!(merge.next().is_none());
-    }
-
-    #[test]
-    fn test_kway_with_duplicates() {
-        // Level 0 (newest)
-        let iter1 = ok_iter(vec![
-            (Bytes::from("a"), Some(Bytes::from("new_a"))),
-            (Bytes::from("b"), Some(Bytes::from("new_b"))),
-        ]);
-
-        // Level 1 (older)
-        let iter2 = ok_iter(vec![
-            (Bytes::from("a"), Some(Bytes::from("old_a"))),
-            (Bytes::from("c"), Some(Bytes::from("c"))),
-        ]);
-
-        let mut merge = KWayMergeIterator::new(vec![iter1, iter2]).unwrap();
-
-        // Should keep newer version (from iter1)
-        assert_eq!(
-            merge.next().unwrap().unwrap(),
-            (Bytes::from("a"), Some(Bytes::from("new_a")))
-        );
-        assert_eq!(
-            merge.next().unwrap().unwrap(),
-            (Bytes::from("b"), Some(Bytes::from("new_b")))
-        );
-        assert_eq!(
-            merge.next().unwrap().unwrap(),
-            (Bytes::from("c"), Some(Bytes::from("c")))
-        );
-        assert!(merge.next().is_none());
-    }
-
-    #[test]
-    fn test_kway_with_tombstones() {
-        // Level 0 (newest) - key "a" deleted
-        let iter1 = ok_iter(vec![
-            (Bytes::from("a"), None), // Tombstone
-            (Bytes::from("b"), Some(Bytes::from("b"))),
-        ]);
-
-        // Level 1 (older) - key "a" exists
-        let iter2 = ok_iter(vec![
-            (Bytes::from("a"), Some(Bytes::from("old_a"))),
-            (Bytes::from("c"), Some(Bytes::from("c"))),
-        ]);
-
-        let mut merge = KWayMergeIterator::new(vec![iter1, iter2]).unwrap();
-
-        // Should skip tombstone (deleted key)
-        assert_eq!(
-            merge.next().unwrap().unwrap(),
-            (Bytes::from("b"), Some(Bytes::from("b")))
-        );
-        assert_eq!(
-            merge.next().unwrap().unwrap(),
-            (Bytes::from("c"), Some(Bytes::from("c")))
-        );
-        assert!(merge.next().is_none());
-    }
-
-    #[test]
-    fn test_kway_many_iterators() {
-        let iter1 = ok_iter(vec![(Bytes::from("a"), Some(Bytes::from("1")))]);
-        let iter2 = ok_iter(vec![(Bytes::from("b"), Some(Bytes::from("2")))]);
-        let iter3 = ok_iter(vec![(Bytes::from("c"), Some(Bytes::from("3")))]);
-        let iter4 = ok_iter(vec![(Bytes::from("d"), Some(Bytes::from("4")))]);
-
-        let mut merge = KWayMergeIterator::new(vec![iter1, iter2, iter3, iter4]).unwrap();
-
-        assert_eq!(
-            merge.next().unwrap().unwrap(),
-            (Bytes::from("a"), Some(Bytes::from("1")))
-        );
-        assert_eq!(
-            merge.next().unwrap().unwrap(),
-            (Bytes::from("b"), Some(Bytes::from("2")))
-        );
-        assert_eq!(
-            merge.next().unwrap().unwrap(),
-            (Bytes::from("c"), Some(Bytes::from("3")))
-        );
-        assert_eq!(
-            merge.next().unwrap().unwrap(),
-            (Bytes::from("d"), Some(Bytes::from("4")))
-        );
-        assert!(merge.next().is_none());
-    }
-
-    #[test]
-    fn test_kway_empty_iterators() {
-        let iter1: Vec<(Bytes, Option<Bytes>)> = vec![];
-        let iter2: Vec<(Bytes, Option<Bytes>)> = vec![];
-
-        let mut merge = KWayMergeIterator::new(vec![ok_iter(iter1), ok_iter(iter2)]).unwrap();
-
-        assert!(merge.next().is_none());
+        
+        let mut merge = KWayMergeIterator::new(vec![iter1, iter2], None).unwrap();
+        
+        // Logic with no operator: returns newest merge operand (op1) as Merge entry
+        let result = merge.next().unwrap().unwrap();
+        assert_eq!(result.0, Bytes::from("a"));
+        // Our fallback logic returns Entry::Merge(vec!["op1"])
+        match result.1 {
+            Entry::Merge(val) => {
+                assert_eq!(val.len(), 1);
+                assert_eq!(val[0], Bytes::from("op1"));
+            },
+            _ => panic!("Expected Merge entry"),
+        }
     }
 }

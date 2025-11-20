@@ -20,7 +20,7 @@ pub struct Memtable {
 }
 
 /// Entry in the memtable (value or tombstone)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Entry {
     /// Value entry
     Value(Bytes),

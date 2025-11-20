@@ -21,6 +21,7 @@ use crate::memtable::Memtable;
 use crate::range::RangeIterator;
 use crate::sstable::SSTable;
 use crate::vlog::VLog;
+use crate::MergeOperator;
 use bytes::Bytes;
 use quick_cache::sync::Cache;
 use std::path::PathBuf;
@@ -84,6 +85,9 @@ pub struct Snapshot {
 
     /// Snapshot sequence number for tracking
     sequence_number: u64,
+    
+    /// Optional merge operator for resolving merges
+    merge_operator: Option<Arc<dyn MergeOperator>>,
 }
 
 impl Snapshot {
@@ -98,6 +102,7 @@ impl Snapshot {
         vlog_path: Option<PathBuf>,
         has_vlog: bool,
         sequence_number: u64,
+        merge_operator: Option<Arc<dyn MergeOperator>>,
     ) -> Self {
         Self {
             memtables,
@@ -107,6 +112,7 @@ impl Snapshot {
             vlog_path,
             has_vlog,
             sequence_number,
+            merge_operator,
         }
     }
 
@@ -273,7 +279,7 @@ impl Snapshot {
             }
         }
 
-        RangeIterator::new(start_key, end_key, &partition_refs, sstables)
+        RangeIterator::new(start_key, end_key, &partition_refs, sstables, self.merge_operator.clone())
     }
 
     /// Get the sequence number of this snapshot
