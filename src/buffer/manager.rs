@@ -34,11 +34,10 @@ pub struct FrameRef {
     pool: Arc<BufferPool>,
     page_id: PageId,
     frame_id: FrameId,
-    // We hold a read guard on the data to prevent eviction while we hold this Ref.
-    // In a more advanced lock-free system, the pin_count is sufficient.
-    // Here, because eviction writes to 'data', we technically need to ensure 'data' isn't mutated.
-    // However, eviction checks pin_count. If pin_count > 0, it won't touch data.
-    // So we don't need to hold the RwLock guard, just the pin.
+    // Cached data pointer for lock-free access
+    // SAFETY: Valid while frame is pinned (pin_count > 0) and data is immutable
+    data_ptr: *const u8,
+    data_len: usize,
 }
 
 impl FrameRef {
@@ -58,36 +57,31 @@ impl FrameRef {
         self.pool.frames[self.frame_id].data.read()
     }
 
-    /// Unsafe access to data slice without lock guard.
+    /// Lock-free access to data slice using cached pointer.
     ///
     /// # Safety
     /// Caller must ensure that:
     /// 1. The frame is pinned (which `FrameRef` ensures).
     /// 2. The data is not being mutated concurrently (guaranteed for SSTables as they are immutable).
     /// 3. The `Vec` does not reallocate (guaranteed as we only resize on initial load).
+    ///
+    /// This is safe because:
+    /// - Frame is pinned (pin_count > 0) so it won't be evicted
+    /// - SSTable data is immutable (never modified after loading)
+    /// - Vec won't reallocate (we resize() once during load, then never touch it)
+    /// - data_ptr and data_len are captured after data is loaded
     pub unsafe fn data_unchecked(&self) -> &[u8] {
-        // Access the data field directly through the raw pointer of the RwLock
-        // This is highly unsafe and relies on internal implementation details of RwLock or
-        // requires us to trust that the data ptr inside Vec is stable.
-        //
-        // A safer "unsafe" way is to acquire the read lock, get the pointer, and trick the compiler,
-        // but we want to avoid the atomic overhead of the lock if possible.
-        //
-        // For now, let's stick to the "safest" unsafe way: 
-        // We know the frame data is wrapped in RwLock. We can't easily bypass it without
-        // getting a raw pointer to the content.
-        //
-        // Let's try to be slightly disciplined: this function is used where we *know*
-        // we have exclusive or immutable access.
-        
-        // We will take a read lock for a split second to get the slice, then extend its lifetime.
-        // This is "technically" UB if someone writes, but we know they won't.
-        let guard = self.get_data();
-        let ptr = guard.as_ptr();
-        let len = guard.len();
-        std::slice::from_raw_parts(ptr, len)
+        std::slice::from_raw_parts(self.data_ptr, self.data_len)
     }
 }
+
+// SAFETY: FrameRef is safe to Send/Sync because:
+// 1. data_ptr points to data owned by BufferPool (behind Arc)
+// 2. Frame is pinned (won't be evicted) while FrameRef exists
+// 3. Data is immutable (SSTable blocks never change after loading)
+// 4. All BufferPool internal state is already Send + Sync
+unsafe impl Send for FrameRef {}
+unsafe impl Sync for FrameRef {}
 
 impl Clone for FrameRef {
     fn clone(&self) -> Self {
@@ -97,6 +91,8 @@ impl Clone for FrameRef {
             pool: self.pool.clone(),
             page_id: self.page_id,
             frame_id: self.frame_id,
+            data_ptr: self.data_ptr,
+            data_len: self.data_len,
         }
     }
 }
@@ -221,14 +217,22 @@ impl BufferPool {
 
         // 5. Publish to page table
         self.page_table.insert(page_id, frame_id);
-        
+
         // 6. Mark access for eviction policy
         self.eviction.access(frame_id);
+
+        // 7. Capture data pointer for lock-free access
+        let (data_ptr, data_len) = {
+            let data_guard = self.frames[frame_id].data.read();
+            (data_guard.as_ptr(), data_guard.len())
+        };
 
         Ok(FrameRef {
             pool: self.clone(),
             page_id,
             frame_id,
+            data_ptr,
+            data_len,
         })
     }
 
@@ -244,10 +248,19 @@ impl BufferPool {
             let current_pid = slot.header.page_id.read();
             if *current_pid == Some(page_id) {
                  self.eviction.access(frame_id);
+
+                 // Capture data pointer for lock-free access
+                 let (data_ptr, data_len) = {
+                     let data_guard = slot.data.read();
+                     (data_guard.as_ptr(), data_guard.len())
+                 };
+
                  return Some(FrameRef {
                      pool: self.clone(),
                      page_id,
                      frame_id,
+                     data_ptr,
+                     data_len,
                  });
             }
             
