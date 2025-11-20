@@ -36,6 +36,9 @@ pub enum SSTableError {
 
     #[error("Block error: {0}")]
     Block(#[from] BlockError),
+
+    #[error("Buffer pool error: {0}")]
+    BufferPool(#[from] crate::buffer::BufferPoolError),
 }
 
 pub type Result<T> = std::result::Result<T, SSTableError>;
@@ -999,19 +1002,19 @@ impl SSTable {
                 offset,
             };
             
-            let frame_ref = pool.get_page(page_id, |buf| {
+            let frame_ref = pool.get_page(page_id, |buf| -> Result<()> {
                 // Load from disk via shared file handle
                 let mut file = self.file.lock().expect("file mutex poisoned");
                 file.seek(SeekFrom::Start(offset))?;
-                
+
                 // Resize buffer to fit data
                 // This reuses memory if capacity is sufficient
                 // If size > capacity, it will reallocate, but next time capacity will be larger
                 buf.resize(size as usize, 0);
-                
+
                 file.read_exact(buf)?;
                 Ok(())
-            }).map_err(|e: std::io::Error| SSTableError::Io(e))?;
+            })?;
 
             // Zero-Copy: Create Block viewing the Frame
             // We use BlockData::Borrowed to avoid copying 4KB

@@ -3752,6 +3752,16 @@ impl Drop for DB {
     fn drop(&mut self) {
         info!("Closing database");
 
+        // CRITICAL: Sync WAL before shutdown to prevent data loss
+        // Without this, unflushed WAL data in kernel buffers will be lost
+        // when DB::open() truncates the WAL file after recovery.
+        // This fixes race condition with tiny memtables where data never
+        // reaches disk before reopen.
+        debug!("Syncing WAL before shutdown");
+        if let Err(e) = self.pipelined_wal.sync() {
+            error!("Failed to sync WAL during shutdown: {}", e);
+        }
+
         // Shutdown background flush worker
         if let Some(ref tx) = self.flush_tx {
             // Send shutdown signal
@@ -3971,7 +3981,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix race condition with tiny memtable (100 bytes) - WAL not fully flushed before reopen
     fn test_db_recovery_with_flush() {
         let dir = tempdir().unwrap();
         let options = DBOptions {
@@ -4092,7 +4101,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Same WAL race - data loss on reopen
     fn test_db_background_compaction() {
         use std::time::Duration;
 
@@ -4325,7 +4333,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Test hangs, needs debugging
     fn test_memory_budget_enforcement() {
         let dir = tempdir().unwrap();
         let options = DBOptions {
@@ -4355,7 +4362,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Test hangs, needs debugging
     fn test_estimate_memory_usage() {
         let dir = tempdir().unwrap();
         let options = DBOptions {

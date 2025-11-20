@@ -104,6 +104,14 @@ impl PipelinedWAL {
         writer.take_result()
     }
 
+    /// Sync the WAL to ensure all data is written to disk
+    ///
+    /// This should be called before shutdown to prevent data loss.
+    pub fn sync(&self) -> Result<()> {
+        let wal = self.wal.lock().expect("WAL mutex poisoned");
+        wal.sync()
+    }
+
     fn process_batches<F>(&self, on_memtable: F)
     where
         F: Fn(&[Record]),

@@ -161,6 +161,7 @@ impl BufferPool {
     pub fn get_page<F, E>(self: &Arc<Self>, page_id: PageId, loader: F) -> Result<FrameRef, E>
     where
         F: FnOnce(&mut Vec<u8>) -> Result<(), E>,
+        E: From<crate::buffer::BufferPoolError>,
     {
         // 1. Try find in cache
         if let Some(frame_ref) = self.lookup(page_id) {
@@ -330,11 +331,11 @@ impl BufferPool {
         free.push(frame_id);
     }
     
-    // Helper to forge error type
-    fn make_capacity_error<E>(&self) -> E {
-        // Hack: assuming E can be created from string or is specific.
-        // For now just panic since we don't have the Error trait bound visible here
-        // In real code we'd require E: From<BufferError>
-        panic!("Buffer pool full");
+    // Helper to create buffer pool error from loader error type
+    fn make_capacity_error<E>(&self) -> E
+    where
+        E: From<crate::buffer::BufferPoolError>,
+    {
+        E::from(crate::buffer::BufferPoolError::PoolFull)
     }
 }
