@@ -44,5 +44,8 @@
 
 1.  **Merge Operator**: Done.
 2.  **Prefix Bloom**: Done.
-3.  **Benchmarks**: Verify SOTA claims (Next).
-4.  **MVCC**: Correctness for multi-key graph updates.
+3.  **Safety & Stability**: Done.
+4.  **Cloud Storage**: Deepen robustness (Next).
+5.  **Benchmarks**: Verify SOTA claims on Linux.
+6.  **LeanStore**: Buffer management research.
+7.  **MVCC**: Correctness for multi-key graph updates.

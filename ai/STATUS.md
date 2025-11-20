@@ -12,11 +12,17 @@
   - Fixed regression where prefix bloom filters were not being populated during flush.
   - Optimization `may_contain_prefix` is now active in `db.rs`.
   - Tests passing (including `test_prefix_with_sstables`).
-- **LeanStore**: Phase 1 Integrated.
-- **Code Quality**: ✅ Enforced safety rules (removed `unwrap()` on locks/critical paths). Fixed all clippy warnings and broken examples.
+- **LeanStore**: Phase 2 In Progress (Memory Reuse implemented).
+- **BufferPool Benchmark**: ✅ Completed. `BufferPool` (49.5µs) is nearly identical to OS Cache (48.9µs).
+- **Phase 3 (Zero-Copy)**: ✅ Implemented `BlockData::Borrowed` and `FrameRef` integration.
+  - Eliminated redundant copy for compressed blocks (read directly from Frame).
+  - Enabled true Zero-Copy for uncompressed blocks (Block views Frame directly).
+  - Fixed concurrency bug in `get_page` (pinning race).
+- **Code Quality**: ✅ Enforced safety rules (removed `unwrap()` on locks/critical paths).
 - **Prefix Bloom Filters**: ✅ Implemented, Enabled, and Benchmarked (30k scans/sec vs 22 ops/sec baseline).
 
 **Next Focus**: 
+- **BufferPool**: Benchmark vs OS Cache.
 - **S3/Cloud Storage**: Robustness and performance.
 - **Lazy Leveling** (Future): Evaluate for better read performance.
 
@@ -41,10 +47,10 @@
 - ✅ Fixed critical bug where `add_with_vlog` (used by flush) was bypassing prefix bloom filter insertion.
 - ✅ Switched to `twox-hash` (XxHash64) for stable persistence of Bloom Filters.
 
-### LeanStore Phase 1
-- ✅ Integrated `BufferPool` into `SSTable` (intercepting `load_block`).
-- ✅ 500K ops/sec random access prototype.
-- ⚠️ Future: "Lipah" approach might be better than pointer swizzling for Rust?
+### LeanStore Phase 2 (Active)
+- ✅ **Memory Reuse**: Fixed `BufferPool::get_page` to avoid allocating new `Vec`s on every load.
+- ✅ Integrated into `SSTable::load_block` to read directly into frame memory.
+- ✅ Validated with `tests/buffer_pool_tests.rs`.
 
 ### Group Commit Validation
 - ✅ 9.22x improvement at 10 threads validates research.

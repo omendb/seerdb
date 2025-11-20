@@ -22,6 +22,7 @@
 // - LZ4 compression: 40-60% space savings (CRITICAL - +30-40% performance)
 // - Decompressed block cache: 2x cache efficiency
 
+use crate::buffer::manager::FrameRef;
 use bytes::{Bytes, BytesMut};
 use lz4_flex::{compress_prepend_size, decompress_size_prepended};
 use std::io::{self};
@@ -246,10 +247,39 @@ impl Default for BlockBuilder {
     }
 }
 
+/// Data storage for a Block: either Owned (Bytes) or Borrowed (FrameRef)
+#[derive(Clone, Debug)]
+pub enum BlockData {
+    Owned(Bytes),
+    Borrowed(FrameRef),
+}
+
+impl BlockData {
+    /// Access the underlying byte slice
+    pub fn as_slice(&self) -> &[u8] {
+        match self {
+            BlockData::Owned(bytes) => bytes.as_ref(),
+            BlockData::Borrowed(frame) => unsafe { frame.data_unchecked() },
+        }
+    }
+
+    /// Create a sub-slice as Bytes
+    /// For Borrowed data, this performs a copy to ensure the Bytes object is valid independently
+    pub fn slice(&self, range: std::ops::Range<usize>) -> Bytes {
+        match self {
+            BlockData::Owned(bytes) => bytes.slice(range),
+            BlockData::Borrowed(frame) => unsafe {
+                let data = frame.data_unchecked();
+                Bytes::copy_from_slice(&data[range])
+            },
+        }
+    }
+}
+
 /// Block reader for parsing block data
 #[derive(Clone)]
 pub struct Block {
-    data: Bytes,
+    data: BlockData,
     restart_offset: usize,
     num_restarts: usize,
     /// Decompressed entries cache (lazy initialized on first iter())
@@ -258,94 +288,109 @@ pub struct Block {
 }
 
 impl Block {
-    /// Parse a block from bytes
-    pub fn new(data: Bytes) -> Result<Self> {
-        if data.len() < 13 {
-            // Minimum: uncompressed_size(4) + compressed_flag(1) + restart_offset(4) + checksum(4)
-            return Err(BlockError::InvalidFormat);
-        }
+    /// Parse a block from block data (Owned or Borrowed)
+    pub fn new(data: BlockData) -> Result<Self> {
+        // Use a small scope to access slice for validation
+        let (restart_offset, num_restarts) = {
+            let raw_data = data.as_slice();
+            if raw_data.len() < 13 {
+                return Err(BlockError::InvalidFormat);
+            }
 
-        // Read checksum from end (fixed-width)
-        let stored_checksum = u32::from_le_bytes([
-            data[data.len() - 4],
-            data[data.len() - 3],
-            data[data.len() - 2],
-            data[data.len() - 1],
-        ]);
+            // Read checksum from end (fixed-width)
+            let stored_checksum = u32::from_le_bytes([
+                raw_data[raw_data.len() - 4],
+                raw_data[raw_data.len() - 3],
+                raw_data[raw_data.len() - 2],
+                raw_data[raw_data.len() - 1],
+            ]);
 
-        // Verify checksum (everything except checksum itself)
-        // Uses hardware-accelerated CRC32C (SSE4.2 on x86, CRC on ARM)
-        let computed_checksum = crc32c::crc32c(&data[..data.len() - 4]);
+            // Verify checksum
+            let computed_checksum = crc32c::crc32c(&raw_data[..raw_data.len() - 4]);
+            if stored_checksum != computed_checksum {
+                return Err(BlockError::Corruption);
+            }
 
-        if stored_checksum != computed_checksum {
-            return Err(BlockError::Corruption);
-        }
+            // Read restart_offset
+            let restart_offset = u32::from_le_bytes([
+                raw_data[raw_data.len() - 8],
+                raw_data[raw_data.len() - 7],
+                raw_data[raw_data.len() - 6],
+                raw_data[raw_data.len() - 5],
+            ]) as usize;
 
-        // Read restart_offset (fixed-width u32, 4 bytes before checksum)
-        let restart_offset = u32::from_le_bytes([
-            data[data.len() - 8],
-            data[data.len() - 7],
-            data[data.len() - 6],
-            data[data.len() - 5],
-        ]) as usize;
+            // Read compressed flag
+            let compressed = raw_data[raw_data.len() - 9] == 1;
 
-        // Read compressed flag (1 byte before restart_offset)
-        let compressed = data[data.len() - 9] == 1;
+            if compressed {
+                // If compressed, we MUST decompress into a new buffer (Owned)
+                let compressed_slice = &raw_data[..raw_data.len() - 13];
+                let uncompressed_data = decompress_size_prepended(compressed_slice).map_err(|_| BlockError::InvalidFormat)?;
+                let data = Bytes::from(uncompressed_data);
 
-        // Read uncompressed size (4 bytes before compressed flag)
-        let _uncompressed_size = u32::from_le_bytes([
-            data[data.len() - 13],
-            data[data.len() - 12],
-            data[data.len() - 11],
-            data[data.len() - 10],
-        ]) as usize;
+                // Parse num_restarts from uncompressed data
+                // The uncompressed data contains [Entries... | Restart Points... | Num Restarts]
+                // restart_offset points to the start of Restart Points
+                if restart_offset >= data.len() {
+                    return Err(BlockError::InvalidFormat);
+                }
 
-        // Decompress block data if compressed
-        let uncompressed_data = if compressed {
-            // Compressed data is everything before metadata (13 bytes)
-            let compressed_slice = &data[..data.len() - 13];
-            decompress_size_prepended(compressed_slice).map_err(|_| BlockError::InvalidFormat)?
-        } else {
-            // Uncompressed data (legacy format)
-            data[..data.len() - 13].to_vec()
-        };
-
-        let data = Bytes::from(uncompressed_data);
-
-        if restart_offset >= data.len() {
-            return Err(BlockError::InvalidFormat);
-        }
-
-        // Read num_restarts (varint at end of restart points)
-        // Parse restart points until we can read num_restarts
-        let mut offset = restart_offset;
-        let mut num_restarts = 0;
-
-        // Simplified approach: try to read varints until we reach the end
-        while offset < data.len() {
-            if let Some(_offset_val) = read_varint(&data, &mut offset) {
-                num_restarts += 1;
-
-                // Check if next varint could be num_restarts
-                // (it should match the count of restart points we've seen)
-                let pos_after = offset;
-                if let Some(count) = read_varint(&data, &mut offset) {
-                    if count as usize == num_restarts {
-                        // Found num_restarts!
-                        num_restarts = count as usize;
-                        break;
+                let mut offset = restart_offset;
+                let mut num_restarts = 0;
+                while offset < data.len() {
+                    if let Some(_offset_val) = read_varint(&data, &mut offset) {
+                        num_restarts += 1;
+                        let pos_after = offset;
+                        if let Some(count) = read_varint(&data, &mut offset) {
+                            if count as usize == num_restarts {
+                                num_restarts = count as usize;
+                                break;
+                            } else {
+                                offset = pos_after;
+                            }
+                        } else {
+                            break;
+                        }
                     } else {
-                        // Not num_restarts, rewind and continue
-                        offset = pos_after;
+                        break;
+                    }
+                }
+
+                return Ok(Self {
+                    data: BlockData::Owned(data),
+                    restart_offset,
+                    num_restarts,
+                    decompressed_cache: Arc::new(OnceLock::new()),
+                });
+            }
+
+            if restart_offset >= raw_data.len() {
+                return Err(BlockError::InvalidFormat);
+            }
+
+            // Count restarts
+            let mut offset = restart_offset;
+            let mut num_restarts = 0;
+            while offset < raw_data.len() {
+                if let Some(_offset_val) = read_varint(raw_data, &mut offset) {
+                    num_restarts += 1;
+                    let pos_after = offset;
+                    if let Some(count) = read_varint(raw_data, &mut offset) {
+                        if count as usize == num_restarts {
+                            num_restarts = count as usize;
+                            break;
+                        } else {
+                            offset = pos_after;
+                        }
+                    } else {
+                        break;
                     }
                 } else {
                     break;
                 }
-            } else {
-                // Couldn't read varint, we've likely reached the end
-                break;
             }
-        }
+            (restart_offset, num_restarts)
+        };
 
         Ok(Self {
             data,
@@ -353,6 +398,11 @@ impl Block {
             num_restarts,
             decompressed_cache: Arc::new(OnceLock::new()),
         })
+    }
+
+    /// Legacy constructor for Bytes
+    pub fn from_bytes(data: Bytes) -> Result<Self> {
+        Self::new(BlockData::Owned(data))
     }
 
     /// Iterate over all entries in the block
@@ -405,7 +455,8 @@ impl Block {
     fn decompress_all_entries(&self) -> Vec<(Bytes, Bytes)> {
         let mut entries = Vec::with_capacity(self.num_entries_approx());
         // Access data slice directly for SIMD compatibility
-        let data = &self.data[..self.restart_offset];
+        let raw_data = self.data.as_slice();
+        let data = &raw_data[..self.restart_offset];
         let mut offset = 0;
         let mut last_key = Bytes::new();
 
@@ -426,6 +477,7 @@ impl Block {
             if offset + suffix_len > data.len() {
                 break;
             }
+            // Use BlockData::slice helper to handle both Owned and Borrowed cases
             let suffix = self.data.slice(offset..offset + suffix_len);
             offset += suffix_len;
 
@@ -506,7 +558,7 @@ mod tests {
         assert!(builder.add(b"key1", b"value1"));
 
         let block_data = builder.finish();
-        let block = Block::new(block_data).unwrap();
+        let block = Block::from_bytes(block_data).unwrap();
 
         let entries: Vec<_> = block.iter().collect();
         assert_eq!(entries.len(), 1);
@@ -524,7 +576,7 @@ mod tests {
         assert!(builder.add(b"key3", b"value3"));
 
         let block_data = builder.finish();
-        let block = Block::new(block_data).unwrap();
+        let block = Block::from_bytes(block_data).unwrap();
 
         let entries: Vec<_> = block.iter().map(|r| r.unwrap()).collect();
         assert_eq!(entries.len(), 3);
@@ -555,7 +607,7 @@ mod tests {
         );
 
         let block_data = builder.finish();
-        let block = Block::new(block_data).unwrap();
+        let block = Block::from_bytes(block_data).unwrap();
 
         let entries: Vec<_> = block.iter().collect();
         assert_eq!(entries.len(), count);
@@ -570,7 +622,7 @@ mod tests {
         // Corrupt a byte
         block_data[0] ^= 0xFF;
 
-        let result = Block::new(Bytes::from(block_data));
+        let result = Block::from_bytes(Bytes::from(block_data));
         assert!(matches!(result, Err(BlockError::Corruption)));
     }
 
@@ -589,7 +641,7 @@ mod tests {
         assert!(builder.restart_points.len() > 1);
 
         let block_data = builder.finish();
-        let block = Block::new(block_data).unwrap();
+        let block = Block::from_bytes(block_data).unwrap();
 
         let entries: Vec<_> = block.iter().map(|r| r.unwrap()).collect();
         assert_eq!(entries.len(), 40);
@@ -603,7 +655,7 @@ mod tests {
         assert!(builder.add(b"key1", &large_value));
 
         let block_data = builder.finish();
-        let block = Block::new(block_data).unwrap();
+        let block = Block::from_bytes(block_data).unwrap();
 
         let entries: Vec<_> = block.iter().collect();
         assert_eq!(entries.len(), 1);

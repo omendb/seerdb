@@ -1,51 +1,69 @@
-# PLAN V2 - SeerDB: The "omendb" Engine
+# PLAN V2 - Core Engine Optimization
 
-**Goal**: Optimize SeerDB specifically for `omendb` (Vector/Graph workloads) while maintaining general-purpose excellence.
+**Goal**: Transition `seerdb` from a functional prototype to a high-performance, memory-efficient storage engine suitable for `omendb` (Vector/Graph workloads).
 
 **Status**: DRAFT (Nov 19, 2025)
 
-## 1. The "omendb" Workload
-*   **Data Model**: Graphs (Adjacency Lists) + Vectors (Blobs).
-*   **Access Pattern**:
-    *   **Ingest**: Massive edge addition (appending to lists).
-    *   **Query**: Prefix scans (`node_id:*`) and Point lookups (`node_id:property`).
-*   **Constraints**: Latency sensitive, high write throughput required.
+## 1. Buffer Management (LeanStore Architecture)
 
-## 2. Critical Features (Priority Order)
+The current `BufferPool` implementation (Phase 1) is functional but inefficient (allocates memory on every load, double buffers with `block_cache`).
 
-### A. Merge Operator (The "Graph Killer" Feature)
-*   **Why**: Currently, adding an edge requires `Get` -> `Deserialize` -> `Append` -> `Serialize` -> `Put`. This is slow (RMW).
-*   **Solution**: `db.merge(key, new_edge)`.
-    *   Writes are O(1) (append to WAL/Memtable).
-    *   Read pays the cost (merging on the fly).
-    *   Compaction merges permanently.
-*   **Status**: `CompactionFilter` exists but `Merge` API is missing.
-*   **Action**: Implement `MergeOperator` trait and `db.merge()`.
+### Phase 2: Memory Efficiency & Reuse
+*   **Problem**: `BufferPool::get_page` replaces the `Vec<u8>` in the frame with a new one from the loader. This defeats the purpose of a buffer pool (reuse).
+*   **Solution**: 
+    *   Modify `get_page` to provide `&mut [u8]` (or `&mut Vec<u8>`) to the loader.
+    *   Loader reads directly into the existing Frame memory.
+    *   Handle variable sized blocks:
+        *   If `size <= frame_size`: Use existing buffer.
+        *   If `size > frame_size`: Reallocate (grow) the buffer.
+*   **Status**: 🔄 Planned
 
-### B. Prefix Bloom Filters
-*   **Why**: `omendb` relies heavily on `prefix_scan(node_id)`.
-*   **Problem**: Standard Bloom Filters only hash the full key. A scan for `prefix:` has to check every SSTable unless we index prefixes.
-*   **Solution**: Create a separate Bloom Filter for key prefixes (e.g., fixed length or separator based).
-*   **Action**: Add `prefix_extractor` to `DBOptions`.
+### Phase 3: Zero-Copy Access
+*   **Problem**: `load_block` copies data from `Frame` to `Bytes` (for `Block`).
+*   **Solution**: 
+    *   Make `Block` capable of holding a `FrameRef` directly.
+    *   `Block` becomes a view into the `BufferPool`.
+    *   Eliminates `block_cache` (or makes it a lightweight "Swip" cache).
+    *   See `ai/design/PHASE_3_ZERO_COPY.md` for detailed design.
+*   **Status**: 🔮 Researching (Design Drafted)
 
-### C. Umbra-style Buffer Manager (LeanStore Phase 2)
-*   **Why**: SSTable blocks are compressed (variable size). Fixed 16KB pages waste memory.
-*   **Solution**: Adapt `BufferPool` to manage variable-size frames (using `mmap` logic or buddy allocator).
-*   **Action**: Research "Variable-Size Buffer Management".
+### Phase 4: Pointer Swizzling (True LeanStore)
+*   **Concept**: Replace `PageId` lookups with direct pointers (`&Frame`) in the index.
+*   **Implementation**:
+    *   `TopLevelIndexEntry` stores `Atomic<Swip>` (Swizzled Pointer).
+    *   `Swip` = `PageId` (Disk) OR `Arc<Frame>` (Memory).
+    *   Requires unsafe Rust or careful `Arc` management.
+*   **Status**: 🔮 Future
 
-### D. MVCC Transactions (Snapshot Isolation)
-*   **Why**: Graph updates often span multiple keys (e.g., Node A -> Node B requires updating both adj lists).
-*   **Solution**: Optimistic Concurrency Control (OCC).
-*   **Action**: Implement `Transaction` API.
+## 2. Compaction & Storage Format
 
-## 3. Why NOT io_uring (Yet)?
-*   **Complexity**: Requires rewriting the entire I/O stack to be async (`tokio-uring`).
-*   **Benefit**: Only visible at >500k IOPS per core. Standard `pread` with `BufferPool` (cached) is sufficient for now.
-*   **Context**: RocksDB is sync. We can beat RocksDB by being *smarter* (better indexing, less amplification), not just "more async".
+### Cloud-Native SSTables
+*   **Goal**: S3-friendly format.
+*   **Change**: `SSTableBuilder` should buffer full blocks/files before writing? 
+    *   *Better*: Stream multipart uploads.
+*   **Optimization**: Disable Compaction for L0->L1 (just upload L0s)?
 
-## 4. Execution Plan
+### Prefix-Aware Compaction
+*   **Goal**: Optimize for `prefix_scan(node_id)`.
+*   **Status**: ✅ Prefix Bloom Filters implemented.
 
-1.  **Merge Operator**: Immediate high impact for `omendb`.
-2.  **Prefix Bloom**: Optimization for graph traversal.
-3.  **MVCC**: Correctness for multi-key graph updates.
-4.  **Umbra Buffer**: Long-term memory efficiency.
+## 3. Concurrency Control (MVCC)
+
+*   **Goal**: Snapshot Isolation for consistent graph traversals.
+*   **Plan**:
+    *   Add `sequence_number` to all keys (already done).
+    *   Implement `Snapshot` struct (captures `seq_num`).
+    *   Update iterators to filter by `Snapshot`.
+
+## 4. Verification & Benchmarking
+
+*   **Benchmarks**:
+    *   `buffer_pool_bench`: Compare `quick_cache` vs `BufferPool`.
+    *   `linux_io_uring`: Verify async IO benefits.
+
+---
+
+## Immediate Action Items
+
+1.  **Refactor `BufferPool`**: Enable memory reuse (avoid `Vec` churn).
+2.  **Benchmark**: Measure impact of `BufferPool` on read latency vs OS cache.

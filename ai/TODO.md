@@ -9,6 +9,15 @@
 
 ## 🔥 Active Work (Nov 20, 2025)
 
+### Cloud Storage Robustness 🔄 **NEXT**
+- [ ] Deepen S3/Object Store integration robustness.
+- [ ] Validate `object_store` integration with stress tests.
+- [ ] Ensure graceful handling of network failures/latency.
+
+### Benchmarks (Linux) 🔄 **NEXT**
+- [ ] Verify "SOTA" performance claims on Linux workstation (io_uring path).
+- [ ] Run `graph_prefix_scan_benchmark` on Linux.
+
 ### Prefix Bloom Filters ✅ **COMPLETE**
 - [x] Update `SSTableBuilder` to generate Prefix Bloom Filters.
 - [x] Update `SSTable` to check Prefix Bloom Filter in `scan_range`.
@@ -113,19 +122,21 @@
 - [x] Expected: 3-5x concurrent write throughput.
 - **Actual**: 30x scaling improvement (50 threads).
 
-### LeanStore (Buffer Management) ✅ **PHASE 1 COMPLETE**
+### LeanStore (Buffer Management) 🔄 **PHASE 2 IN PROGRESS**
 - [x] Design `BufferPool` architecture (ai/design/LEANSTORE_INTEGRATION.md).
 - [x] Implement `BufferPool` prototype (src/buffer/).
 - [x] Implement `Clock` eviction policy.
 - [x] Verify with micro-benchmark (500k ops/sec).
 - [x] Integrate into `SSTable` (Phase 1: Intercept `load_block`).
 - [x] Wired into `DBOptions` (disabled by default).
-
-### Research & Planning 🔄 **NEXT**
+- [x] **Phase 2**: Refactor `get_page` for memory reuse (avoid `Vec` churn).
+- [x] **Phase 2**: Benchmark BufferPool vs OS Cache (Result: 1.2% overhead).
+- [x] **Phase 3**: Zero-Copy Access (Block View) - Implemented `BlockData` enum.
+- [ ] **Phase 3.5**: Benchmark Uncompressed Blocks (True Zero-Copy).
 - [ ] Research "Lipah" (LeanStore successor) / modern buffer management.
 - [ ] Evaluate `qpdb` (Query Processing DB) patterns.
 - [ ] Decide on Pointer Swizzling vs. other optimization.
-- [ ] Create `ai/PLAN_V2.md` for next phase.
+- [x] Create `ai/PLAN_V2.md` for next phase.
 
 
 ### Async/Cloud I/O

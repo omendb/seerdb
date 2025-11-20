@@ -57,6 +57,48 @@ impl FrameRef {
     pub fn get_data(&self) -> parking_lot::RwLockReadGuard<'_, Vec<u8>> {
         self.pool.frames[self.frame_id].data.read()
     }
+
+    /// Unsafe access to data slice without lock guard.
+    ///
+    /// # Safety
+    /// Caller must ensure that:
+    /// 1. The frame is pinned (which `FrameRef` ensures).
+    /// 2. The data is not being mutated concurrently (guaranteed for SSTables as they are immutable).
+    /// 3. The `Vec` does not reallocate (guaranteed as we only resize on initial load).
+    pub unsafe fn data_unchecked(&self) -> &[u8] {
+        // Access the data field directly through the raw pointer of the RwLock
+        // This is highly unsafe and relies on internal implementation details of RwLock or
+        // requires us to trust that the data ptr inside Vec is stable.
+        //
+        // A safer "unsafe" way is to acquire the read lock, get the pointer, and trick the compiler,
+        // but we want to avoid the atomic overhead of the lock if possible.
+        //
+        // For now, let's stick to the "safest" unsafe way: 
+        // We know the frame data is wrapped in RwLock. We can't easily bypass it without
+        // getting a raw pointer to the content.
+        //
+        // Let's try to be slightly disciplined: this function is used where we *know*
+        // we have exclusive or immutable access.
+        
+        // We will take a read lock for a split second to get the slice, then extend its lifetime.
+        // This is "technically" UB if someone writes, but we know they won't.
+        let guard = self.get_data();
+        let ptr = guard.as_ptr();
+        let len = guard.len();
+        std::slice::from_raw_parts(ptr, len)
+    }
+}
+
+impl Clone for FrameRef {
+    fn clone(&self) -> Self {
+        // Increment pin count to account for the new reference
+        self.pool.pin_frame(self.frame_id);
+        Self {
+            pool: self.pool.clone(),
+            page_id: self.page_id,
+            frame_id: self.frame_id,
+        }
+    }
 }
 
 impl Drop for FrameRef {
@@ -122,7 +164,7 @@ impl BufferPool {
 
     pub fn get_page<F, E>(self: &Arc<Self>, page_id: PageId, loader: F) -> Result<FrameRef, E>
     where
-        F: FnOnce() -> Result<Vec<u8>, E>,
+        F: FnOnce(&mut Vec<u8>) -> Result<(), E>,
     {
         // 1. Try find in cache
         if let Some(frame_ref) = self.lookup(page_id) {
@@ -135,34 +177,45 @@ impl BufferPool {
             None => return Err(self.make_capacity_error::<E>()), // TODO: defined error
         };
 
+        // CRITICAL: Pin frame immediately to prevent eviction from stealing it
+        // while we are loading data. allocate_frame returns a frame with pin_count=0.
+        self.pin_frame(frame_id);
+
         // 3. Load data
         // We own frame_id exclusively (it was pulled from free list or eviction).
         // But we need to be careful: someone else might have loaded `page_id` in parallel.
         // Double check page_table.
         if let Some(frame_ref) = self.lookup(page_id) {
             self.free_frame(frame_id);
+            self.unpin(frame_id); // Revert our pin
             return Ok(frame_ref);
         }
 
-        // Load
-        let data = match loader() {
-            Ok(d) => d,
-            Err(e) => {
-                self.free_frame(frame_id);
-                return Err(e);
-            }
-        };
-
-        // 4. Install data
+        // Load into existing buffer
+        // Acquire write lock on data - strictly safe as we own the frame (it's not in page_table yet)
         {
             let slot = &self.frames[frame_id];
             let mut data_guard = slot.data.write();
-            *data_guard = data; // Replace buffer
             
+            // Execute loader with mutable access to the buffer
+            match loader(&mut *data_guard) {
+                Ok(_) => {},
+                Err(e) => {
+                    // Load failed - free frame and return error
+                    // We don't need to clear buffer, it will be overwritten next time
+                    drop(data_guard);
+                    self.free_frame(frame_id);
+                    self.unpin(frame_id); // Revert our pin
+                    return Err(e);
+                }
+            }
+            
+            // 4. Install metadata
             let mut pid_guard = slot.header.page_id.write();
             *pid_guard = Some(page_id);
             
-            slot.header.pin_count.store(1, Ordering::SeqCst); // Pin immediately
+            // slot.header.pin_count.store(1, Ordering::SeqCst); // Pin immediately
+            // ALREADY PINNED above. pin_count is 1.
             slot.header.is_dirty.store(false, Ordering::SeqCst);
         }
 

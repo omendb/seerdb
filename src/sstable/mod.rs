@@ -1352,7 +1352,7 @@ impl SSTable {
                 // Global cache hit!
                 self.cache_hits.fetch_add(1, Ordering::Relaxed);
                 // Parse the cached bytes into a Block (no CRC check needed - already verified)
-                return Block::new(block_data)
+                return Block::from_bytes(block_data)
                     .map_err(|e| SSTableError::Io(std::io::Error::other(e)));
             }
         }
@@ -1367,40 +1367,49 @@ impl SSTable {
         // Cache miss - record and load from disk
         self.cache_misses.fetch_add(1, Ordering::Relaxed);
 
-        let block_data = if let Some(ref pool) = self.buffer_pool {
+        if let Some(ref pool) = self.buffer_pool {
             // LeanStore Path: Use BufferPool for L2 caching
             let page_id = PageId {
                 file_id: self.path_hash,
                 offset,
             };
             
-            let frame_ref = pool.get_page(page_id, || {
+            let frame_ref = pool.get_page(page_id, |buf| {
                 // Load from disk via shared file handle
                 let mut file = self.file.lock().expect("file mutex poisoned");
                 file.seek(SeekFrom::Start(offset))?;
                 
-                // Note: We assume block size fits in frame for now (or handle appropriately)
-                let mut buf = vec![0u8; size as usize];
-                file.read_exact(&mut buf)?;
-                Ok(buf)
+                // Resize buffer to fit data
+                // This reuses memory if capacity is sufficient
+                // If size > capacity, it will reallocate, but next time capacity will be larger
+                buf.resize(size as usize, 0);
+                
+                file.read_exact(buf)?;
+                Ok(())
             }).map_err(|e: std::io::Error| SSTableError::Io(e))?;
 
-            // Access data from frame
-            let guard = frame_ref.get_data();
-            Bytes::copy_from_slice(&guard) // Copy out to bytes (Parsing overhead paid here)
-        } else {
-            // Standard Path: Direct File IO (OS Cache)
-            let mut file = self.file.lock().expect("file mutex poisoned");
-            file.seek(SeekFrom::Start(offset))?;
+            // Zero-Copy: Create Block viewing the Frame
+            // We use BlockData::Borrowed to avoid copying 4KB
+            let block = Block::new(block::BlockData::Borrowed(frame_ref))?;
 
-            let mut buf = vec![0u8; size as usize];
-            file.read_exact(&mut buf)?;
-            drop(file); // Release lock before CRC verification
-            Bytes::from(buf)
-        };
+            // NOTE: We do NOT cache Borrowed blocks in block_cache (L1)
+            // This avoids pinning frames in L2 indefinitely.
+            // This implements "Option A: Ephemeral Blocks" from Phase 3 Design.
+            
+            return Ok(block);
+        }
+
+        // Standard Path: Direct File IO (OS Cache)
+        let mut file = self.file.lock().expect("file mutex poisoned");
+        file.seek(SeekFrom::Start(offset))?;
+
+        let mut buf = vec![0u8; size as usize];
+        file.read_exact(&mut buf)?;
+        drop(file); // Release lock before CRC verification
+        let block_data = Bytes::from(buf);
 
         // Parse and verify block (CRC check happens here)
-        let block = Block::new(block_data.clone())?;
+        let block = Block::from_bytes(block_data.clone())?;
 
         // Cache the verified block in global cache (if available)
         if let Some(ref global) = self.global_cache {
@@ -1769,7 +1778,7 @@ impl SSTableRangeIterator {
         let block_data = Bytes::from(buf);
         drop(file);
 
-        let block = Block::new(block_data)?;
+        let block = Block::from_bytes(block_data)?;
         self.block_cache.insert(offset, block.clone());
 
         Ok(block)

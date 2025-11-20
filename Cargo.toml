@@ -124,6 +124,10 @@ harness = false
 name = "varint_comparison"
 harness = false
 
+[[bench]]
+name = "buffer_pool_bench"
+harness = false
+
 # Examples that require optional features
 [[example]]
 name = "baseline_benchmark"
