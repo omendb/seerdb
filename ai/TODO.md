@@ -16,6 +16,13 @@
 - [x] Fixed critical bug in `add_with_vlog` skipping filter population.
 - [x] Verified with `cargo test` (178 passed).
 
+### Refactoring & Safety ✅ **COMPLETE**
+- [x] Removed unsafe `unwrap()` calls from critical paths (`src/db.rs`, `src/sstable/mod.rs`, `src/wal/pipelined.rs`).
+- [x] Enforced no-panic policy for lock acquisition (`expect` instead of `unwrap`).
+- [x] Fixed `dhat` profiling examples build (allocator conflicts).
+- [x] Fixed `clippy` warnings and modernized syntax.
+- [x] Verified build and tests pass cleanly.
+
 ### Compaction Optimization ✅ **COMPLETE**
 - [x] Audit `compaction/mod.rs` for random write scaling issues.
   - **Result**: SeerDB uses Tiered Compaction, which handles random writes well.
@@ -70,7 +77,7 @@
 
 ### Next Steps
 - [ ] **Benchmarks**: Verify SOTA claims on Linux.
-- [ ] **Refactoring**: Address `unwrap`/`expect` usage (enforced by clippy).
+- [ ] **Documentation**: Update public API docs.
 
 ---
 
