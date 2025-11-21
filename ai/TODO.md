@@ -44,12 +44,12 @@ All critical work complete! Zero blocking issues for production deployment.
 
 **Actionable optimizations**:
 
-#### 1. Sharded Buffer Pool ⚠️ (Implemented, Limited Results)
+#### 1. Sharded Buffer Pool ✅ (Complete)
 - **Goal**: 30-50% improvement on multi-threaded workloads
-- **Status**: ✅ Implemented (16 shards), ⚠️ benchmark deadlocks at 8 threads
-- **Partial Results** (Mac): 1.23x speedup at 2 threads (expected 30-50%)
-- **Issue**: Benchmark needs refinement or deeper investigation
-- **Commits**: 8ce7841 (impl), d613b22/be37612/3160112 (benchmark fixes)
+- **Status**: ✅ Implemented (16 shards), ✅ benchmark working
+- **Results** (Mac): 1.24x at 2 threads, 1.70x at 4 threads, 1.63x at 8 threads
+- **Bug Fixed**: hash_page_id() was creating new RandomState per call → inconsistent sharding
+- **Commits**: 8ce7841 (impl), 41348b8 (hash fix)
 
 #### 2. Prefetching for Range Scans ✅ (Already Implemented)
 - **Goal**: 20-40% improvement on prefix scans (graph workloads)

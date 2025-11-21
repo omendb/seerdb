@@ -15,18 +15,16 @@
     - Global FrameId maintained for API compatibility
   - **Testing**: All 192 tests passing
   - **Commit**: 8ce7841
-- **Multi-threaded Benchmark**: ⚠️ Created, partial results obtained (benches/sharded_buffer_pool_bench.rs)
+- **Multi-threaded Benchmark**: ✅ Complete, all thread counts working
   - **Results** (Mac M3 Max, 800 unique pages):
-    - 1 thread: 29 µs (baseline)
-    - 2 threads: 47 µs (1.62x slower, **1.23x speedup per thread**)
-    - 4 threads: 68 µs (2.34x slower, **0.86x speedup per thread**)
-    - 8 threads: DEADLOCKED (frame exhaustion)
-  - **Findings**:
-    - Limited scaling observed (not the expected 30-50% improvement)
-    - Benchmark deadlocks at 8 threads even with only 10% buffer capacity used
-    - Fixed FrameRef drop() issue (3 iterations), reduced working set 50%→10%, still deadlocks
-  - **Root Cause**: Likely benchmark design issue - need simpler benchmark or investigate deeper buffer pool issue
-  - **Commits**: d613b22, be37612, 3160112
+    - 1 thread: 28.7 µs (baseline)
+    - 2 threads: 46.4 µs (1.24x effective speedup)
+    - 4 threads: 67.6 µs (1.70x effective speedup)
+    - 8 threads: 140.9 µs (1.63x effective speedup)
+  - **Root Cause Found**: hash_page_id() was creating new RandomState per call
+    - Same page_id could hash to different shards → broken sharding → deadlock
+    - Fix: Store hasher in BufferPool struct for consistent shard selection
+  - **Commits**: d613b22, be37612, 3160112, 41348b8
 - **Next**: Clock-Pro eviction (final LeanStore task)
 - **Prefetching**: ✅ Already implemented (discovered existing code)
   - `readahead_size=2`, `prefetch_data_blocks()` at src/sstable/mod.rs:1422-1432
