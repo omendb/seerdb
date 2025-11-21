@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use parking_lot::{RwLock, Mutex};
 use dashmap::DashMap;
-use crate::buffer::eviction::{EvictionPolicy, ClockPolicy, FrameId};
+use crate::buffer::eviction::{EvictionPolicy, ClockProPolicy, FrameId};
 use std::fmt;
 
 pub type FileId = u64;
@@ -156,7 +156,7 @@ impl BufferShard {
             frames,
             page_table: DashMap::new(),
             free_list: Mutex::new(free_list),
-            eviction: Box::new(ClockPolicy::new(frames_per_shard)),
+            eviction: Box::new(ClockProPolicy::new(frames_per_shard)),
             frame_offset,
             frames_per_shard,
         }
