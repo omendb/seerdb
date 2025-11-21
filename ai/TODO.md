@@ -33,43 +33,45 @@ All critical work complete! Zero blocking issues for production deployment.
 
 ## Next Priority
 
-### LeanStore Advanced Research (Active - Nov 20, 2025)
-**Goal**: Research modern buffer management techniques for 10-30% performance gains
+### LeanStore Research Complete ✅ (Nov 20, 2025)
 
-**Tasks**:
-- [ ] Research Lipah (LeanStore successor from TUM)
-  - Paper: "Lipah: A Log-Structured Hash Table" (2024)
-  - Focus: Log-structured buffer management innovations
-- [ ] Evaluate qpdb (Query Processing DB) patterns
-  - Focus: Join processing and scan optimizations
-- [ ] Investigate additional buffer pool optimizations
-  - Adaptive eviction policies
-  - Prefetching strategies for range scans
-  - Zero-copy improvements beyond Phase 3
-- [ ] Decide on Pointer Swizzling trade-offs
-  - Safety vs performance analysis
-  - Safe Rust alternatives
+**Research findings**: `ai/research/LEANSTORE_RESEARCH.md`
 
-**References**: `ai/PLAN_V2.md`, LeanStore papers (2018-2024)
+**Key decisions**:
+- ❌ **Rejected pointer swizzling** - Requires unsafe Rust, memory corruption risk
+- ❌ **Rejected vmcache** - Linux-only (userfaultfd), breaks Mac development
+- ✅ **Identified safe alternatives** - Sharded buffer pool + prefetching + Clock-Pro
 
-**Expected Impact**: 10-30% performance improvement on buffer-pool-heavy workloads
+**Actionable optimizations** (in priority order):
+
+#### 1. Sharded Buffer Pool (Highest ROI)
+- **Goal**: 30-50% improvement on multi-threaded workloads
+- **Technique**: Partition buffer pool into 16 shards, per-shard locking
+- **Effort**: 2-3 days
+- **Risk**: Low (proven in MySQL, PostgreSQL)
+- **Status**: Ready to implement
+
+#### 2. Prefetching for Range Scans
+- **Goal**: 20-40% improvement on prefix scans (graph workloads)
+- **Technique**: Async prefetch next blocks during range iteration
+- **Effort**: 3-4 days
+- **Risk**: Medium (async complexity)
+- **Status**: Deferred until Phase 1 complete
+
+#### 3. Clock-Pro Eviction
+- **Goal**: 10-20% hit rate improvement
+- **Technique**: Adaptive eviction with hot/cold separation
+- **Effort**: 2-3 days
+- **Risk**: Low (fallback to Clock)
+- **Status**: Low priority (incremental gains)
+
+**Expected combined impact**: 50-80% improvement (not additive, Amdahl's Law applies)
 
 ---
 
 ## Optional Future Work
 
 ### Low Priority Optimizations
-
-**Dirty Page Flush in BufferPool** (very low priority)
-- Not needed for immutable SSTables
-- Only relevant if mutable pages added in future
-- File: `src/buffer/manager.rs:312`
-
-**LeanStore Advanced Research** (exploratory)
-- [ ] Research "Lipah" (LeanStore successor)
-- [ ] Evaluate `qpdb` (Query Processing DB) patterns
-- [ ] Decide on Pointer Swizzling vs. other optimization
-- Reference: `ai/PLAN_V2.md`
 
 **Async/Cloud I/O** (optimization, not blocking)
 - [ ] Use `tokio` for S3 interactions (already using `object_store`)
