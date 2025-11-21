@@ -503,7 +503,7 @@ fn main() {
         );
 
         print!("fjall... ");
-        let (fjall_write, fjall_read) = benchmark_omendb_fjall();
+        let (fjall_write, fjall_read) = benchmark_random_fjall();
         println!(
             "Write: {:.2}s, Read: {:.2}s",
             fjall_write.as_secs_f64(),
