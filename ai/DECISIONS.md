@@ -158,6 +158,44 @@ Historical decisions from research phase:
 
 ---
 
+### MVCC Architecture (Nov 20, 2025)
+**Decision**: MVCC is DBMS Responsibility (Storage Engine Provides Primitives Only)
+**Date**: November 20, 2025
+
+**Question**: Should seerdb implement full MVCC (like RocksDB with user-defined timestamps) or leave it to the DBMS layer?
+
+**Analysis**:
+1. **Storage Engine Scope**: seerdb is a library/building block (like RocksDB), not a complete DBMS (like PostgreSQL)
+2. **Flexibility**: Different DBMS have different transaction models (SQL ACID vs Graph ACID vs Eventually Consistent)
+3. **Existing Primitives**: seerdb already provides the building blocks DBMS needs:
+   - ✅ Snapshots (point-in-time consistent reads)
+   - ✅ Merge operators (for conflict resolution)
+   - ✅ Range scans (finding all versions of a key)
+   - ✅ Atomic batch writes (multi-key transactions)
+
+**Decision**:
+- **Reject**: Full MVCC implementation in seerdb (version management, GC, isolation levels)
+- **Accept**: Hybrid approach - provide primitives, DBMS assembles them
+- **DBMS Responsibility**: Transaction manager, isolation levels, garbage collection policy, conflict detection
+- **Storage Responsibility**: Efficient key-value storage with snapshots and merges
+
+**Examples**:
+- **PostgreSQL model**: Heap + visibility maps + MVCC in DBMS layer
+- **FoundationDB model**: Versioned keys + snapshot reads, DBMS handles transactions
+- **seerdb model**: Snapshots + merge operators + range scans = MVCC primitives
+
+**Future Work** (optional, if users request):
+- Versioned key helpers (key + timestamp encoding utilities)
+- Multi-version iterators (see all versions of a key)
+- TTL/GC hooks (for cleaning old versions)
+
+**Impact**:
+- Storage engine stays focused and flexible
+- omendb (and other DBMS) can implement custom transaction models
+- Avoids forcing one MVCC strategy on all users
+
+---
+
 ## Recent Major Decisions (Nov 2025)
 
 ### Performance Breakthrough (Nov 7-8, 2025)
@@ -269,7 +307,7 @@ Historical decisions from research phase:
 
 ---
 
-**Last Updated**: November 14, 2025
-**Status**: Testing complete (0.0.1 pre-alpha)
+**Last Updated**: November 20, 2025
+**Status**: Production Ready (0.0.1-alpha) - All micro-optimizations complete
 **Performance**: **#1 on ALL 4 workloads** vs RocksDB and fjall 🏆
-**Next**: Documentation (Week 6-7)
+**Next**: LeanStore/Lipah research for 10-30% performance gains

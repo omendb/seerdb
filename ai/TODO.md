@@ -31,6 +31,31 @@ All critical work complete! Zero blocking issues for production deployment.
 
 ---
 
+## Next Priority
+
+### LeanStore Advanced Research (Active - Nov 20, 2025)
+**Goal**: Research modern buffer management techniques for 10-30% performance gains
+
+**Tasks**:
+- [ ] Research Lipah (LeanStore successor from TUM)
+  - Paper: "Lipah: A Log-Structured Hash Table" (2024)
+  - Focus: Log-structured buffer management innovations
+- [ ] Evaluate qpdb (Query Processing DB) patterns
+  - Focus: Join processing and scan optimizations
+- [ ] Investigate additional buffer pool optimizations
+  - Adaptive eviction policies
+  - Prefetching strategies for range scans
+  - Zero-copy improvements beyond Phase 3
+- [ ] Decide on Pointer Swizzling trade-offs
+  - Safety vs performance analysis
+  - Safe Rust alternatives
+
+**References**: `ai/PLAN_V2.md`, LeanStore papers (2018-2024)
+
+**Expected Impact**: 10-30% performance improvement on buffer-pool-heavy workloads
+
+---
+
 ## Optional Future Work
 
 ### Low Priority Optimizations
@@ -55,9 +80,13 @@ All critical work complete! Zero blocking issues for production deployment.
 ## 🎯 Future Release Goals
 
 ### 0.2.0 (Performance & Advanced Features)
-- [ ] LeanStore advanced optimizations (if research shows value)
+- [ ] LeanStore advanced optimizations (currently researching - see "Next Priority")
 - [ ] Additional WAL pipelining optimizations (already 30x scaling)
-- [ ] Transactions/MVCC (multi-version concurrency control)
+- [ ] Optional MVCC primitives (if users request):
+  - Versioned key helpers
+  - Multi-version iterators
+  - TTL/GC hooks
+  - **Note**: Full MVCC is DBMS responsibility (see `ai/DECISIONS.md`)
 
 ---
 
