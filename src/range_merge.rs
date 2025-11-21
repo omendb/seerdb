@@ -121,6 +121,7 @@ where
         })
     }
 
+        #[inline]
         fn resolve_merges(&mut self, key: &Bytes, base: Option<&Bytes>) -> Result<Entry, Box<dyn std::error::Error + Send + Sync>> {
 
             if let Some(op) = &self.merge_operator {
@@ -176,6 +177,7 @@ where
 {
     type Item = Result<(Bytes, Entry), Box<dyn std::error::Error + Send + Sync>>;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             // Pop smallest (newest) key/level from heap

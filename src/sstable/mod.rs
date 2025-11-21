@@ -1484,6 +1484,7 @@ impl SSTableRangeIterator {
         Ok(false)
     }
 
+    #[inline]
     fn advance_to_next_data_block(&mut self) -> Result<bool> {
         if self.index_entry_idx >= self.index_block_entries.len()
             && !self.advance_to_next_index_block()?
@@ -1516,6 +1517,7 @@ impl SSTableRangeIterator {
 impl Iterator for SSTableRangeIterator {
     type Item = Result<(Bytes, Entry)>;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             // Try to get next entry from current data block

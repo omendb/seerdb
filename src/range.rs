@@ -27,6 +27,7 @@ where
 {
     type Item = Result<(Bytes, Entry), Box<dyn std::error::Error + Send + Sync>>;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         self.inner.next().map(|result| result.map_err(Into::into))
     }
@@ -113,6 +114,7 @@ impl RangeIterator {
 impl Iterator for RangeIterator {
     type Item = Result<RangeItem, Box<dyn std::error::Error>>;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         // K-way merge already filters tombstones and deduplicates
         self.inner.next().map(|result| {
