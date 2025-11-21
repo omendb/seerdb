@@ -21,7 +21,7 @@ All critical work complete! Zero blocking issues for production deployment.
 - ✅ Performance (878K writes/sec, 4.7M reads/sec)
 - ✅ Merge operators (O(1) blind writes for graphs)
 - ✅ SIMD optimizations (ALEX search, block parsing)
-- ✅ Blocked bloom filters (3.4x speedup, available but not integrated)
+- ✅ Blocked bloom filters (3.4x speedup, integrated as default, 3.7% read improvement)
 - ✅ Cloud storage (S3/GCS with retry logic)
 - ✅ Complete API documentation
 - ✅ Micro-optimizations (inline hints on hot read path, ~12.3µs random reads)
