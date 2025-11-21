@@ -25,6 +25,7 @@ fn test_buffer_pool_integration() {
     let pool_options = BufferPoolOptions {
         capacity_bytes: 1024 * 1024, // 1MB
         frame_size: 4096,            // 4KB
+        num_shards: 4,               // 4 shards
     };
     let buffer_pool = BufferPool::new(pool_options);
 
@@ -63,7 +64,8 @@ fn test_buffer_pool_large_values() {
     // 2. Open with BufferPool (Small frames)
     let pool_options = BufferPoolOptions {
         capacity_bytes: 1024 * 1024,
-        frame_size: 4096, // 4KB frames
+        frame_size: 4096,  // 4KB frames
+        num_shards: 4,     // 4 shards
     };
     let buffer_pool = BufferPool::new(pool_options);
 
