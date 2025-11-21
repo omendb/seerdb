@@ -116,12 +116,14 @@ fn bench_buffer_pool_contention_focused(c: &mut Criterion) {
 
                                     let page_id = PageId { file_id, offset };
 
-                                    let result = pool.get_page(page_id, |buf| {
+                                    let frame_ref = pool.get_page(page_id, |buf| {
                                         buf.fill(0xAB);
                                         Ok::<(), BufferPoolError>(())
-                                    });
+                                    }).unwrap();
 
-                                    black_box(result.unwrap());
+                                    // CRITICAL: Drop frame immediately to release pin
+                                    black_box(&frame_ref);
+                                    drop(frame_ref);
                                 }
                             })
                         })
@@ -173,12 +175,14 @@ fn bench_buffer_pool_scalability(c: &mut Criterion) {
 
                                     let page_id = PageId { file_id, offset };
 
-                                    let result = pool.get_page(page_id, |buf| {
+                                    let frame_ref = pool.get_page(page_id, |buf| {
                                         buf.fill(0xAB);
                                         Ok::<(), BufferPoolError>(())
-                                    });
+                                    }).unwrap();
 
-                                    black_box(result.unwrap());
+                                    // CRITICAL: Drop frame immediately to release pin
+                                    black_box(&frame_ref);
+                                    drop(frame_ref);
                                 }
                             })
                         })
