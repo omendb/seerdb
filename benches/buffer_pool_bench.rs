@@ -59,6 +59,7 @@ fn bench_buffer_pool_vs_os_cache(c: &mut Criterion) {
         let pool_options = BufferPoolOptions {
             capacity_bytes: 20 * 1024 * 1024, // 20MB
             frame_size: 4096,
+            num_shards: 16,
         };
         let pool = BufferPool::new(pool_options);
         let mut sstable = SSTable::open_with_buffer_pool(&path, Some(pool)).unwrap();

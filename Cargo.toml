@@ -152,6 +152,10 @@ harness = false
 name = "micro_opt_scan_bench"
 harness = false
 
+[[bench]]
+name = "sharded_buffer_pool_bench"
+harness = false
+
 # Examples that require optional features
 [[example]]
 name = "baseline_benchmark"
