@@ -64,6 +64,16 @@ All critical work complete! Zero blocking issues for production deployment.
 - **Technique**: 2-bit state per frame (hot/cold + referenced)
 - **Commit**: feef094
 
+#### 4. WAL Pipelining Optimizations ✅ (Complete - Nov 21, 2025)
+- **Goal**: 20-30% write throughput improvement (based on RocksDB research)
+- **Status**: ✅ Implemented with three optimizations
+- **Optimizations**:
+  1. **Lock-free queue** - crossbeam channel replaces Mutex<VecDeque>
+  2. **Adaptive batch delay** - 50µs-500µs based on queue depth (+89% at 4 threads)
+  3. **Pipelined writes** - Overlap memtable write N with WAL write N+1 (+26-51% at 2-4 threads)
+- **Commit**: 356cdb2
+- **Benchmark**: `cargo bench --bench pipelined_wal_bench`
+
 ---
 
 ## Optional Future Work
@@ -79,8 +89,8 @@ All critical work complete! Zero blocking issues for production deployment.
 ## 🎯 Future Release Goals
 
 ### 0.2.0 (Performance & Advanced Features)
-- [ ] LeanStore advanced optimizations (currently researching - see "Next Priority")
-- [ ] Additional WAL pipelining optimizations (already 30x scaling)
+- [x] LeanStore optimizations (sharded buffer pool, Clock-Pro, prefetching)
+- [x] WAL pipelining optimizations (lock-free queue, adaptive delay, pipelined writes)
 - [ ] Optional MVCC primitives (if users request):
   - Versioned key helpers
   - Multi-version iterators
