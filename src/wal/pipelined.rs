@@ -200,6 +200,7 @@ impl PipelinedWAL {
     }
 
     /// Process batches with pipelining: overlap memtable write N with WAL write N+1
+    #[allow(clippy::type_complexity)]
     fn process_batches_pipelined<F>(&self, on_memtable: &F)
     where
         F: Fn(&[Record]),

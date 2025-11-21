@@ -28,6 +28,8 @@ use lz4_flex::{compress_prepend_size, decompress_size_prepended};
 use std::io::{self};
 use std::sync::{Arc, OnceLock};
 use thiserror::Error;
+#[cfg(not(feature = "simd"))]
+use varint_rs::VarintReader;
 use varint_rs::VarintWriter;
 
 /// Helper to write varint to BytesMut
