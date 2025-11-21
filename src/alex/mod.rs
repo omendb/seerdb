@@ -51,8 +51,16 @@ pub mod alex_tree;
 pub mod gapped_node;
 pub mod linear_model;
 pub mod multi_level;
+#[cfg(feature = "simd")]
 mod simd_search;
-// pub mod simd_search; // Temporarily disabled
+// Fallback for non-SIMD builds
+#[cfg(not(feature = "simd"))]
+mod simd_search {
+    /// Scalar fallback for simd_search_i64
+    pub fn simd_search_i64(keys: &[Option<i64>], key: i64) -> Option<usize> {
+        keys.iter().position(|&k| k == Some(key))
+    }
+}
 
 // Re-exports
 pub use alex_tree::AlexTree;
