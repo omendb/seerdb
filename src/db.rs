@@ -807,9 +807,11 @@ impl DB {
         let buffer_pool = options.buffer_pool_capacity.map(|capacity| {
             let pool_opts = BufferPoolOptions {
                 capacity_bytes: capacity,
-                // Default 16KB frame for now. 
+                // Default 16KB frame for now.
                 // In future, we should match SSTable block size or use multi-size pool.
-                frame_size: 16 * 1024, 
+                frame_size: 16 * 1024,
+                // Use 16 shards for multi-core systems (reduces lock contention)
+                num_shards: 16,
             };
             BufferPool::new(pool_opts)
         });
