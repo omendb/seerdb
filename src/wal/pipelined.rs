@@ -74,9 +74,9 @@ pub struct PipelineConfig {
 impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
-            min_delay: Duration::from_micros(50),   // Low latency for light load
-            max_delay: Duration::from_micros(500),  // Higher throughput for heavy load
-            adaptive_threshold: 16,                  // Queue depth to switch to max_delay
+            min_delay: Duration::from_micros(50), // Low latency for light load
+            max_delay: Duration::from_micros(500), // Higher throughput for heavy load
+            adaptive_threshold: 16,               // Queue depth to switch to max_delay
             max_batch_size: 256,
             enable_pipelining: true,
         }

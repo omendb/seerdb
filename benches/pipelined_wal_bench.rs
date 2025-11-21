@@ -39,8 +39,9 @@ fn bench_pipelined_wal(c: &mut Criterion) {
                 b.iter(|| {
                     let dir = tempdir().unwrap();
                     let wal_path = dir.path().join("test.wal");
-                    let wal =
-                        Arc::new(Mutex::new(WAL::create(&wal_path, SyncPolicy::None).unwrap()));
+                    let wal = Arc::new(Mutex::new(
+                        WAL::create(&wal_path, SyncPolicy::None).unwrap(),
+                    ));
 
                     let config = PipelineConfig {
                         enable_pipelining: true,
@@ -87,8 +88,9 @@ fn bench_pipelined_wal(c: &mut Criterion) {
                 b.iter(|| {
                     let dir = tempdir().unwrap();
                     let wal_path = dir.path().join("test.wal");
-                    let wal =
-                        Arc::new(Mutex::new(WAL::create(&wal_path, SyncPolicy::None).unwrap()));
+                    let wal = Arc::new(Mutex::new(
+                        WAL::create(&wal_path, SyncPolicy::None).unwrap(),
+                    ));
 
                     let config = PipelineConfig {
                         enable_pipelining: false,
@@ -143,7 +145,9 @@ fn bench_adaptive_delay(c: &mut Criterion) {
         b.iter(|| {
             let dir = tempdir().unwrap();
             let wal_path = dir.path().join("test.wal");
-            let wal = Arc::new(Mutex::new(WAL::create(&wal_path, SyncPolicy::None).unwrap()));
+            let wal = Arc::new(Mutex::new(
+                WAL::create(&wal_path, SyncPolicy::None).unwrap(),
+            ));
 
             let config = PipelineConfig {
                 min_delay: Duration::from_micros(100),
@@ -187,7 +191,9 @@ fn bench_adaptive_delay(c: &mut Criterion) {
         b.iter(|| {
             let dir = tempdir().unwrap();
             let wal_path = dir.path().join("test.wal");
-            let wal = Arc::new(Mutex::new(WAL::create(&wal_path, SyncPolicy::None).unwrap()));
+            let wal = Arc::new(Mutex::new(
+                WAL::create(&wal_path, SyncPolicy::None).unwrap(),
+            ));
 
             let config = PipelineConfig {
                 min_delay: Duration::from_micros(50),
