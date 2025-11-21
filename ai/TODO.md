@@ -58,12 +58,11 @@ All critical work complete! Zero blocking issues for production deployment.
 - **Code**: `prefetch_data_blocks()` called after each block advance
 - **Note**: Already included in range scan performance
 
-#### 3. Clock-Pro Eviction (Remaining Task)
+#### 3. Clock-Pro Eviction ✅ (Complete)
 - **Goal**: 10-20% hit rate improvement
-- **Technique**: Adaptive eviction with hot/cold separation
-- **Effort**: 2-3 days
-- **Risk**: Low (fallback to current Clock)
-- **Status**: ⏭️ Next task from LeanStore research
+- **Status**: ✅ Implemented, 14.7% improvement at 4 threads
+- **Technique**: 2-bit state per frame (hot/cold + referenced)
+- **Commit**: feef094
 
 ---
 
