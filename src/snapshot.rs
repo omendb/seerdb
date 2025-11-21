@@ -47,12 +47,13 @@ use std::sync::{Arc, Mutex};
 ///
 /// ```rust,no_run
 /// use seerdb::{DB, DBOptions};
+/// use bytes::Bytes;
 ///
 /// let db = DB::open(DBOptions::default()).unwrap();
 /// db.put(b"key1", b"value1").unwrap();
 ///
 /// // Create snapshot
-/// let snapshot = db.snapshot();
+/// let snapshot = db.snapshot().unwrap();
 ///
 /// // Write after snapshot
 /// db.put(b"key1", b"value2").unwrap();
@@ -125,11 +126,12 @@ impl Snapshot {
     ///
     /// ```rust,no_run
     /// use seerdb::{DB, DBOptions};
+    /// use bytes::Bytes;
     ///
     /// let db = DB::open(DBOptions::default()).unwrap();
     /// db.put(b"key", b"old_value").unwrap();
     ///
-    /// let snapshot = db.snapshot();
+    /// let snapshot = db.snapshot().unwrap();
     /// db.put(b"key", b"new_value").unwrap();
     ///
     /// // Snapshot sees old value
@@ -230,7 +232,7 @@ impl Snapshot {
     /// db.put(b"b", b"2").unwrap();
     /// db.put(b"c", b"3").unwrap();
     ///
-    /// let snapshot = db.snapshot();
+    /// let snapshot = db.snapshot().unwrap();
     ///
     /// // Modify after snapshot
     /// db.put(b"b", b"modified").unwrap();

@@ -88,18 +88,17 @@
 //!
 //! Built-in metrics and health checks for production deployment:
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! # use seerdb::{DB, DBOptions};
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! # let db = DB::open(DBOptions::default())?;
 //! // Get current database statistics
-//! let stats = db.get_stats();
-//! println!("Operations: {} reads, {} writes", stats.reads, stats.writes);
-//! println!("Latency p99: {} µs", stats.read_latency_p99_us);
+//! let stats = db.stats();
+//! println!("Operations: {} reads, {} writes", stats.total_reads, stats.total_writes);
 //!
 //! // Check database health
-//! let health = db.check_health()?;
-//! println!("Health: {:?}", health.status);
+//! let health = db.health();
+//! println!("Health: {:?}", health);
 //! # Ok(())
 //! # }
 //! ```

@@ -46,7 +46,7 @@ const MIN_DENSITY: f64 = 0.3;
 /// # Examples
 ///
 /// ```
-/// use omen::alex::gapped_node::GappedNode;
+/// use seerdb::alex::gapped_node::GappedNode;
 ///
 /// let mut node = GappedNode::new(10, 1.0); // 10 keys, 50% expansion
 ///
@@ -93,7 +93,7 @@ impl GappedNode {
     ///
     /// # Examples
     /// ```
-    /// use omen::alex::gapped_node::GappedNode;
+    /// use seerdb::alex::gapped_node::GappedNode;
     ///
     /// // Node for ~100 keys with 50% expansion
     /// let node = GappedNode::new(100, 1.0);

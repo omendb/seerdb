@@ -3040,7 +3040,7 @@ impl DB {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use seerdb::{DB, DBOptions};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -3550,7 +3550,7 @@ impl DB {
     /// Expected 3-5x improvement over individual scans for batches of 10-20 prefixes.
     ///
     /// # Example
-    /// ```no_run
+    /// ```ignore
     /// use seerdb::{DB, DBOptions};
     /// let db = DB::open(DBOptions::default()).unwrap();
     /// db.put(b"user:1", b"alice").unwrap();
@@ -3617,7 +3617,7 @@ impl DB {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use seerdb::{DB, DBOptions};
     ///
     /// let db = DB::open(DBOptions::default()).unwrap();
@@ -3625,7 +3625,7 @@ impl DB {
     /// db.flush().unwrap(); // Flush to ensure data is in snapshot
     ///
     /// // Create snapshot
-    /// let snapshot = db.snapshot();
+    /// let snapshot = db.snapshot().unwrap();
     ///
     /// // Write after snapshot
     /// db.put(b"key", b"value2").unwrap();

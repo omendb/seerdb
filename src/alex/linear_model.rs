@@ -52,7 +52,7 @@ impl LinearModel {
     ///
     /// # Examples
     /// ```
-    /// use omen::alex::linear_model::LinearModel;
+    /// use seerdb::alex::linear_model::LinearModel;
     ///
     /// let data = vec![(0, 0), (10, 1), (20, 2), (30, 3)];
     /// let mut model = LinearModel::new();
@@ -171,7 +171,7 @@ impl LinearModel {
     ///
     /// # Examples
     /// ```
-    /// use omen::alex::linear_model::LinearModel;
+    /// use seerdb::alex::linear_model::LinearModel;
     ///
     /// let data = vec![(0, 0), (100, 100), (200, 200)];
     /// let mut model = LinearModel::new();
