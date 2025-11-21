@@ -21,8 +21,8 @@
 //!
 //! ## References
 //!
-//! - ALEX Paper: https://www.microsoft.com/en-us/research/uploads/prod/2020/04/MSRAlexTechnicalReportV2.pdf
-//! - GitHub: https://github.com/microsoft/ALEX
+//! - ALEX Paper: <https://www.microsoft.com/en-us/research/uploads/prod/2020/04/MSRAlexTechnicalReportV2.pdf>
+//! - GitHub: <https://github.com/microsoft/ALEX>
 //!
 //! ## Example Usage
 //!

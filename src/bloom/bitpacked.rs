@@ -5,7 +5,7 @@
 use std::hash::{Hash, Hasher};
 use twox_hash::XxHash64;
 
-/// Bloom filter with optimal bit-packed storage (Vec<u64>)
+/// Bloom filter with optimal bit-packed storage (`Vec<u64>`)
 pub struct BloomFilter {
     bits: Vec<u64>,    // Bit-packed storage (64 bits per u64)
     num_bits: usize,   // Total number of bits

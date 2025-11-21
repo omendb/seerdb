@@ -1696,7 +1696,7 @@ impl SSTable {
 
     /// Scan a range of keys from this SSTable using lazy iteration
     ///
-    /// Returns an iterator that yields (key, Option<value>) where None indicates a tombstone.
+    /// Returns an iterator that yields (key, `Option<value>`) where None indicates a tombstone.
     /// Blocks are loaded on-demand as the iterator is consumed, avoiding upfront materialization.
     pub fn scan_range(&self, start_key: &[u8], end_key: Option<&[u8]>) -> SSTableRangeIterator {
         self.scan_range_with_options(start_key, end_key, true)

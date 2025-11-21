@@ -539,7 +539,7 @@ pub struct DB {
     memtables: Arc<[ArcSwap<Memtable>; NUM_PARTITIONS]>,
     /// Immutable memtables being flushed (RocksDB-style, but per-partition)
     /// Readers check this before SSTables to avoid data loss during flush
-    /// Stored as Arc<Memtable> to avoid unwrapping Arc after atomic swap
+    /// Stored as `Arc<Memtable>` to avoid unwrapping Arc after atomic swap
     /// LOCK-FREE: Uses ArcSwap for zero-contention reads during flush!
     immutable_memtables: Arc<ArcSwap<Option<Arc<Vec<Arc<Memtable>>>>>>,
     /// LSM tree for level management
@@ -1492,7 +1492,7 @@ impl DB {
     /// Merge a value into the database
     ///
     /// Applies a merge operand to a key. The merge logic is defined by the configured
-    /// [`MergeOperator`](crate::merge_operator::MergeOperator).
+    /// [`MergeOperator`].
     ///
     /// # Arguments
     /// * `key` - The key to merge into
