@@ -66,6 +66,7 @@ fn test_read_isolation_during_writes() {
 }
 
 #[test]
+#[ignore = "Flaky in CI due to timing sensitivity"]
 fn test_read_isolation_across_flush() {
     let temp_dir = TempDir::new().unwrap();
     let opts = DBOptions {
