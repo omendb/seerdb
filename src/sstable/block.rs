@@ -28,7 +28,7 @@ use lz4_flex::{compress_prepend_size, decompress_size_prepended};
 use std::io::{self};
 use std::sync::{Arc, OnceLock};
 use thiserror::Error;
-use varint_rs::{VarintReader, VarintWriter};
+use varint_rs::VarintWriter;
 
 /// Helper to write varint to BytesMut
 fn write_varint(buf: &mut BytesMut, value: u64) {

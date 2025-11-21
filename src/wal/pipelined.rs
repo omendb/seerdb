@@ -84,7 +84,7 @@ impl Default for PipelineConfig {
 }
 
 impl PipelineConfig {
-    /// Compute adaptive delay based on queue depth
+    /// Compute adaptive delay based on queue depth using integer math
     #[inline]
     fn adaptive_delay(&self, queue_depth: usize) -> Duration {
         if queue_depth == 0 {
@@ -92,11 +92,12 @@ impl PipelineConfig {
         } else if queue_depth >= self.adaptive_threshold {
             self.max_delay
         } else {
-            // Linear interpolation between min and max
-            let ratio = queue_depth as f64 / self.adaptive_threshold as f64;
-            let min_us = self.min_delay.as_micros() as f64;
-            let max_us = self.max_delay.as_micros() as f64;
-            Duration::from_micros((min_us + ratio * (max_us - min_us)) as u64)
+            // Linear interpolation using integer math (avoids f64 conversion)
+            let min_us = self.min_delay.as_micros() as u64;
+            let max_us = self.max_delay.as_micros() as u64;
+            let delta = max_us - min_us;
+            let scaled = delta * (queue_depth as u64) / (self.adaptive_threshold as u64);
+            Duration::from_micros(min_us + scaled)
         }
     }
 }
@@ -316,8 +317,8 @@ impl PipelinedWAL {
             match self.receiver.try_recv() {
                 Ok(writer) => batch.push(writer),
                 Err(TryRecvError::Empty) => {
-                    // Brief spin/yield instead of sleep for low latency
-                    thread::yield_now();
+                    // Brief sleep to avoid busy-waiting (10µs is small enough for low latency)
+                    thread::sleep(Duration::from_micros(10));
                 }
                 Err(TryRecvError::Disconnected) => break,
             }
