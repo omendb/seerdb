@@ -12,7 +12,7 @@ use crate::range::RangeIterator;
 use crate::snapshot::Snapshot;
 use crate::sstable::{SSTable, FLAG_INLINE, FLAG_MERGE, FLAG_POINTER, FLAG_TOMBSTONE};
 use crate::vlog::VLog;
-use crate::wal::{Record, SyncPolicy, WAL, PipelinedWAL};
+use crate::wal::{PipelinedWAL, Record, SyncPolicy, WAL};
 use arc_swap::ArcSwap;
 use bytes::Bytes;
 use foldhash::fast::FixedState;
@@ -450,7 +450,7 @@ impl Default for DBOptions {
             block_cache_capacity: 16_384, // 64MB with 4KB blocks (16K * 4KB = 64MB)
             #[cfg(feature = "object-store")]
             storage_config: None, // Local disk only by default
-            group_commit_delay_us: 0,      // Disabled by default (fsync immediately)
+            group_commit_delay_us: 0,   // Disabled by default (fsync immediately)
             group_commit_max_batch_size: 1000,
             l0_slowdown_writes_trigger: 20, // Start slowing down at 20 L0 files
             l0_stop_writes_trigger: 36,     // Stop writes at 36 L0 files
@@ -681,7 +681,11 @@ impl DB {
         if wal_path.exists() {
             info!("Recovering from WAL");
             let total_entries_before: usize = memtables_vec.iter().map(|mt| mt.len()).sum();
-            crate::db_helpers::recover_partitioned(&wal_path, &memtables_vec, options.merge_operator.as_ref())?;
+            crate::db_helpers::recover_partitioned(
+                &wal_path,
+                &memtables_vec,
+                options.merge_operator.as_ref(),
+            )?;
             let total_entries_after: usize = memtables_vec.iter().map(|mt| mt.len()).sum();
             let recovered = total_entries_after - total_entries_before;
             info!(entries = recovered, "WAL recovery complete");
@@ -802,7 +806,7 @@ impl DB {
 
         let compaction_filter = options.compaction_filter.clone();
         let _merge_operator = options.merge_operator.clone();
-        
+
         // Initialize BufferPool if capacity is set
         let buffer_pool = options.buffer_pool_capacity.map(|capacity| {
             let pool_opts = BufferPoolOptions {
@@ -1009,23 +1013,23 @@ impl DB {
         for record in records {
             match record {
                 Record::Put { key, value } => {
-                     let _ = self.put_internal(key.clone(), value.clone());
+                    let _ = self.put_internal(key.clone(), value.clone());
                 }
                 Record::Delete { key } => {
-                     let _ = self.delete_internal(key.clone());
+                    let _ = self.delete_internal(key.clone());
                 }
                 Record::Batch { operations } => {
                     for op in operations {
                         match op {
-                             crate::wal::BatchOp::Put { key, value } => {
-                                 let _ = self.put_internal(key.clone(), value.clone());
-                             }
-                             crate::wal::BatchOp::Delete { key } => {
-                                 let _ = self.delete_internal(key.clone());
-                             }
-                             crate::wal::BatchOp::Merge { key, operand } => {
-                                 let _ = self.merge_internal(key.clone(), operand.clone());
-                             }
+                            crate::wal::BatchOp::Put { key, value } => {
+                                let _ = self.put_internal(key.clone(), value.clone());
+                            }
+                            crate::wal::BatchOp::Delete { key } => {
+                                let _ = self.delete_internal(key.clone());
+                            }
+                            crate::wal::BatchOp::Merge { key, operand } => {
+                                let _ = self.merge_internal(key.clone(), operand.clone());
+                            }
                         }
                     }
                 }
@@ -1067,7 +1071,10 @@ impl DB {
             if l0_count >= self.options.l0_stop_writes_trigger {
                 // STOP writes: compaction is severely lagging
                 // Sleep 10ms and retry
-                debug!("Stalling writes: L0 count {} >= {}", l0_count, self.options.l0_stop_writes_trigger);
+                debug!(
+                    "Stalling writes: L0 count {} >= {}",
+                    l0_count, self.options.l0_stop_writes_trigger
+                );
                 std::thread::sleep(std::time::Duration::from_millis(10));
                 continue;
             } else if l0_count >= self.options.l0_slowdown_writes_trigger {
@@ -1219,9 +1226,11 @@ impl DB {
         // Pipelined Group Commit (WAL + Memtable)
         // The callback is executed by the Leader thread for all records in the batch
         // Memtable write happens inside this callback
-        self.pipelined_wal.put(record, |batch| {
-            self.apply_wal_records(batch);
-        }).map_err(DBError::Wal)?;
+        self.pipelined_wal
+            .put(record, |batch| {
+                self.apply_wal_records(batch);
+            })
+            .map_err(DBError::Wal)?;
 
         // Track physical bytes written to WAL
         self.metrics.record_physical_bytes(wal_bytes);
@@ -1318,17 +1327,17 @@ impl DB {
         // 2. Check immutable partitions (if flush is in progress) - LOCK-FREE with ArcSwap!
         let immut_arc = self.immutable_memtables.load();
         if let Some(ref immutable_partitions) = **immut_arc {
-             // Only check the correct partition (optimization)
-             let partition_mt = &immutable_partitions[partition];
-             if let Some(entry) = partition_mt.get_entry(key) {
-                 match entry {
+            // Only check the correct partition (optimization)
+            let partition_mt = &immutable_partitions[partition];
+            if let Some(entry) = partition_mt.get_entry(key) {
+                match entry {
                     Entry::Value(v) => return self.resolve_merge(key, Some(v), operands, start),
                     Entry::Tombstone => return self.resolve_merge(key, None, operands, start),
                     Entry::Merge(ops) => {
                         operands.extend(ops.iter().rev().cloned());
                     }
-                 }
-             }
+                }
+            }
         }
 
         // Get vLog if available (need to clone for SSTable attachment)
@@ -1350,13 +1359,13 @@ impl DB {
                         || -> Result<Arc<Mutex<SSTable>>> {
                             let global_cache = Some(Arc::clone(&self.global_block_cache));
                             let buffer_pool = self.buffer_pool.clone();
-                            
+
                             let mut sstable = if let Some(pool) = buffer_pool {
                                 SSTable::open_with_buffer_pool(sstable_path, Some(pool))?
                             } else {
                                 SSTable::open_with_global_cache(sstable_path, global_cache)?
                             };
-                            
+
                             if has_vlog {
                                 let vlog = VLog::open(&vlog_path)?;
                                 sstable = sstable.with_vlog(vlog);
@@ -1373,22 +1382,22 @@ impl DB {
 
                     match result {
                         Some((data, flag)) => {
-                             match flag {
-                                 FLAG_INLINE | FLAG_POINTER => {
-                                     // Found value (pointer resolved by get_entry)
-                                     return self.resolve_merge(key, Some(data), operands, start);
-                                 }
-                                 FLAG_TOMBSTONE => {
-                                     // Found tombstone
-                                     return self.resolve_merge(key, None, operands, start);
-                                 }
-                                 FLAG_MERGE => {
-                                     // Found merge operand
-                                     operands.push(data);
-                                     // Continue to next SSTable/Level
-                                 }
-                                 _ => return Err(crate::sstable::SSTableError::InvalidFormat.into()),
-                             }
+                            match flag {
+                                FLAG_INLINE | FLAG_POINTER => {
+                                    // Found value (pointer resolved by get_entry)
+                                    return self.resolve_merge(key, Some(data), operands, start);
+                                }
+                                FLAG_TOMBSTONE => {
+                                    // Found tombstone
+                                    return self.resolve_merge(key, None, operands, start);
+                                }
+                                FLAG_MERGE => {
+                                    // Found merge operand
+                                    operands.push(data);
+                                    // Continue to next SSTable/Level
+                                }
+                                _ => return Err(crate::sstable::SSTableError::InvalidFormat.into()),
+                            }
                         }
                         None => {
                             // Not found in this SSTable
@@ -1468,9 +1477,11 @@ impl DB {
         let record = Record::Delete { key: key.clone() };
 
         // Pipelined Group Commit (WAL + Memtable)
-        self.pipelined_wal.put(record, |batch| {
-            self.apply_wal_records(batch);
-        }).map_err(DBError::Wal)?;
+        self.pipelined_wal
+            .put(record, |batch| {
+                self.apply_wal_records(batch);
+            })
+            .map_err(DBError::Wal)?;
 
         // Record latency
         self.metrics.record_delete(start.elapsed());
@@ -1498,9 +1509,11 @@ impl DB {
         };
 
         // Pipelined Group Commit
-        self.pipelined_wal.put(record, |batch| {
-            self.apply_wal_records(batch);
-        }).map_err(DBError::Wal)?;
+        self.pipelined_wal
+            .put(record, |batch| {
+                self.apply_wal_records(batch);
+            })
+            .map_err(DBError::Wal)?;
 
         // Metrics (reuse put metric for now or add new one)
         self.metrics.record_put(start.elapsed());
@@ -1660,7 +1673,10 @@ impl DB {
                         // For now, we'll create a Merge entry with just the operand,
                         // effectively "resetting" the value if the user didn't handle it.
                         // Ideally, Memtable should support Value+Operands.
-                        warn!("Merge operator returned None for full_merge on key {:?}. Overwriting.", key);
+                        warn!(
+                            "Merge operator returned None for full_merge on key {:?}. Overwriting.",
+                            key
+                        );
                         Entry::Merge(vec![operand])
                     }
                 } else {
@@ -1669,7 +1685,7 @@ impl DB {
                     warn!("Merge called without merge_operator on existing Value. Overwriting.");
                     Entry::Merge(vec![operand])
                 }
-            },
+            }
             Some(Entry::Merge(ops)) => {
                 let mut new_ops = ops.clone();
                 // Optimization: Partial merge
@@ -1692,14 +1708,12 @@ impl DB {
                     new_ops.push(operand);
                 }
                 Entry::Merge(new_ops)
-            },
+            }
             Some(Entry::Tombstone) => {
                 // Merge against delete -> Merge(op) (acts as Put if Associative)
                 Entry::Merge(vec![operand])
-            },
-            None => {
-                Entry::Merge(vec![operand])
             }
+            None => Entry::Merge(vec![operand]),
         };
 
         mt.put_entry(key, new_entry);
@@ -2211,8 +2225,7 @@ impl DB {
             // When object-store feature is not enabled, always use traditional SSTableBuilder
             #[cfg(not(feature = "object-store"))]
             {
-                let mut builder =
-                    SSTableBuilder::create(sstable_path)?.with_max_sequence(sequence);
+                let mut builder = SSTableBuilder::create(sstable_path)?.with_max_sequence(sequence);
 
                 for (key, entry) in entries {
                     match entry {
@@ -2499,7 +2512,9 @@ impl DB {
         // By queuing deletions with timestamps, we ensure files are only deleted
         // after a safe delay (5 seconds), giving readers time to finish.
         {
-            let mut pending = pending_deletions.lock().expect("pending_deletions lock poisoned");
+            let mut pending = pending_deletions
+                .lock()
+                .expect("pending_deletions lock poisoned");
             let now = std::time::Instant::now();
             for path in input_paths {
                 pending.push((path, now));
@@ -2602,7 +2617,8 @@ impl DB {
         drop(counter);
 
         // Compact SSTables
-        let (result_path, size) = compact_sstables(&input_paths, &output_path, level_num + 1, filter.clone())?;
+        let (result_path, size) =
+            compact_sstables(&input_paths, &output_path, level_num + 1, filter.clone())?;
 
         // Track physical bytes written during compaction
         metrics.record_physical_bytes(size);
@@ -2619,7 +2635,9 @@ impl DB {
 
         // PRODUCTION FIX (Bug #7b): Queue SSTables for delayed deletion
         {
-            let mut pending = pending_deletions.lock().expect("pending_deletions lock poisoned");
+            let mut pending = pending_deletions
+                .lock()
+                .expect("pending_deletions lock poisoned");
             let now = std::time::Instant::now();
             for path in input_paths {
                 pending.push((path, now));
@@ -2776,7 +2794,10 @@ impl DB {
         // If checked within last 10 seconds, use cached value
         if now.saturating_sub(last_check) < CHECK_INTERVAL_SECS {
             let cached_space = self.cached_available_space.load(Ordering::Relaxed);
-            let min_space = self.options.min_disk_space_bytes.expect("min_disk_space_bytes checked above");
+            let min_space = self
+                .options
+                .min_disk_space_bytes
+                .expect("min_disk_space_bytes checked above");
 
             if cached_space < min_space {
                 return Err(DBError::DiskSpaceFull {
@@ -2791,7 +2812,10 @@ impl DB {
         // This uses sysinfo which is slow, but we only do it every 10 seconds
         use sysinfo::{DiskExt, System, SystemExt};
 
-        let min_space = self.options.min_disk_space_bytes.expect("min_disk_space_bytes checked above");
+        let min_space = self
+            .options
+            .min_disk_space_bytes
+            .expect("min_disk_space_bytes checked above");
         let mut sys = System::new();
         sys.refresh_disks_list();
 
@@ -3277,11 +3301,20 @@ impl DB {
     ///     .collect();
     /// assert_eq!(keys.len(), 3);
     /// ```
-    pub fn range_keys_only(&self, start_key: &[u8], end_key: Option<&[u8]>) -> Result<RangeIterator> {
+    pub fn range_keys_only(
+        &self,
+        start_key: &[u8],
+        end_key: Option<&[u8]>,
+    ) -> Result<RangeIterator> {
         self.range_internal(start_key, end_key, false)
     }
 
-    fn range_internal(&self, start_key: &[u8], end_key: Option<&[u8]>, read_values: bool) -> Result<RangeIterator> {
+    fn range_internal(
+        &self,
+        start_key: &[u8],
+        end_key: Option<&[u8]>,
+        read_values: bool,
+    ) -> Result<RangeIterator> {
         self.read_count
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
@@ -3394,7 +3427,13 @@ impl DB {
         // Arc automatically dropped (lock-free, no explicit drop needed!)
 
         // Create range iterator with all memtable partitions
-        RangeIterator::new(start_key, end_key, &partition_refs, sstables, self.options.merge_operator.clone())
+        RangeIterator::new(
+            start_key,
+            end_key,
+            &partition_refs,
+            sstables,
+            self.options.merge_operator.clone(),
+        )
     }
 
     /// Iterate over all keys in the database
@@ -3537,9 +3576,8 @@ impl DB {
 
             let iter = self.prefix(prefix)?;
             for item in iter {
-                let (key, value) = item.map_err(|e| {
-                    DBError::Io(std::io::Error::other(e.to_string()))
-                })?;
+                let (key, value) =
+                    item.map_err(|e| DBError::Io(std::io::Error::other(e.to_string())))?;
                 prefix_results.push((key, value));
             }
 
@@ -3655,7 +3693,7 @@ impl DB {
         // We pass empty active memtables because we just swapped them out.
         // The data is now in immutable_memtables.
         let snapshot = Snapshot::new(
-            Vec::new(), 
+            Vec::new(),
             Some(Arc::clone(&old_partitions_arc)),
             sstable_paths,
             Arc::clone(&self.sstable_cache),
@@ -4671,22 +4709,14 @@ mod tests {
         db.put(b"tag:rust", b"lang").unwrap();
 
         // Scan user: prefix
-        let user_results: Vec<_> = db
-            .prefix(b"user:")
-            .unwrap()
-            .map(|r| r.unwrap())
-            .collect();
+        let user_results: Vec<_> = db.prefix(b"user:").unwrap().map(|r| r.unwrap()).collect();
         assert_eq!(user_results.len(), 3);
         assert_eq!(user_results[0].0.as_ref(), b"user:1");
         assert_eq!(user_results[1].0.as_ref(), b"user:2");
         assert_eq!(user_results[2].0.as_ref(), b"user:3");
 
         // Scan post: prefix
-        let post_results: Vec<_> = db
-            .prefix(b"post:")
-            .unwrap()
-            .map(|r| r.unwrap())
-            .collect();
+        let post_results: Vec<_> = db.prefix(b"post:").unwrap().map(|r| r.unwrap()).collect();
         assert_eq!(post_results.len(), 2);
         assert_eq!(post_results[0].0.as_ref(), b"post:1");
         assert_eq!(post_results[1].0.as_ref(), b"post:2");
@@ -4714,10 +4744,7 @@ mod tests {
         assert_eq!(increment_bytes(b"user\xff"), Some(b"uses\x00".to_vec()));
 
         // Multiple 0xFF at end
-        assert_eq!(
-            increment_bytes(b"a\xff\xff"),
-            Some(b"b\x00\x00".to_vec())
-        );
+        assert_eq!(increment_bytes(b"a\xff\xff"), Some(b"b\x00\x00".to_vec()));
 
         // All 0xFF
         assert_eq!(increment_bytes(b"\xff\xff"), None);
@@ -4893,7 +4920,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let options = DBOptions {
             data_dir: dir.path().to_path_buf(),
-            memtable_capacity: 1024, // Small to force flush
+            memtable_capacity: 1024,   // Small to force flush
             block_cache_capacity: 100, // Small cache (100 blocks)
             ..Default::default()
         };
@@ -4980,7 +5007,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let options = DBOptions {
             data_dir: dir.path().to_path_buf(),
-            memtable_capacity: 2048, // Small to force multiple flushes
+            memtable_capacity: 2048,    // Small to force multiple flushes
             block_cache_capacity: 1000, // Enough to cache blocks from multiple SSTables
             ..Default::default()
         };
@@ -5158,6 +5185,3 @@ mod tests {
         );
     }
 }
-
-
-

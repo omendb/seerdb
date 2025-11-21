@@ -70,9 +70,9 @@ fn handle_vlog_value(
 ) -> Result<(Bytes, u8)> {
     if value.len() > threshold.unwrap_or(usize::MAX) {
         // Large value: store in vLog and return pointer
-        let pointer = vlog.append(key, &value).map_err(|e| {
-            SSTableError::VLog(format!("Failed to append to vLog: {}", e))
-        })?;
+        let pointer = vlog
+            .append(key, &value)
+            .map_err(|e| SSTableError::VLog(format!("Failed to append to vLog: {}", e)))?;
         Ok((pointer.to_bytes(), FLAG_POINTER))
     } else {
         // Small value: store inline
@@ -202,7 +202,7 @@ impl SSTableBuilder<Cursor<Vec<u8>>> {
     pub fn new_buffered() -> Self {
         let header = Self::create_header(DEFAULT_PREFIX_LEN);
         let header_size = header.len() as u64;
-        
+
         // Pre-allocate 64KB
         let mut buffer = Vec::with_capacity(64 * 1024);
         buffer.extend_from_slice(&header);
@@ -232,7 +232,7 @@ impl SSTableBuilder<Cursor<Vec<u8>>> {
         let writer = self.finish_internal()?;
         Ok(Bytes::from(writer.into_inner()))
     }
-    
+
     /// Finish building and write to a file (helper for tests)
     pub fn finish_to_file(self, path: impl AsRef<Path>) -> Result<()> {
         let bytes = self.finish_to_bytes()?;
@@ -247,14 +247,13 @@ impl<W: Read + Write + Seek> SSTableBuilder<W> {
         let mut header = Vec::with_capacity(32);
         header.extend_from_slice(&MAGIC.to_le_bytes()); // 4 bytes: magic
         header.extend_from_slice(&VERSION.to_le_bytes()); // 4 bytes: version
-        // Store prefix_len in reserved field (4 bytes prefix_len + 4 bytes reserved)
+                                                          // Store prefix_len in reserved field (4 bytes prefix_len + 4 bytes reserved)
         header.extend_from_slice(&(prefix_len as u32).to_le_bytes());
         header.extend_from_slice(&0u32.to_le_bytes());
         header.extend_from_slice(&0u64.to_le_bytes()); // 8 bytes: num_entries (filled in finish())
         header.extend_from_slice(&0u64.to_le_bytes()); // 8 bytes: max_sequence (filled in finish())
         header
     }
-
 
     pub fn with_vlog_threshold(mut self, threshold: usize) -> Self {
         self.vlog_threshold = Some(threshold);
@@ -602,8 +601,6 @@ impl<W: Read + Write + Seek> SSTableBuilder<W> {
     }
 }
 
-
-
 // ============================================================================
 // SSTable - Read SSTables with lazy loading
 // ============================================================================
@@ -617,7 +614,8 @@ pub struct SSTable {
     file: Arc<Mutex<File>>, // File handle kept open for zero-overhead reads
     path: PathBuf,
     top_level_index: Vec<TopLevelIndexEntry>,
-    #[allow(dead_code)] // Disabled due to key collision issues (Bug #9), binary search used instead
+    #[allow(dead_code)]
+    // Disabled due to key collision issues (Bug #9), binary search used instead
     alex_index: Option<AlexTree>, // ALEX learned index for faster lookups
     bloom: BloomFilter,
     prefix_bloom: Option<BloomFilter>,
@@ -936,7 +934,11 @@ impl SSTable {
     }
 
     #[inline]
-    fn find_in_data_block(&mut self, data_block: &Block, key: &[u8]) -> Result<Option<(Bytes, u8)>> {
+    fn find_in_data_block(
+        &mut self,
+        data_block: &Block,
+        key: &[u8],
+    ) -> Result<Option<(Bytes, u8)>> {
         // Binary search for exact key match
         let (_entry_key, entry_value) = match data_block.find_exact(key) {
             Some(entry) => entry,
@@ -1008,7 +1010,7 @@ impl SSTable {
                 file_id: self.path_hash,
                 offset,
             };
-            
+
             let frame_ref = pool.get_page(page_id, |buf| -> Result<()> {
                 // Load from disk via shared file handle
                 let mut file = self.file.lock().expect("file mutex poisoned");
@@ -1030,7 +1032,7 @@ impl SSTable {
             // NOTE: We do NOT cache Borrowed blocks in block_cache (L1)
             // This avoids pinning frames in L2 indefinitely.
             // This implements "Option A: Ephemeral Blocks" from Phase 3 Design.
-            
+
             return Ok(block);
         }
 
@@ -1098,7 +1100,7 @@ impl SSTable {
         //
         // Magic is always 12 bytes from the end.
         // Version is always 8 bytes from the end.
-        
+
         if file_size < 48 {
             return Err(SSTableError::InvalidFormat);
         }
@@ -1107,9 +1109,10 @@ impl SSTable {
         file.seek(SeekFrom::Start(file_size - 12))?;
         let mut tail_buf = [0u8; 12];
         file.read_exact(&mut tail_buf)?;
-        
+
         let magic = u32::from_le_bytes(tail_buf[0..4].try_into().expect("slice length is correct"));
-        let version = u32::from_le_bytes(tail_buf[4..8].try_into().expect("slice length is correct"));
+        let version =
+            u32::from_le_bytes(tail_buf[4..8].try_into().expect("slice length is correct"));
         // Last 4 bytes are padding
 
         if magic != MAGIC {
@@ -1128,18 +1131,26 @@ impl SSTable {
         file.read_exact(&mut footer)?;
 
         // Common fields (24 bytes)
-        let _index_blocks_offset = u64::from_le_bytes(footer[0..8].try_into().expect("footer size guaranteed"));
-        let top_level_offset = u64::from_le_bytes(footer[8..16].try_into().expect("footer size guaranteed"));
-        let bloom_offset = u64::from_le_bytes(footer[16..24].try_into().expect("footer size guaranteed"));
+        let _index_blocks_offset =
+            u64::from_le_bytes(footer[0..8].try_into().expect("footer size guaranteed"));
+        let top_level_offset =
+            u64::from_le_bytes(footer[8..16].try_into().expect("footer size guaranteed"));
+        let bloom_offset =
+            u64::from_le_bytes(footer[16..24].try_into().expect("footer size guaranteed"));
 
         let (prefix_bloom_offset, metadata_offset, stored_checksum) = if version >= 2 {
-            let prefix_bloom = u64::from_le_bytes(footer[24..32].try_into().expect("footer size guaranteed"));
-            let metadata = u64::from_le_bytes(footer[32..40].try_into().expect("footer size guaranteed"));
-            let checksum = u32::from_le_bytes(footer[40..44].try_into().expect("footer size guaranteed"));
+            let prefix_bloom =
+                u64::from_le_bytes(footer[24..32].try_into().expect("footer size guaranteed"));
+            let metadata =
+                u64::from_le_bytes(footer[32..40].try_into().expect("footer size guaranteed"));
+            let checksum =
+                u32::from_le_bytes(footer[40..44].try_into().expect("footer size guaranteed"));
             (prefix_bloom, metadata, checksum)
         } else {
-            let metadata = u64::from_le_bytes(footer[24..32].try_into().expect("footer size guaranteed"));
-            let checksum = u32::from_le_bytes(footer[32..36].try_into().expect("footer size guaranteed"));
+            let metadata =
+                u64::from_le_bytes(footer[24..32].try_into().expect("footer size guaranteed"));
+            let checksum =
+                u32::from_le_bytes(footer[32..36].try_into().expect("footer size guaranteed"));
             (0, metadata, checksum)
         };
 
@@ -1287,7 +1298,9 @@ impl SSTable {
                     continue;
                 }
 
-                let key_len = u32::from_le_bytes(value_bytes[..4].try_into().expect("slice length checked")) as usize;
+                let key_len =
+                    u32::from_le_bytes(value_bytes[..4].try_into().expect("slice length checked"))
+                        as usize;
                 let offset_start = 4 + key_len;
 
                 if value_bytes.len() < offset_start + 12 {
@@ -1689,11 +1702,20 @@ impl SSTable {
         self.scan_range_with_options(start_key, end_key, true)
     }
 
-    pub fn scan_range_keys_only(&self, start_key: &[u8], end_key: Option<&[u8]>) -> SSTableRangeIterator {
+    pub fn scan_range_keys_only(
+        &self,
+        start_key: &[u8],
+        end_key: Option<&[u8]>,
+    ) -> SSTableRangeIterator {
         self.scan_range_with_options(start_key, end_key, false)
     }
 
-    fn scan_range_with_options(&self, start_key: &[u8], end_key: Option<&[u8]>, read_values: bool) -> SSTableRangeIterator {
+    fn scan_range_with_options(
+        &self,
+        start_key: &[u8],
+        end_key: Option<&[u8]>,
+        read_values: bool,
+    ) -> SSTableRangeIterator {
         SSTableRangeIterator::new(
             Arc::clone(&self.file),
             Arc::clone(&self.block_cache),
@@ -1744,18 +1766,9 @@ mod tests {
         // Read back with SSTable
         let mut sst = SSTable::open(&path).unwrap();
         assert_eq!(sst.num_entries, 3);
-        assert_eq!(
-            sst.get(b"key1").unwrap().unwrap(),
-            Bytes::from("value1")
-        );
-        assert_eq!(
-            sst.get(b"key2").unwrap().unwrap(),
-            Bytes::from("value2")
-        );
-        assert_eq!(
-            sst.get(b"key3").unwrap().unwrap(),
-            Bytes::from("value3")
-        );
+        assert_eq!(sst.get(b"key1").unwrap().unwrap(), Bytes::from("value1"));
+        assert_eq!(sst.get(b"key2").unwrap().unwrap(), Bytes::from("value2"));
+        assert_eq!(sst.get(b"key3").unwrap().unwrap(), Bytes::from("value3"));
     }
 
     #[test]
@@ -1765,12 +1778,8 @@ mod tests {
 
         // Build SSTable and get bytes
         let mut builder = SSTableBuilder::new_buffered();
-        builder
-            .add(Bytes::from("aaa"), Bytes::from("111"))
-            .unwrap();
-        builder
-            .add(Bytes::from("bbb"), Bytes::from("222"))
-            .unwrap();
+        builder.add(Bytes::from("aaa"), Bytes::from("111")).unwrap();
+        builder.add(Bytes::from("bbb"), Bytes::from("222")).unwrap();
 
         let bytes = builder.finish_to_bytes().unwrap();
 
@@ -1816,16 +1825,10 @@ mod tests {
 
         let mut sst = SSTable::open(&path).unwrap();
         assert_eq!(sst.num_entries, 3);
-        assert_eq!(
-            sst.get(b"key1").unwrap().unwrap(),
-            Bytes::from("value1")
-        );
+        assert_eq!(sst.get(b"key1").unwrap().unwrap(), Bytes::from("value1"));
         // key2 is a tombstone - should return None
         assert!(sst.get(b"key2").unwrap().is_none());
-        assert_eq!(
-            sst.get(b"key3").unwrap().unwrap(),
-            Bytes::from("value3")
-        );
+        assert_eq!(sst.get(b"key3").unwrap().unwrap(), Bytes::from("value3"));
     }
 
     #[test]
@@ -1855,9 +1858,7 @@ mod tests {
         for i in 0..1000 {
             let key = format!("key{:06}", i);
             let value = format!("value{:06}", i);
-            builder
-                .add(Bytes::from(key), Bytes::from(value))
-                .unwrap();
+            builder.add(Bytes::from(key), Bytes::from(value)).unwrap();
         }
 
         assert_eq!(builder.num_entries(), 1000);
@@ -1917,8 +1918,9 @@ mod tests {
         buffered.finish_to_file(&path_buffered).unwrap();
 
         // Build with file-based builder
-        let mut file_builder =
-            SSTableBuilder::create(&path_file).unwrap().with_max_sequence(100);
+        let mut file_builder = SSTableBuilder::create(&path_file)
+            .unwrap()
+            .with_max_sequence(100);
         file_builder
             .add(Bytes::from("key1"), Bytes::from("value1"))
             .unwrap();

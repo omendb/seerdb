@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU8, AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 
 pub type FrameId = usize;
 
@@ -145,10 +145,10 @@ impl EvictionPolicy for ClockPolicy {
         // If everyone is referenced, we might cycle forever, so limit loops.
         let start_hand = self.hand.load(Ordering::Relaxed);
         let mut loops = 0;
-        
+
         loop {
             let current_hand = self.hand.fetch_add(1, Ordering::Relaxed) % self.capacity;
-            
+
             // Check reference bit
             if self.reference_bits[current_hand].load(Ordering::Relaxed) {
                 // Give second chance: set to 0 and continue
@@ -159,7 +159,7 @@ impl EvictionPolicy for ClockPolicy {
             }
 
             // Safety valve: if we've scanned 2x capacity, everything is hot.
-            // Just return the current hand to force eviction? 
+            // Just return the current hand to force eviction?
             // Or return None to signal "cache pressure but no victim"?
             // For now, returning None is safer, but a DB usually *needs* a page.
             if current_hand == start_hand {

@@ -1,9 +1,9 @@
 // Write-Ahead Log (WAL) implementation
 // Provides durability guarantees for memtable operations
 
+pub mod pipelined;
 pub mod reader;
 pub mod record;
-pub mod pipelined;
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -12,9 +12,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
+pub use pipelined::PipelinedWAL;
 pub use reader::WALReader;
 pub use record::{BatchOp, Record};
-pub use pipelined::PipelinedWAL;
 
 // WAL file format magic number: "WLOG"
 const MAGIC: u32 = 0x574C4F47;

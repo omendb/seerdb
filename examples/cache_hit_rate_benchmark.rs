@@ -150,4 +150,3 @@ fn main() {
     println!("If overall hit rate < 50%, cache is too small or eviction is poor");
     println!("If overall hit rate > 70%, cache is working well");
 }
-

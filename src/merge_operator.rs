@@ -1,4 +1,3 @@
-
 use std::fmt::Debug;
 
 /// MergeOperator allows defining custom Read-Modify-Write logic
@@ -39,7 +38,12 @@ pub trait MergeOperator: Debug + Send + Sync + 'static {
     ///
     /// If not implemented (returns None), the system will stack operands until
     /// the base value is found.
-    fn partial_merge(&self, _key: &[u8], _left_operand: &[u8], _right_operand: &[u8]) -> Option<Vec<u8>> {
+    fn partial_merge(
+        &self,
+        _key: &[u8],
+        _left_operand: &[u8],
+        _right_operand: &[u8],
+    ) -> Option<Vec<u8>> {
         None
     }
 
@@ -88,7 +92,12 @@ impl MergeOperator for StringAppendOperator {
         Some(result.into_bytes())
     }
 
-    fn partial_merge(&self, _key: &[u8], left_operand: &[u8], right_operand: &[u8]) -> Option<Vec<u8>> {
+    fn partial_merge(
+        &self,
+        _key: &[u8],
+        left_operand: &[u8],
+        right_operand: &[u8],
+    ) -> Option<Vec<u8>> {
         let mut result = String::new();
         if let Ok(l) = std::str::from_utf8(left_operand) {
             result.push_str(l);

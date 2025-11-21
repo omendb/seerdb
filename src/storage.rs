@@ -381,12 +381,7 @@ impl ObjectStoreBackend {
     /// * `region` - AWS region (e.g., "us-west-2")
     /// * `endpoint` - Optional custom endpoint for MinIO, R2, etc.
     /// * `prefix` - Optional path prefix within bucket
-    pub fn s3(
-        bucket: &str,
-        region: &str,
-        endpoint: Option<&str>,
-        prefix: String,
-    ) -> Result<Self> {
+    pub fn s3(bucket: &str, region: &str, endpoint: Option<&str>, prefix: String) -> Result<Self> {
         use object_store::aws::AmazonS3Builder;
 
         let mut builder = AmazonS3Builder::new()
@@ -416,11 +411,7 @@ impl ObjectStoreBackend {
     /// * `bucket` - GCS bucket name
     /// * `service_account_path` - Optional path to service account JSON
     /// * `prefix` - Optional path prefix within bucket
-    pub fn gcs(
-        bucket: &str,
-        service_account_path: Option<&Path>,
-        prefix: String,
-    ) -> Result<Self> {
+    pub fn gcs(bucket: &str, service_account_path: Option<&Path>, prefix: String) -> Result<Self> {
         use object_store::gcp::GoogleCloudStorageBuilder;
 
         let mut builder = GoogleCloudStorageBuilder::new().with_bucket_name(bucket);
@@ -557,9 +548,7 @@ impl Storage for ObjectStoreBackend {
                 .await
             {
                 Ok(_) => Ok(true),
-                Err(crate::db::DBError::ObjectStore(msg)) if msg.contains("not found") => {
-                    Ok(false)
-                }
+                Err(crate::db::DBError::ObjectStore(msg)) if msg.contains("not found") => Ok(false),
                 Err(e) => Err(e),
             }
         })

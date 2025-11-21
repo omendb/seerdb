@@ -121,54 +121,49 @@ where
         })
     }
 
-        #[inline]
-        fn resolve_merges(&mut self, key: &Bytes, base: Option<&Bytes>) -> Result<Entry, Box<dyn std::error::Error + Send + Sync>> {
+    #[inline]
+    fn resolve_merges(
+        &mut self,
+        key: &Bytes,
+        base: Option<&Bytes>,
+    ) -> Result<Entry, Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(op) = &self.merge_operator {
+            // Operands are stored newest-first (as we encountered them), but MergeOperator
 
-            if let Some(op) = &self.merge_operator {
+            // typically expects them in chronological order (oldest-first) to apply them correctly.
 
-                // Operands are stored newest-first (as we encountered them), but MergeOperator
+            // e.g. "Value" -> Merge(A) -> Merge(B).
 
-                // typically expects them in chronological order (oldest-first) to apply them correctly.
+            // We see B then A. pending_operands = [B, A].
 
-                // e.g. "Value" -> Merge(A) -> Merge(B).
+            // We want to apply A then B.
 
-                // We see B then A. pending_operands = [B, A].
+            let ops: Vec<&[u8]> = self
+                .pending_operands
+                .iter()
+                .rev()
+                .map(|b| b.as_ref())
+                .collect();
 
-                // We want to apply A then B.
+            match op.full_merge(key, base.map(|b| b.as_ref()), &ops) {
+                Some(res) => Ok(Entry::Value(Bytes::from(res))),
 
-                let ops: Vec<&[u8]> = self.pending_operands.iter().rev().map(|b| b.as_ref()).collect();
-
-                
-
-                match op.full_merge(key, base.map(|b| b.as_ref()), &ops) {
-
-                    Some(res) => Ok(Entry::Value(Bytes::from(res))),
-
-                    None => Ok(Entry::Tombstone),
-
-                }
-
-            } else {
-
-                // No merge operator - can't resolve.
-
-                // Fallback: return the newest merge operand as if it were a value?
-
-                // Or just fail? existing get() returns the raw bytes.
-
-                if let Some(first) = self.pending_operands.first() {
-
-                    Ok(Entry::Merge(vec![first.clone()]))
-
-                } else {
-
-                    Ok(Entry::Tombstone)
-
-                }
-
+                None => Ok(Entry::Tombstone),
             }
+        } else {
+            // No merge operator - can't resolve.
 
+            // Fallback: return the newest merge operand as if it were a value?
+
+            // Or just fail? existing get() returns the raw bytes.
+
+            if let Some(first) = self.pending_operands.first() {
+                Ok(Entry::Merge(vec![first.clone()]))
+            } else {
+                Ok(Entry::Tombstone)
+            }
         }
+    }
 }
 
 impl<I> Iterator for KWayMergeIterator<I>
@@ -199,7 +194,11 @@ where
             }
 
             // Check if this is a duplicate (older version) of the last key we PROCESSED
-            if self.last_key.as_ref().is_some_and(|last| &entry.key == last) {
+            if self
+                .last_key
+                .as_ref()
+                .is_some_and(|last| &entry.key == last)
+            {
                 // We are seeing an older version of the same key.
                 // Since we fully resolve keys in one go (see below), this implies
                 // we have already emitted the resolved value for this key.
@@ -217,8 +216,8 @@ where
                     // No merging needed.
                     // We just emit it. Subsequent older versions will be caught by the check above.
                     if let Entry::Tombstone = entry.entry {
-                         // Skip tombstones in output (don't return deleted keys)
-                         continue;
+                        // Skip tombstones in output (don't return deleted keys)
+                        continue;
                     }
                     return Some(Ok((entry.key, entry.entry)));
                 }
@@ -227,7 +226,7 @@ where
                     // We must accumulate all merge operands for this key from older versions.
                     self.pending_operands.clear();
                     self.pending_operands.extend(operand.iter().rev().cloned());
-                    
+
                     // Look ahead in the heap for older versions of THIS key
                     let mut base_found = false;
                     let mut resolved_entry: Option<Entry> = None;
@@ -246,13 +245,16 @@ where
 
                         // Pop older version
                         let Reverse(mut next_entry) = self.heap.pop().unwrap();
-                        
+
                         // Advance iterator
                         if let Some(result) = next_entry.iter.next() {
-                             match result {
+                            match result {
                                 Ok((nk, ne)) => {
                                     self.heap.push(Reverse(HeapEntry {
-                                        key: nk, entry: ne, level: next_entry.level, iter: next_entry.iter
+                                        key: nk,
+                                        entry: ne,
+                                        level: next_entry.level,
+                                        iter: next_entry.iter,
                                     }));
                                 }
                                 Err(e) => return Some(Err(e)),
@@ -268,7 +270,7 @@ where
                                 }
                                 base_found = true;
                                 break;
-                            },
+                            }
                             Entry::Tombstone => {
                                 // Found base tombstone. Resolve against None.
                                 match self.resolve_merges(&current_key, None) {
@@ -277,7 +279,7 @@ where
                                 }
                                 base_found = true;
                                 break;
-                            },
+                            }
                             Entry::Merge(op) => {
                                 // Another merge operand (older). Stack it.
                                 self.pending_operands.extend(op.iter().rev().cloned());
@@ -293,7 +295,7 @@ where
                             Err(e) => return Some(Err(e)),
                         }
                     }
-                    
+
                     // Emit result
                     if let Some(final_entry) = resolved_entry {
                         if let Entry::Tombstone = final_entry {
@@ -350,19 +352,21 @@ mod tests {
         // It's hard to mock traits in simple unit tests without struct impls.
         // We will rely on integration tests for full merge logic.
         // But we can test that it consumes items correctly.
-        
+
         // With NO merge operator, it should return first merge operand as value?
         // Or treating it as raw merge entry.
-        
-        let iter1 = ok_iter(vec![
-            (Bytes::from("a"), Entry::Merge(vec![Bytes::from("op1")])),
-        ]);
-        let iter2 = ok_iter(vec![
-            (Bytes::from("a"), Entry::Merge(vec![Bytes::from("op2")])),
-        ]);
-        
+
+        let iter1 = ok_iter(vec![(
+            Bytes::from("a"),
+            Entry::Merge(vec![Bytes::from("op1")]),
+        )]);
+        let iter2 = ok_iter(vec![(
+            Bytes::from("a"),
+            Entry::Merge(vec![Bytes::from("op2")]),
+        )]);
+
         let mut merge = KWayMergeIterator::new(vec![iter1, iter2], None).unwrap();
-        
+
         // Logic with no operator: returns newest merge operand (op1) as Merge entry
         let result = merge.next().unwrap().unwrap();
         assert_eq!(result.0, Bytes::from("a"));
@@ -371,7 +375,7 @@ mod tests {
             Entry::Merge(val) => {
                 assert_eq!(val.len(), 1);
                 assert_eq!(val[0], Bytes::from("op1"));
-            },
+            }
             _ => panic!("Expected Merge entry"),
         }
     }

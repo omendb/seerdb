@@ -63,11 +63,19 @@ fn main() {
         }
 
         total_keys += count;
-        println!("  Iteration {}: {} keys in {:?}", iteration + 1, count, iter_start.elapsed());
+        println!(
+            "  Iteration {}: {} keys in {:?}",
+            iteration + 1,
+            count,
+            iter_start.elapsed()
+        );
     }
 
     println!("Phase 1 complete: {:?}", full_scan_start.elapsed());
-    println!("Avg throughput: {:.0} keys/sec\n", total_keys as f64 / full_scan_start.elapsed().as_secs_f64());
+    println!(
+        "Avg throughput: {:.0} keys/sec\n",
+        total_keys as f64 / full_scan_start.elapsed().as_secs_f64()
+    );
 
     // Phase 2: Range scans (various sizes)
     println!("Phase 2: Range scans (1000 scans of varying sizes)");
@@ -78,7 +86,10 @@ fn main() {
         let start_key = format!("prefix:{:03}:", i % 100);
         let end_key = format!("prefix:{:03}:{}", i % 100, char::from_u32(0xFF).unwrap());
 
-        for result in db.range(start_key.as_bytes(), Some(end_key.as_bytes())).unwrap() {
+        for result in db
+            .range(start_key.as_bytes(), Some(end_key.as_bytes()))
+            .unwrap()
+        {
             let (_key, _value) = result.unwrap();
             range_keys += 1;
         }
@@ -90,8 +101,11 @@ fn main() {
     }
 
     println!("\nPhase 2 complete: {:?}", range_scan_start.elapsed());
-    println!("Keys scanned: {}, throughput: {:.0} keys/sec\n",
-             range_keys, range_keys as f64 / range_scan_start.elapsed().as_secs_f64());
+    println!(
+        "Keys scanned: {}, throughput: {:.0} keys/sec\n",
+        range_keys,
+        range_keys as f64 / range_scan_start.elapsed().as_secs_f64()
+    );
 
     // Phase 3: Prefix scans (graph-like pattern)
     println!("Phase 3: Prefix scans (5000 small prefix scans)");
@@ -113,8 +127,11 @@ fn main() {
     }
 
     println!("\nPhase 3 complete: {:?}", prefix_scan_start.elapsed());
-    println!("Keys scanned: {}, throughput: {:.0} keys/sec\n",
-             prefix_keys, prefix_keys as f64 / prefix_scan_start.elapsed().as_secs_f64());
+    println!(
+        "Keys scanned: {}, throughput: {:.0} keys/sec\n",
+        prefix_keys,
+        prefix_keys as f64 / prefix_scan_start.elapsed().as_secs_f64()
+    );
 
     // Phase 4: Keys-only iteration (measure allocation difference)
     println!("Phase 4: Keys-only iteration (1000 scans)");
@@ -136,8 +153,11 @@ fn main() {
     }
 
     println!("\nPhase 4 complete: {:?}", keys_only_start.elapsed());
-    println!("Keys scanned: {}, throughput: {:.0} keys/sec\n",
-             keys_only_count, keys_only_count as f64 / keys_only_start.elapsed().as_secs_f64());
+    println!(
+        "Keys scanned: {}, throughput: {:.0} keys/sec\n",
+        keys_only_count,
+        keys_only_count as f64 / keys_only_start.elapsed().as_secs_f64()
+    );
 
     // Get final stats
     let stats = db.stats();
@@ -145,7 +165,10 @@ fn main() {
     println!("Cache hit rate: {:.2}%", stats.cache_hit_rate * 100.0);
     println!("Cache hits: {}", stats.cache_hits);
     println!("Cache misses: {}", stats.cache_misses);
-    println!("Block cache size: {} / {}", stats.block_cache_size, stats.block_cache_capacity);
+    println!(
+        "Block cache size: {} / {}",
+        stats.block_cache_size, stats.block_cache_capacity
+    );
 
     println!("\n=== Allocation Profile Complete ===");
     println!("dhat-heap.json written to current directory");

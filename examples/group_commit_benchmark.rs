@@ -122,7 +122,7 @@ fn run_benchmark(concurrency: usize, delay_us: u64) -> BenchmarkResult {
 
     let opts = DBOptions {
         data_dir: dir.path().to_path_buf(),
-        memtable_capacity: 128 * 1024 * 1024, // 128MB
+        memtable_capacity: 128 * 1024 * 1024,  // 128MB
         wal_sync_policy: SyncPolicy::SyncData, // Enable durability
         background_compaction: false,
         background_flush: false,

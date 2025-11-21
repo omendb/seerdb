@@ -248,7 +248,11 @@ mod tests {
         let (_block_idx, block_hash) = bloom.hash_to_block(&"test");
         for i in 0..bloom.num_hashes {
             let bit_idx = BlockedBloomFilter::nth_bit_in_block(block_hash, i);
-            assert!(bit_idx < CACHE_LINE_BITS, "Bit {} exceeds block boundary", bit_idx);
+            assert!(
+                bit_idx < CACHE_LINE_BITS,
+                "Bit {} exceeds block boundary",
+                bit_idx
+            );
         }
     }
 

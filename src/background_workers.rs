@@ -5,8 +5,8 @@
 // - Flush worker: Converts memtables to SSTables
 // - Compaction worker: Merges SSTables to reduce read amplification
 
-use crate::compaction::LSMTree;
 use crate::compaction::CompactionFilter;
+use crate::compaction::LSMTree;
 use crate::memtable::{Entry, Memtable};
 use crate::metrics::MetricsCollector;
 use crate::sstable::SSTableBuilder;
@@ -63,8 +63,7 @@ pub(crate) fn run_compaction(
     max_flushed_seq: &Arc<AtomicU64>,
     pending_deletions: &Arc<Mutex<Vec<(PathBuf, std::time::Instant)>>>,
     filter: &Option<Arc<dyn CompactionFilter>>,
-    #[cfg(feature = "object-store")]
-    storage_backend: &Option<Arc<dyn Storage>>,
+    #[cfg(feature = "object-store")] storage_backend: &Option<Arc<dyn Storage>>,
 ) -> Result<()> {
     use crate::db::DB;
 
@@ -124,8 +123,7 @@ pub(crate) fn run_background_flush_partitioned(
     flush_mutex: &Arc<Mutex<()>>,
     max_flushed_seq: &Arc<AtomicU64>,
     compaction_tx: &Option<Sender<CompactionTask>>,
-    #[cfg(feature = "object-store")]
-    storage_backend: &Option<Arc<dyn Storage>>,
+    #[cfg(feature = "object-store")] storage_backend: &Option<Arc<dyn Storage>>,
 ) -> Result<()> {
     // Serialize all flushes to prevent concurrent SSTable builds
     let _flush_lock = flush_mutex.lock().expect("Flush mutex poisoned");
@@ -177,10 +175,10 @@ pub(crate) fn run_background_flush_partitioned(
 
     if let (Some(threshold), Some(ref mut vlog_ref)) = (vlog_threshold, vlog_guard.as_mut()) {
         // KV separation enabled - use vLog for large values
-        
+
         if use_cloud_storage {
-             #[cfg(feature = "object-store")]
-             {
+            #[cfg(feature = "object-store")]
+            {
                 // Cloud storage + vLog: use buffered builder
                 let mut builder = SSTableBuilder::new_buffered()
                     .with_vlog_threshold(threshold)
@@ -221,7 +219,7 @@ pub(crate) fn run_background_flush_partitioned(
                         "SSTable with vLog uploaded to cloud storage (background flush)"
                     );
                 }
-             }
+            }
         } else {
             // No cloud storage + vLog: use traditional SSTableBuilder
             let mut builder = SSTableBuilder::create(&sstable_path)?
@@ -293,8 +291,9 @@ pub(crate) fn run_background_flush_partitioned(
                 }
             }
         } else {
-             // No cloud storage - use traditional SSTableBuilder
-            let mut builder = SSTableBuilder::create(&sstable_path)?.with_max_sequence(flush_sequence);
+            // No cloud storage - use traditional SSTableBuilder
+            let mut builder =
+                SSTableBuilder::create(&sstable_path)?.with_max_sequence(flush_sequence);
             for (key, entry) in &all_entries {
                 match entry {
                     Entry::Value(value) => {
@@ -361,7 +360,10 @@ pub(crate) fn run_background_flush_partitioned(
 
     // Check if compaction is needed (LOCK-FREE!)
     if let Some(level_num) = lsm.load().needs_compaction() {
-        info!(level = level_num, "Compaction triggered by background flush");
+        info!(
+            level = level_num,
+            "Compaction triggered by background flush"
+        );
         if let Some(tx) = compaction_tx {
             // Background compaction: send signal (non-blocking)
             let _ = tx.send(CompactionTask::CompactLevel(level_num));
@@ -385,8 +387,7 @@ pub(crate) fn spawn_compaction_worker(
     compaction_healthy: Arc<AtomicBool>,
     pending_deletions: Arc<Mutex<Vec<(PathBuf, Instant)>>>,
     filter: Option<Arc<dyn CompactionFilter>>,
-    #[cfg(feature = "object-store")]
-    storage_backend: Option<Arc<dyn Storage>>,
+    #[cfg(feature = "object-store")] storage_backend: Option<Arc<dyn Storage>>,
 ) -> (Option<Sender<CompactionTask>>, Option<JoinHandle<()>>) {
     if !enabled {
         return (None, None);
@@ -417,7 +418,7 @@ pub(crate) fn spawn_compaction_worker(
                                 &filter,
                                 &storage_backend,
                             );
-                            
+
                             #[cfg(not(feature = "object-store"))]
                             let res = run_compaction(
                                 &lsm,
@@ -474,8 +475,7 @@ pub(crate) fn spawn_flush_worker(
     max_flushed_seq: Arc<AtomicU64>,
     flush_healthy: Arc<AtomicBool>,
     compaction_tx: Option<Sender<CompactionTask>>,
-    #[cfg(feature = "object-store")]
-    storage_backend: Option<Arc<dyn Storage>>,
+    #[cfg(feature = "object-store")] storage_backend: Option<Arc<dyn Storage>>,
 ) -> (Option<Sender<FlushTask>>, Option<JoinHandle<()>>) {
     if !enabled {
         return (None, None);

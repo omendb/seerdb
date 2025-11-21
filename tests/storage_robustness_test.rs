@@ -19,9 +19,7 @@ fn test_high_concurrency_writes() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let store = Arc::new(InMemory::new());
 
-    let backend = Arc::new(rt.block_on(async {
-        ObjectStoreBackend::new(store, String::new())
-    }));
+    let backend = Arc::new(rt.block_on(async { ObjectStoreBackend::new(store, String::new()) }));
 
     let _guard = rt.enter();
 
@@ -68,9 +66,7 @@ fn test_high_concurrency_reads() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let store = Arc::new(InMemory::new());
 
-    let backend = Arc::new(rt.block_on(async {
-        ObjectStoreBackend::new(store, String::new())
-    }));
+    let backend = Arc::new(rt.block_on(async { ObjectStoreBackend::new(store, String::new()) }));
 
     let _guard = rt.enter();
 
@@ -118,9 +114,7 @@ fn test_mixed_workload() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let store = Arc::new(InMemory::new());
 
-    let backend = Arc::new(rt.block_on(async {
-        ObjectStoreBackend::new(store, String::new())
-    }));
+    let backend = Arc::new(rt.block_on(async { ObjectStoreBackend::new(store, String::new()) }));
 
     let _guard = rt.enter();
 
@@ -242,9 +236,7 @@ fn test_list_operations_stress() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let store = Arc::new(InMemory::new());
 
-    let backend = Arc::new(rt.block_on(async {
-        ObjectStoreBackend::new(store, String::new())
-    }));
+    let backend = Arc::new(rt.block_on(async { ObjectStoreBackend::new(store, String::new()) }));
 
     let _guard = rt.enter();
 
@@ -288,9 +280,7 @@ fn test_nonexistent_file_operations() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let store = Arc::new(InMemory::new());
 
-    let backend = rt.block_on(async {
-        ObjectStoreBackend::new(store, String::new())
-    });
+    let backend = rt.block_on(async { ObjectStoreBackend::new(store, String::new()) });
 
     let _guard = rt.enter();
 
@@ -313,9 +303,7 @@ fn bench_write_throughput() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let store = Arc::new(InMemory::new());
 
-    let backend = rt.block_on(async {
-        ObjectStoreBackend::new(store, String::new())
-    });
+    let backend = rt.block_on(async { ObjectStoreBackend::new(store, String::new()) });
 
     let _guard = rt.enter();
 

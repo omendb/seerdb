@@ -94,18 +94,31 @@ fn run_concurrent_writes() {
 
     // Analysis
     let total_throughput = total as f64 / total_elapsed.as_secs_f64();
-    let avg_thread_throughput: f64 = thread_results.iter().map(|(_, t)| t).sum::<f64>() / THREADS as f64;
+    let avg_thread_throughput: f64 =
+        thread_results.iter().map(|(_, t)| t).sum::<f64>() / THREADS as f64;
     let max_thread_time = thread_results.iter().map(|(t, _)| t).max().unwrap();
     let min_thread_time = thread_results.iter().map(|(t, _)| t).min().unwrap();
 
     println!("  Total time: {:?}", total_elapsed);
     println!("  Total throughput: {:.0} writes/sec", total_throughput);
-    println!("  Avg thread throughput: {:.0} writes/sec", avg_thread_throughput);
-    println!("  Thread time range: {:?} - {:?}", min_thread_time, max_thread_time);
-    println!("  Time variance: {:?}", max_thread_time.as_secs_f64() / min_thread_time.as_secs_f64());
+    println!(
+        "  Avg thread throughput: {:.0} writes/sec",
+        avg_thread_throughput
+    );
+    println!(
+        "  Thread time range: {:?} - {:?}",
+        min_thread_time, max_thread_time
+    );
+    println!(
+        "  Time variance: {:?}",
+        max_thread_time.as_secs_f64() / min_thread_time.as_secs_f64()
+    );
 
     let stats = db.stats();
-    println!("  Memtable size: {:.2} MB", stats.memtable_size_bytes as f64 / 1024.0 / 1024.0);
+    println!(
+        "  Memtable size: {:.2} MB",
+        stats.memtable_size_bytes as f64 / 1024.0 / 1024.0
+    );
     println!("  Write amp: {:.2}x", stats.write_amplification);
 
     // Contention indicator
@@ -177,11 +190,15 @@ fn run_concurrent_reads() {
 
     // Analysis
     let total_throughput = total as f64 / total_elapsed.as_secs_f64();
-    let avg_thread_throughput: f64 = thread_results.iter().map(|(_, t, _)| t).sum::<f64>() / THREADS as f64;
+    let avg_thread_throughput: f64 =
+        thread_results.iter().map(|(_, t, _)| t).sum::<f64>() / THREADS as f64;
 
     println!("  Total time: {:?}", total_elapsed);
     println!("  Total throughput: {:.0} reads/sec", total_throughput);
-    println!("  Avg thread throughput: {:.0} reads/sec", avg_thread_throughput);
+    println!(
+        "  Avg thread throughput: {:.0} reads/sec",
+        avg_thread_throughput
+    );
 
     let stats = db.stats();
     println!("  Cache hit rate: {:.2}%", stats.cache_hit_rate * 100.0);
@@ -273,7 +290,10 @@ fn run_mixed_workload() {
 
     let stats = db.stats();
     println!("  Cache hit rate: {:.2}%", stats.cache_hit_rate * 100.0);
-    println!("  Memtable size: {:.2} MB", stats.memtable_size_bytes as f64 / 1024.0 / 1024.0);
+    println!(
+        "  Memtable size: {:.2} MB",
+        stats.memtable_size_bytes as f64 / 1024.0 / 1024.0
+    );
 }
 
 fn run_concurrent_batches() {
@@ -329,15 +349,22 @@ fn run_concurrent_batches() {
 
     // Analysis
     let total_throughput = total as f64 / total_elapsed.as_secs_f64();
-    let avg_thread_throughput: f64 = thread_results.iter().map(|(_, t)| t).sum::<f64>() / THREADS as f64;
+    let avg_thread_throughput: f64 =
+        thread_results.iter().map(|(_, t)| t).sum::<f64>() / THREADS as f64;
 
     println!("  Batch size: {}", BATCH_SIZE);
     println!("  Total time: {:?}", total_elapsed);
     println!("  Total throughput: {:.0} writes/sec", total_throughput);
-    println!("  Avg thread throughput: {:.0} writes/sec", avg_thread_throughput);
+    println!(
+        "  Avg thread throughput: {:.0} writes/sec",
+        avg_thread_throughput
+    );
 
     let stats = db.stats();
-    println!("  Memtable size: {:.2} MB", stats.memtable_size_bytes as f64 / 1024.0 / 1024.0);
+    println!(
+        "  Memtable size: {:.2} MB",
+        stats.memtable_size_bytes as f64 / 1024.0 / 1024.0
+    );
 
     // Batch writes should reduce contention
     let ideal_throughput = avg_thread_throughput * THREADS as f64;

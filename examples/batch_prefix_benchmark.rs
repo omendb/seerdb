@@ -67,13 +67,21 @@ fn main() {
         individual_times.push(elapsed);
 
         if trial == 0 {
-            println!("Trial {}: {:?} ({} neighbors found)", trial + 1, elapsed, total_results / (trial + 1));
+            println!(
+                "Trial {}: {:?} ({} neighbors found)",
+                trial + 1,
+                elapsed,
+                total_results / (trial + 1)
+            );
         }
     }
 
     let individual_median = median_duration(&individual_times);
     println!("Median time (10 trials): {:?}", individual_median);
-    println!("Avg neighbors per query: {}\n", total_results / (10 * nodes_to_visit));
+    println!(
+        "Avg neighbors per query: {}\n",
+        total_results / (10 * nodes_to_visit)
+    );
 
     println!("--- Optimized: Batch prefix scan ---");
     total_results = 0;
@@ -98,20 +106,31 @@ fn main() {
         batch_times.push(elapsed);
 
         if trial == 0 {
-            println!("Trial {}: {:?} ({} neighbors found)", trial + 1, elapsed, total_results / (trial + 1));
+            println!(
+                "Trial {}: {:?} ({} neighbors found)",
+                trial + 1,
+                elapsed,
+                total_results / (trial + 1)
+            );
         }
     }
 
     let batch_median = median_duration(&batch_times);
     println!("Median time (10 trials): {:?}", batch_median);
-    println!("Avg neighbors per query: {}\n", total_results / (10 * nodes_to_visit));
+    println!(
+        "Avg neighbors per query: {}\n",
+        total_results / (10 * nodes_to_visit)
+    );
 
     let stats = db.stats();
     println!("--- Database Stats ---");
     println!("Cache hit rate: {:.2}%", stats.cache_hit_rate * 100.0);
     println!("Cache hits: {}", stats.cache_hits);
     println!("Cache misses: {}", stats.cache_misses);
-    println!("Block cache size: {} / {}", stats.block_cache_size, stats.block_cache_capacity);
+    println!(
+        "Block cache size: {} / {}",
+        stats.block_cache_size, stats.block_cache_capacity
+    );
 
     let speedup = individual_median.as_secs_f64() / batch_median.as_secs_f64();
     println!("\n=== Results ===");
@@ -120,18 +139,33 @@ fn main() {
     println!("Speedup:          {:.2}x", speedup);
 
     if speedup >= 3.0 {
-        println!("\n✅ SUCCESS: Achieved {:.2}x speedup (target: 3-5x)", speedup);
+        println!(
+            "\n✅ SUCCESS: Achieved {:.2}x speedup (target: 3-5x)",
+            speedup
+        );
     } else if speedup >= 2.0 {
-        println!("\n⚠️  PARTIAL: Achieved {:.2}x speedup (target: 3-5x)", speedup);
+        println!(
+            "\n⚠️  PARTIAL: Achieved {:.2}x speedup (target: 3-5x)",
+            speedup
+        );
     } else {
-        println!("\n❌ BELOW TARGET: Only {:.2}x speedup (target: 3-5x)", speedup);
+        println!(
+            "\n❌ BELOW TARGET: Only {:.2}x speedup (target: 3-5x)",
+            speedup
+        );
     }
 
-    println!("\nNote: Cache hit rate {:.2}% indicates {} sequential access pattern",
-             stats.cache_hit_rate * 100.0,
-             if stats.cache_hit_rate > 0.90 { "excellent" }
-             else if stats.cache_hit_rate > 0.80 { "good" }
-             else { "poor" });
+    println!(
+        "\nNote: Cache hit rate {:.2}% indicates {} sequential access pattern",
+        stats.cache_hit_rate * 100.0,
+        if stats.cache_hit_rate > 0.90 {
+            "excellent"
+        } else if stats.cache_hit_rate > 0.80 {
+            "good"
+        } else {
+            "poor"
+        }
+    );
 }
 
 fn median_duration(times: &[std::time::Duration]) -> std::time::Duration {

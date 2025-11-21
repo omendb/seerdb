@@ -1,8 +1,8 @@
 use bytes::Bytes;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use seerdb::sstable::block::{Block, BlockBuilder};
-use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
+use seerdb::sstable::block::{Block, BlockBuilder};
 
 fn bench_block_parsing(c: &mut Criterion) {
     let mut group = c.benchmark_group("block_parsing_cost");
@@ -23,7 +23,9 @@ fn bench_block_parsing(c: &mut Criterion) {
     let mut builder = BlockBuilder::new();
     builder.set_compression(true);
     for (k, v) in keys.iter().zip(values.iter()) {
-        if !builder.add(k, v) { break; }
+        if !builder.add(k, v) {
+            break;
+        }
     }
     let compressed_bytes = builder.finish();
 
@@ -31,24 +33,22 @@ fn bench_block_parsing(c: &mut Criterion) {
     let mut builder = BlockBuilder::new();
     builder.set_compression(false);
     for (k, v) in keys.iter().zip(values.iter()) {
-        if !builder.add(k, v) { break; }
+        if !builder.add(k, v) {
+            break;
+        }
     }
     let uncompressed_bytes = builder.finish();
-    
+
     println!("Compressed size: {}", compressed_bytes.len());
     println!("Uncompressed size: {}", uncompressed_bytes.len());
 
     // Benchmark Block::new() only (Parsing + Decompression)
     group.bench_function("compressed_new", |b| {
-        b.iter(|| {
-            Block::from_bytes(black_box(compressed_bytes.clone())).unwrap()
-        })
+        b.iter(|| Block::from_bytes(black_box(compressed_bytes.clone())).unwrap())
     });
 
     group.bench_function("uncompressed_new", |b| {
-        b.iter(|| {
-            Block::from_bytes(black_box(uncompressed_bytes.clone())).unwrap()
-        })
+        b.iter(|| Block::from_bytes(black_box(uncompressed_bytes.clone())).unwrap())
     });
 
     group.finish();

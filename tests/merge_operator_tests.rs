@@ -1,6 +1,5 @@
-
 use bytes::Bytes;
-use seerdb::{DBOptions, DB, MergeOperator, StringAppendOperator};
+use seerdb::{DBOptions, MergeOperator, StringAppendOperator, DB};
 use std::sync::Arc;
 use tempfile::tempdir;
 
@@ -18,10 +17,10 @@ fn test_merge_in_memory() {
 
     // 1. Put base value
     db.put(b"key1", b"val").unwrap();
-    
+
     // 2. Merge operand
     db.merge(b"key1", b"op1").unwrap();
-    
+
     // 3. Get (should resolve in memory)
     // "val" + "," + "op1"
     assert_eq!(db.get(b"key1").unwrap(), Some(Bytes::from("val,op1")));
@@ -40,10 +39,10 @@ fn test_merge_stacking() {
 
     // 1. Merge (no base)
     db.merge(b"list", b"item1").unwrap();
-    
+
     // 2. Merge again
     db.merge(b"list", b"item2").unwrap();
-    
+
     // 3. Get (should be "item1,item2")
     // Note: First merge on empty/tombstone acts as Put for StringAppendOperator logic
     // Wait, StringAppendOperator logic:
@@ -69,14 +68,14 @@ fn test_merge_flush_and_recovery() {
         db.put(b"key", b"base").unwrap();
         db.merge(b"key", b"op1").unwrap();
         db.flush().unwrap(); // Flush to SSTable
-        
+
         // Merge on top of SSTable (in new memtable)
         db.merge(b"key", b"op2").unwrap();
-        
+
         // Check value
         assert_eq!(db.get(b"key").unwrap(), Some(Bytes::from("base,op1,op2")));
     }
-    
+
     // Reopen (Recovery)
     {
         let db = DB::open(opts).unwrap();
@@ -98,7 +97,7 @@ fn test_merge_with_delete() {
     db.put(b"key", b"val1").unwrap();
     db.delete(b"key").unwrap();
     db.merge(b"key", b"val2").unwrap();
-    
+
     // Should act as if base is None (because of delete)
     // So result is "val2"
     assert_eq!(db.get(b"key").unwrap(), Some(Bytes::from("val2")));

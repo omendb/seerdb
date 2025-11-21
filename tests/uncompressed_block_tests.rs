@@ -14,7 +14,7 @@ fn test_uncompressed_block_builder() {
 
     let block_bytes = builder.finish();
 
-    // Verify size: if compressed, it would be small (~20 bytes). 
+    // Verify size: if compressed, it would be small (~20 bytes).
     // Uncompressed should be ~1000 bytes + overhead.
     assert!(block_bytes.len() > 1000, "Block should be uncompressed");
 
@@ -42,7 +42,7 @@ fn test_uncompressed_block_zero_copy_logic() {
     let block_bytes = builder.finish();
 
     let block = Block::from_bytes(block_bytes.clone()).unwrap();
-    
+
     // Verify it works
     let entries: Vec<_> = block.iter().map(|r| r.unwrap()).collect();
     assert_eq!(entries.len(), 2);
@@ -58,7 +58,7 @@ fn test_mixed_compression_settings() {
     let large_val = vec![b'a'; 1000];
     builder.add(b"key1", &large_val);
     let compressed_bytes = builder.finish();
-    
+
     // Test 2: Uncompressed
     let mut builder = BlockBuilder::new();
     builder.set_compression(false);
@@ -66,7 +66,7 @@ fn test_mixed_compression_settings() {
     let uncompressed_bytes = builder.finish();
 
     assert!(compressed_bytes.len() < uncompressed_bytes.len());
-    
+
     // Verify both parse correctly
     let b1 = Block::from_bytes(compressed_bytes).unwrap();
     let b2 = Block::from_bytes(uncompressed_bytes).unwrap();

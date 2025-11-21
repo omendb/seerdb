@@ -40,11 +40,7 @@ where
 pub struct RangeIterator {
     // K-way merge iterator (O(k log k) per entry, O(k) memory)
     inner: KWayMergeIterator<
-        Box<
-            dyn Iterator<
-                Item = Result<(Bytes, Entry), Box<dyn std::error::Error + Send + Sync>>,
-            >,
-        >,
+        Box<dyn Iterator<Item = Result<(Bytes, Entry), Box<dyn std::error::Error + Send + Sync>>>>,
     >,
 }
 
@@ -105,7 +101,8 @@ impl RangeIterator {
         }
 
         // Create k-way merge iterator
-        let merge = KWayMergeIterator::new(iterators, merge_operator).map_err(std::io::Error::other)?;
+        let merge =
+            KWayMergeIterator::new(iterators, merge_operator).map_err(std::io::Error::other)?;
 
         Ok(RangeIterator { inner: merge })
     }
@@ -122,7 +119,9 @@ impl Iterator for RangeIterator {
                 .and_then(|(key, entry)| match entry {
                     Entry::Value(val) => Ok((key, val)),
                     Entry::Merge(val) => Ok((key, val.last().cloned().unwrap_or_default())), // Return last raw operand if unresolved
-                    Entry::Tombstone => unreachable!("Tombstones should be filtered by KWayMergeIterator"),
+                    Entry::Tombstone => {
+                        unreachable!("Tombstones should be filtered by KWayMergeIterator")
+                    }
                 })
                 .map_err(|e| e as Box<dyn std::error::Error>)
         })

@@ -5,10 +5,7 @@ use seerdb::{SSTable, SSTableBuilder};
 use tempfile::tempdir;
 
 // Build an SSTable with specified number of entries and value size
-fn build_sstable(
-    num_entries: usize,
-    value_size: usize,
-) -> (tempfile::TempDir, std::path::PathBuf) {
+fn build_sstable(num_entries: usize, value_size: usize) -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempdir().unwrap();
     let path = dir.path().join("bench.sst");
 
@@ -34,8 +31,8 @@ fn bench_buffer_pool_vs_os_cache(c: &mut Criterion) {
     // Block cache is ~40MB (10k blocks * 4KB)
     // Buffer pool will be configured to 20MB to force eviction
     let num_entries = 50_000;
-    let value_size = 1000; 
-    
+    let value_size = 1000;
+
     let (_dir, path) = build_sstable(num_entries, value_size);
 
     // 1. OS Cache (Standard Path)
@@ -63,7 +60,7 @@ fn bench_buffer_pool_vs_os_cache(c: &mut Criterion) {
         };
         let pool = BufferPool::new(pool_options);
         let mut sstable = SSTable::open_with_buffer_pool(&path, Some(pool)).unwrap();
-        
+
         b.iter(|| {
             let mut seed = 12345;
             for _ in 0..100 {

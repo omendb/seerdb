@@ -56,11 +56,12 @@ impl Memtable {
     /// Insert a generic entry (internal use)
     #[inline]
     pub fn put_entry(&self, key: Bytes, entry: Entry) {
-        let size_delta = key.len() + match &entry {
-            Entry::Value(v) => v.len(),
-            Entry::Tombstone => 0,
-            Entry::Merge(ops) => ops.iter().map(|op| op.len()).sum(),
-        };
+        let size_delta = key.len()
+            + match &entry {
+                Entry::Value(v) => v.len(),
+                Entry::Tombstone => 0,
+                Entry::Merge(ops) => ops.iter().map(|op| op.len()).sum(),
+            };
         self.data.insert(key, entry);
         self.size.fetch_add(size_delta, Ordering::Relaxed);
     }

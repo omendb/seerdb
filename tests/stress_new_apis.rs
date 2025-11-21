@@ -372,9 +372,7 @@ fn test_iter_concurrent_with_writes() {
     let deleter = thread::spawn(move || {
         barrier_del.wait();
         for i in 0..100 {
-            db_del
-                .delete(format!("key_{:06}", i).as_bytes())
-                .unwrap();
+            db_del.delete(format!("key_{:06}", i).as_bytes()).unwrap();
         }
     });
 
@@ -383,7 +381,10 @@ fn test_iter_concurrent_with_writes() {
     deleter.join().unwrap();
 
     // iter() may see any consistent snapshot state
-    assert!(iter_count >= 400, "Should see at least initial keys minus deletes");
+    assert!(
+        iter_count >= 400,
+        "Should see at least initial keys minus deletes"
+    );
     assert!(iter_count <= 1000, "Should not exceed total keys");
 }
 

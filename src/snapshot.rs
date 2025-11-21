@@ -85,7 +85,7 @@ pub struct Snapshot {
 
     /// Snapshot sequence number for tracking
     sequence_number: u64,
-    
+
     /// Optional merge operator for resolving merges
     merge_operator: Option<Arc<dyn MergeOperator>>,
 }
@@ -279,7 +279,13 @@ impl Snapshot {
             }
         }
 
-        RangeIterator::new(start_key, end_key, &partition_refs, sstables, self.merge_operator.clone())
+        RangeIterator::new(
+            start_key,
+            end_key,
+            &partition_refs,
+            sstables,
+            self.merge_operator.clone(),
+        )
     }
 
     /// Get the sequence number of this snapshot
@@ -296,7 +302,10 @@ impl std::fmt::Debug for Snapshot {
         f.debug_struct("Snapshot")
             .field("sequence_number", &self.sequence_number)
             .field("memtable_partitions", &self.memtables.len())
-            .field("has_immutable_memtables", &self.immutable_memtables.is_some())
+            .field(
+                "has_immutable_memtables",
+                &self.immutable_memtables.is_some(),
+            )
             .field("lsm_levels", &self.sstable_paths.len())
             .field("total_sstables", &total_sstables)
             .finish()
@@ -305,7 +314,6 @@ impl std::fmt::Debug for Snapshot {
 
 #[cfg(test)]
 mod tests {
-    
 
     // Integration tests will be added in db.rs test module
     // since Snapshot requires a full DB instance

@@ -90,35 +90,17 @@ fn benchmark_search_strategies(c: &mut Criterion) {
         // Search for middle element
         let target = (size / 2) as i64;
 
-        group.bench_with_input(
-            BenchmarkId::new("simd_linear", size),
-            &size,
-            |b, _| {
-                b.iter(|| {
-                    black_box(simd_linear_search(&keys, black_box(target)))
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("simd_linear", size), &size, |b, _| {
+            b.iter(|| black_box(simd_linear_search(&keys, black_box(target))));
+        });
 
-        group.bench_with_input(
-            BenchmarkId::new("binary_search", size),
-            &size,
-            |b, _| {
-                b.iter(|| {
-                    black_box(binary_search(&keys, black_box(target)))
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("binary_search", size), &size, |b, _| {
+            b.iter(|| black_box(binary_search(&keys, black_box(target))));
+        });
 
-        group.bench_with_input(
-            BenchmarkId::new("scalar_linear", size),
-            &size,
-            |b, _| {
-                b.iter(|| {
-                    black_box(linear_search(&keys, black_box(target)))
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("scalar_linear", size), &size, |b, _| {
+            b.iter(|| black_box(linear_search(&keys, black_box(target))));
+        });
     }
 
     group.finish();
@@ -130,7 +112,13 @@ fn benchmark_alex_typical_case(c: &mut Criterion) {
     // Simulate ALEX's typical case: search after exponential search narrows to 64 elements
     let size = 64;
     let keys: Vec<Option<i64>> = (0..size)
-        .map(|i| if i % 3 == 0 { Some(i as i64 * 10) } else { None })
+        .map(|i| {
+            if i % 3 == 0 {
+                Some(i as i64 * 10)
+            } else {
+                None
+            }
+        })
         .collect();
 
     // Test different positions (first, middle, last, not found)
@@ -143,25 +131,13 @@ fn benchmark_alex_typical_case(c: &mut Criterion) {
     ];
 
     for (name, target) in test_cases {
-        group.bench_with_input(
-            BenchmarkId::new("simd_linear", name),
-            &target,
-            |b, &t| {
-                b.iter(|| {
-                    black_box(simd_linear_search(&keys, black_box(t)))
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("simd_linear", name), &target, |b, &t| {
+            b.iter(|| black_box(simd_linear_search(&keys, black_box(t))));
+        });
 
-        group.bench_with_input(
-            BenchmarkId::new("binary_search", name),
-            &target,
-            |b, &t| {
-                b.iter(|| {
-                    black_box(binary_search(&keys, black_box(t)))
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("binary_search", name), &target, |b, &t| {
+            b.iter(|| black_box(binary_search(&keys, black_box(t))));
+        });
     }
 
     group.finish();
@@ -172,31 +148,17 @@ fn benchmark_worst_case(c: &mut Criterion) {
 
     // Worst case: target is last element or not found
     for size in [32, 64, 128, 256] {
-        let keys: Vec<Option<i64>> = (0..size)
-            .map(|i| Some(i as i64))
-            .collect();
+        let keys: Vec<Option<i64>> = (0..size).map(|i| Some(i as i64)).collect();
 
         let target = size as i64 - 1; // Last element
 
-        group.bench_with_input(
-            BenchmarkId::new("simd_linear", size),
-            &size,
-            |b, _| {
-                b.iter(|| {
-                    black_box(simd_linear_search(&keys, black_box(target)))
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("simd_linear", size), &size, |b, _| {
+            b.iter(|| black_box(simd_linear_search(&keys, black_box(target))));
+        });
 
-        group.bench_with_input(
-            BenchmarkId::new("binary_search", size),
-            &size,
-            |b, _| {
-                b.iter(|| {
-                    black_box(binary_search(&keys, black_box(target)))
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("binary_search", size), &size, |b, _| {
+            b.iter(|| black_box(binary_search(&keys, black_box(target))));
+        });
     }
 
     group.finish();

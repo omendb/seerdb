@@ -125,9 +125,9 @@ pub mod merge_operator;
 pub mod metrics;
 pub mod range;
 pub mod range_merge;
-pub mod snapshot;
 #[cfg(feature = "simd")]
 pub mod simd;
+pub mod snapshot;
 pub mod sstable;
 pub mod storage;
 pub mod vlog;
@@ -136,15 +136,15 @@ pub mod wal;
 // Re-export main types for convenient access
 pub use alex::AlexTree;
 pub use batch::Batch;
-pub use bloom::{BloomFilter, BlockedBloomFilter, LearnedBloomFilter};
-pub use db::{DBError, DBOptions, DB};
+pub use bloom::{BlockedBloomFilter, BloomFilter, LearnedBloomFilter};
 #[cfg(feature = "object-store")]
 pub use db::StorageConfig;
+pub use db::{DBError, DBOptions, DB};
 pub use health::{CheckStatus, HealthCheck, HealthStatus};
 pub use memtable::Memtable;
 pub use merge_operator::{MergeOperator, StringAppendOperator};
-pub use snapshot::Snapshot;
 pub use metrics::DBStats;
+pub use snapshot::Snapshot;
 pub use sstable::{SSTable, SSTableBuilder};
 pub use storage::LocalStorage;
 #[cfg(feature = "object-store")]

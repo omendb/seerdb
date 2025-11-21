@@ -90,24 +90,24 @@ pub fn decode_varint(data: &[u8]) -> Option<(u64, usize)> {
         // Values < 128 have MSB=0 (terminator).
         let mask = v.simd_lt(u8x16::splat(128));
         let bitmask = mask.to_bitmask();
-        
+
         // If bitmask is 0, all 16 bytes have MSB=1 (>= 128).
         // That means varint is at least 16 bytes long, which overflows u64 (max 10 bytes).
         if bitmask == 0 {
-            return None; 
+            return None;
         }
-        
+
         // Find index of first set bit (first terminator)
         let len = bitmask.trailing_zeros() as usize + 1;
-        
+
         if len > 10 {
             return None; // Too long for u64
         }
-        
+
         // Unrolled decoding based on known length
         // We know the length, so we can avoid loop and branch checks
         let mut value: u64 = 0;
-        
+
         // Using explicit match for small sizes which are most common
         match len {
             1 => return Some((data[0] as u64, 1)),
@@ -154,7 +154,7 @@ pub fn decode_varint(data: &[u8]) -> Option<(u64, usize)> {
             }
         }
     }
-    
+
     // Scalar fallback for short buffers (< 16 bytes)
     let mut value: u64 = 0;
     let mut shift = 0;
@@ -390,16 +390,16 @@ mod tests {
     #[test]
     fn test_decode_varint() {
         let mut large_data = vec![0u8; 32];
-        
+
         // Test single byte
         large_data[0] = 0x05;
         assert_eq!(decode_varint(&large_data), Some((5, 1)));
-        
+
         // Test 2 bytes
         large_data[0] = 0x85;
         large_data[1] = 0x01;
         assert_eq!(decode_varint(&large_data), Some((133, 2)));
-        
+
         // Test 3 bytes
         large_data[0] = 0x80;
         large_data[1] = 0x80;
@@ -414,7 +414,7 @@ mod tests {
         large_data[4] = 0x01;
         // 1 << 28
         assert_eq!(decode_varint(&large_data), Some((268435456, 5)));
-        
+
         // Test too long (all continuation bits)
         for i in 0..16 {
             large_data[i] = 0x80;

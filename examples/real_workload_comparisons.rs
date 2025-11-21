@@ -11,9 +11,9 @@ use std::time::{Duration, Instant};
 use tempfile::tempdir;
 
 #[cfg(feature = "baseline-benchmarks")]
-use rocksdb::{Options as RocksDBOptions, DB as RocksDBInstance};
-#[cfg(feature = "baseline-benchmarks")]
 use fjall::Config as FjallConfig;
+#[cfg(feature = "baseline-benchmarks")]
+use rocksdb::{Options as RocksDBOptions, DB as RocksDBInstance};
 
 use seerdb::{DBOptions, DB};
 
@@ -120,7 +120,9 @@ fn benchmark_graph_fjall() -> (Duration, Duration) {
     let dir = tempdir().unwrap();
     let config = FjallConfig::new(dir.path());
     let keyspace = config.open().unwrap();
-    let partition = keyspace.open_partition("default", Default::default()).unwrap();
+    let partition = keyspace
+        .open_partition("default", Default::default())
+        .unwrap();
 
     let nodes = 10_000;
     let edges_per_node = 32;
@@ -196,7 +198,9 @@ fn benchmark_timeseries_seerdb() -> (Duration, Duration, f64) {
     for (start, end) in ranges.iter().take(10) {
         let start_key = format!("ts:{:016}", start);
         let end_key = format!("ts:{:016}", end);
-        let iter = db.range(start_key.as_bytes(), Some(end_key.as_bytes())).unwrap();
+        let iter = db
+            .range(start_key.as_bytes(), Some(end_key.as_bytes()))
+            .unwrap();
         let _: Vec<_> = iter.collect::<Result<Vec<_>, _>>().unwrap();
     }
 
@@ -205,7 +209,9 @@ fn benchmark_timeseries_seerdb() -> (Duration, Duration, f64) {
     for (start, end) in ranges.iter() {
         let start_key = format!("ts:{:016}", start);
         let end_key = format!("ts:{:016}", end);
-        let iter = db.range(start_key.as_bytes(), Some(end_key.as_bytes())).unwrap();
+        let iter = db
+            .range(start_key.as_bytes(), Some(end_key.as_bytes()))
+            .unwrap();
         let entries: Vec<_> = iter.collect::<Result<Vec<_>, _>>().unwrap();
         total_entries += entries.len();
     }
@@ -283,7 +289,9 @@ fn benchmark_timeseries_fjall() -> (Duration, Duration) {
     let dir = tempdir().unwrap();
     let config = FjallConfig::new(dir.path());
     let keyspace = config.open().unwrap();
-    let partition = keyspace.open_partition("default", Default::default()).unwrap();
+    let partition = keyspace
+        .open_partition("default", Default::default())
+        .unwrap();
 
     let entries = 1_000_000;
     let value = vec![0u8; 64];
@@ -425,7 +433,9 @@ fn benchmark_random_fjall() -> (Duration, Duration) {
     let dir = tempdir().unwrap();
     let config = FjallConfig::new(dir.path());
     let keyspace = config.open().unwrap();
-    let partition = keyspace.open_partition("default", Default::default()).unwrap();
+    let partition = keyspace
+        .open_partition("default", Default::default())
+        .unwrap();
 
     let entries = 500_000;
     let value = vec![0u8; 1024];
@@ -475,27 +485,41 @@ fn main() {
 
     print!("seerdb... ");
     let (seer_write, seer_read, seer_cache) = benchmark_graph_seerdb();
-    println!("Write: {:.2}s, Read: {:.2}s, Cache: {:.2}%",
-             seer_write.as_secs_f64(), seer_read.as_secs_f64(), seer_cache * 100.0);
+    println!(
+        "Write: {:.2}s, Read: {:.2}s, Cache: {:.2}%",
+        seer_write.as_secs_f64(),
+        seer_read.as_secs_f64(),
+        seer_cache * 100.0
+    );
 
     #[cfg(feature = "baseline-benchmarks")]
     {
         print!("RocksDB... ");
         let (rocks_write, rocks_read) = benchmark_graph_rocksdb();
-        println!("Write: {:.2}s, Read: {:.2}s",
-                 rocks_write.as_secs_f64(), rocks_read.as_secs_f64());
+        println!(
+            "Write: {:.2}s, Read: {:.2}s",
+            rocks_write.as_secs_f64(),
+            rocks_read.as_secs_f64()
+        );
 
         print!("fjall... ");
         let (fjall_write, fjall_read) = benchmark_omendb_fjall();
-        println!("Write: {:.2}s, Read: {:.2}s",
-                 fjall_write.as_secs_f64(), fjall_read.as_secs_f64());
+        println!(
+            "Write: {:.2}s, Read: {:.2}s",
+            fjall_write.as_secs_f64(),
+            fjall_read.as_secs_f64()
+        );
 
-        println!("\nSpeedup vs RocksDB: Write {:.2}x, Read {:.2}x",
-                 rocks_write.as_secs_f64() / seer_write.as_secs_f64(),
-                 rocks_read.as_secs_f64() / seer_read.as_secs_f64());
-        println!("Speedup vs fjall: Write {:.2}x, Read {:.2}x\n",
-                 fjall_write.as_secs_f64() / seer_write.as_secs_f64(),
-                 fjall_read.as_secs_f64() / seer_read.as_secs_f64());
+        println!(
+            "\nSpeedup vs RocksDB: Write {:.2}x, Read {:.2}x",
+            rocks_write.as_secs_f64() / seer_write.as_secs_f64(),
+            rocks_read.as_secs_f64() / seer_read.as_secs_f64()
+        );
+        println!(
+            "Speedup vs fjall: Write {:.2}x, Read {:.2}x\n",
+            fjall_write.as_secs_f64() / seer_write.as_secs_f64(),
+            fjall_read.as_secs_f64() / seer_read.as_secs_f64()
+        );
     }
 
     // Workload 2: Time series
@@ -503,27 +527,41 @@ fn main() {
 
     print!("seerdb... ");
     let (seer_write, seer_read, seer_cache) = benchmark_timeseries_seerdb();
-    println!("Write: {:.2}s, Read: {:.2}s, Cache: {:.2}%",
-             seer_write.as_secs_f64(), seer_read.as_secs_f64(), seer_cache * 100.0);
+    println!(
+        "Write: {:.2}s, Read: {:.2}s, Cache: {:.2}%",
+        seer_write.as_secs_f64(),
+        seer_read.as_secs_f64(),
+        seer_cache * 100.0
+    );
 
     #[cfg(feature = "baseline-benchmarks")]
     {
         print!("RocksDB... ");
         let (rocks_write, rocks_read) = benchmark_timeseries_rocksdb();
-        println!("Write: {:.2}s, Read: {:.2}s",
-                 rocks_write.as_secs_f64(), rocks_read.as_secs_f64());
+        println!(
+            "Write: {:.2}s, Read: {:.2}s",
+            rocks_write.as_secs_f64(),
+            rocks_read.as_secs_f64()
+        );
 
         print!("fjall... ");
         let (fjall_write, fjall_read) = benchmark_timeseries_fjall();
-        println!("Write: {:.2}s, Read: {:.2}s",
-                 fjall_write.as_secs_f64(), fjall_read.as_secs_f64());
+        println!(
+            "Write: {:.2}s, Read: {:.2}s",
+            fjall_write.as_secs_f64(),
+            fjall_read.as_secs_f64()
+        );
 
-        println!("\nSpeedup vs RocksDB: Write {:.2}x, Read {:.2}x",
-                 rocks_write.as_secs_f64() / seer_write.as_secs_f64(),
-                 rocks_read.as_secs_f64() / seer_read.as_secs_f64());
-        println!("Speedup vs fjall: Write {:.2}x, Read {:.2}x\n",
-                 fjall_write.as_secs_f64() / seer_write.as_secs_f64(),
-                 fjall_read.as_secs_f64() / seer_read.as_secs_f64());
+        println!(
+            "\nSpeedup vs RocksDB: Write {:.2}x, Read {:.2}x",
+            rocks_write.as_secs_f64() / seer_write.as_secs_f64(),
+            rocks_read.as_secs_f64() / seer_read.as_secs_f64()
+        );
+        println!(
+            "Speedup vs fjall: Write {:.2}x, Read {:.2}x\n",
+            fjall_write.as_secs_f64() / seer_write.as_secs_f64(),
+            fjall_read.as_secs_f64() / seer_read.as_secs_f64()
+        );
     }
 
     // Workload 3: Random KV
@@ -531,27 +569,41 @@ fn main() {
 
     print!("seerdb... ");
     let (seer_write, seer_read, seer_cache) = benchmark_random_seerdb();
-    println!("Write: {:.2}s, Read: {:.2}s, Cache: {:.2}%",
-             seer_write.as_secs_f64(), seer_read.as_secs_f64(), seer_cache * 100.0);
+    println!(
+        "Write: {:.2}s, Read: {:.2}s, Cache: {:.2}%",
+        seer_write.as_secs_f64(),
+        seer_read.as_secs_f64(),
+        seer_cache * 100.0
+    );
 
     #[cfg(feature = "baseline-benchmarks")]
     {
         print!("RocksDB... ");
         let (rocks_write, rocks_read) = benchmark_random_rocksdb();
-        println!("Write: {:.2}s, Read: {:.2}s",
-                 rocks_write.as_secs_f64(), rocks_read.as_secs_f64());
+        println!(
+            "Write: {:.2}s, Read: {:.2}s",
+            rocks_write.as_secs_f64(),
+            rocks_read.as_secs_f64()
+        );
 
         print!("fjall... ");
         let (fjall_write, fjall_read) = benchmark_random_fjall();
-        println!("Write: {:.2}s, Read: {:.2}s",
-                 fjall_write.as_secs_f64(), fjall_read.as_secs_f64());
+        println!(
+            "Write: {:.2}s, Read: {:.2}s",
+            fjall_write.as_secs_f64(),
+            fjall_read.as_secs_f64()
+        );
 
-        println!("\nSpeedup vs RocksDB: Write {:.2}x, Read {:.2}x",
-                 rocks_write.as_secs_f64() / seer_write.as_secs_f64(),
-                 rocks_read.as_secs_f64() / seer_read.as_secs_f64());
-        println!("Speedup vs fjall: Write {:.2}x, Read {:.2}x",
-                 fjall_write.as_secs_f64() / seer_write.as_secs_f64(),
-                 fjall_read.as_secs_f64() / seer_read.as_secs_f64());
+        println!(
+            "\nSpeedup vs RocksDB: Write {:.2}x, Read {:.2}x",
+            rocks_write.as_secs_f64() / seer_write.as_secs_f64(),
+            rocks_read.as_secs_f64() / seer_read.as_secs_f64()
+        );
+        println!(
+            "Speedup vs fjall: Write {:.2}x, Read {:.2}x",
+            fjall_write.as_secs_f64() / seer_write.as_secs_f64(),
+            fjall_read.as_secs_f64() / seer_read.as_secs_f64()
+        );
     }
 
     println!("\n=== Phase 4 Profiling Complete ===");

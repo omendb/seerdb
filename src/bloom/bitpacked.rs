@@ -143,7 +143,6 @@ impl BloomFilter {
         })
     }
 
-
     /// Compute hash for an item with a given seed
     fn hash<T: Hash + ?Sized>(&self, item: &T, seed: usize) -> u64 {
         // Always use XxHash64 for stability (persisted to disk)

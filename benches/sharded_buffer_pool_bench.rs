@@ -51,11 +51,13 @@ fn bench_buffer_pool_contention(c: &mut Criterion) {
                                     let page_id = PageId { file_id, offset };
 
                                     // Simulate loading a page
-                                    let frame_ref = pool.get_page(page_id, |buf| {
-                                        // Simulate disk read by filling buffer with data
-                                        buf.fill(0xAB);
-                                        Ok::<(), BufferPoolError>(())
-                                    }).unwrap();
+                                    let frame_ref = pool
+                                        .get_page(page_id, |buf| {
+                                            // Simulate disk read by filling buffer with data
+                                            buf.fill(0xAB);
+                                            Ok::<(), BufferPoolError>(())
+                                        })
+                                        .unwrap();
 
                                     // CRITICAL: Drop frame immediately to release pin
                                     // Without this, all frames stay pinned and eviction deadlocks
@@ -117,10 +119,12 @@ fn bench_buffer_pool_contention_focused(c: &mut Criterion) {
 
                                     let page_id = PageId { file_id, offset };
 
-                                    let frame_ref = pool.get_page(page_id, |buf| {
-                                        buf.fill(0xAB);
-                                        Ok::<(), BufferPoolError>(())
-                                    }).unwrap();
+                                    let frame_ref = pool
+                                        .get_page(page_id, |buf| {
+                                            buf.fill(0xAB);
+                                            Ok::<(), BufferPoolError>(())
+                                        })
+                                        .unwrap();
 
                                     // CRITICAL: Drop frame immediately to release pin
                                     black_box(&frame_ref);
@@ -176,10 +180,12 @@ fn bench_buffer_pool_scalability(c: &mut Criterion) {
 
                                     let page_id = PageId { file_id, offset };
 
-                                    let frame_ref = pool.get_page(page_id, |buf| {
-                                        buf.fill(0xAB);
-                                        Ok::<(), BufferPoolError>(())
-                                    }).unwrap();
+                                    let frame_ref = pool
+                                        .get_page(page_id, |buf| {
+                                            buf.fill(0xAB);
+                                            Ok::<(), BufferPoolError>(())
+                                        })
+                                        .unwrap();
 
                                     // CRITICAL: Drop frame immediately to release pin
                                     black_box(&frame_ref);

@@ -43,7 +43,10 @@ fn main() {
 
     let write_elapsed = start.elapsed();
     println!("\nPhase 1 complete: {:?}", write_elapsed);
-    println!("Throughput: {:.0} writes/sec\n", 100_000.0 / write_elapsed.as_secs_f64());
+    println!(
+        "Throughput: {:.0} writes/sec\n",
+        100_000.0 / write_elapsed.as_secs_f64()
+    );
 
     // Force flush to trigger SSTable creation
     println!("Phase 2: Flushing to SSTables");
@@ -69,7 +72,10 @@ fn main() {
 
     let batch_elapsed = batch_start.elapsed();
     println!("Phase 3 complete: {:?}", batch_elapsed);
-    println!("Throughput: {:.0} writes/sec\n", 10_000.0 / batch_elapsed.as_secs_f64());
+    println!(
+        "Throughput: {:.0} writes/sec\n",
+        10_000.0 / batch_elapsed.as_secs_f64()
+    );
 
     // Random writes (may trigger compaction)
     println!("Phase 4: Random writes (50K entries)");
@@ -89,7 +95,10 @@ fn main() {
 
     let random_elapsed = random_start.elapsed();
     println!("\nPhase 4 complete: {:?}", random_elapsed);
-    println!("Throughput: {:.0} writes/sec\n", 50_000.0 / random_elapsed.as_secs_f64());
+    println!(
+        "Throughput: {:.0} writes/sec\n",
+        50_000.0 / random_elapsed.as_secs_f64()
+    );
 
     // Get final stats
     let stats = db.stats();
@@ -98,8 +107,14 @@ fn main() {
     println!("Total flushes: {}", stats.total_flushes);
     println!("Total compactions: {}", stats.total_compactions);
     println!("Total SSTables: {}", stats.total_sstables);
-    println!("Memtable size: {:.2} MB", stats.memtable_size_bytes as f64 / 1024.0 / 1024.0);
-    println!("Total disk usage: {:.2} MB", stats.total_disk_bytes as f64 / 1024.0 / 1024.0);
+    println!(
+        "Memtable size: {:.2} MB",
+        stats.memtable_size_bytes as f64 / 1024.0 / 1024.0
+    );
+    println!(
+        "Total disk usage: {:.2} MB",
+        stats.total_disk_bytes as f64 / 1024.0 / 1024.0
+    );
     println!("Write amplification: {:.2}x", stats.write_amplification);
 
     println!("\n=== Allocation Profile Complete ===");

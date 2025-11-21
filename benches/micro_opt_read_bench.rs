@@ -1,6 +1,6 @@
 // Benchmark to measure impact of micro-optimizations on read performance
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use seerdb::{DBOptions, DB};
 use std::sync::Arc;
 use tempfile::TempDir;

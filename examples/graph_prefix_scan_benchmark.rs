@@ -29,9 +29,13 @@ fn main() {
     let value = vec![0u8; VALUE_SIZE];
 
     println!("Phase 1: Building HNSW graph structure...");
-    println!("  {} nodes × {} edges × {} levels = {} total entries",
-             NUM_NODES, EDGES_PER_NODE, NUM_LEVELS,
-             NUM_NODES * EDGES_PER_NODE * NUM_LEVELS);
+    println!(
+        "  {} nodes × {} edges × {} levels = {} total entries",
+        NUM_NODES,
+        EDGES_PER_NODE,
+        NUM_LEVELS,
+        NUM_NODES * EDGES_PER_NODE * NUM_LEVELS
+    );
 
     let write_start = Instant::now();
     let mut flush_count = 0;
@@ -57,24 +61,34 @@ fn main() {
     println!("\n  Created {} SSTables", flush_count);
 
     let write_duration = write_start.elapsed();
-    let write_throughput = (NUM_NODES * EDGES_PER_NODE * NUM_LEVELS) as f64 / write_duration.as_secs_f64();
-    println!("  Write time: {:.2}s ({:.0} ops/sec)\n", write_duration.as_secs_f64(), write_throughput);
+    let write_throughput =
+        (NUM_NODES * EDGES_PER_NODE * NUM_LEVELS) as f64 / write_duration.as_secs_f64();
+    println!(
+        "  Write time: {:.2}s ({:.0} ops/sec)\n",
+        write_duration.as_secs_f64(),
+        write_throughput
+    );
 
     // Get stats after writes
     let stats = db.stats();
     println!("Database State:");
     println!("  Total SSTables: {}", stats.total_sstables);
     println!("  SSTable levels: {:?}", stats.sstables_per_level);
-    println!("  Block cache size: {} blocks ({:.2} MB)",
-             stats.block_cache_size,
-             (stats.block_cache_size * 4096) as f64 / 1024.0 / 1024.0);
+    println!(
+        "  Block cache size: {} blocks ({:.2} MB)",
+        stats.block_cache_size,
+        (stats.block_cache_size * 4096) as f64 / 1024.0 / 1024.0
+    );
     println!();
 
     // Phase 2: Prefix scans (simulate HNSW neighbor lookup)
     println!("Phase 2: Prefix scans (neighbor lookups)...\n");
 
     // Test 1: Cold cache - first scan of each node
-    println!("Test 1: Cold Cache - First scan of {} nodes", NUM_NODES / 10);
+    println!(
+        "Test 1: Cold Cache - First scan of {} nodes",
+        NUM_NODES / 10
+    );
     let stats_before = db.stats();
     let start = Instant::now();
     let mut total_edges_found = 0;
@@ -177,16 +191,23 @@ fn main() {
     println!("=== Final Summary ===");
     println!("Total cache hits: {}", final_stats.cache_hits);
     println!("Total cache misses: {}", final_stats.cache_misses);
-    println!("Overall cache hit rate: {:.2}%", final_stats.cache_hit_rate * 100.0);
+    println!(
+        "Overall cache hit rate: {:.2}%",
+        final_stats.cache_hit_rate * 100.0
+    );
     println!();
     println!("Block Cache Status:");
-    println!("  Size: {} / {} blocks ({:.2}% full)",
-             final_stats.block_cache_size,
-             final_stats.block_cache_capacity,
-             (final_stats.block_cache_size as f64 / final_stats.block_cache_capacity as f64) * 100.0);
-    println!("  Memory: {:.2} MB / {:.2} MB",
-             (final_stats.block_cache_size * 4096) as f64 / 1024.0 / 1024.0,
-             (final_stats.block_cache_capacity * 4096) as f64 / 1024.0 / 1024.0);
+    println!(
+        "  Size: {} / {} blocks ({:.2}% full)",
+        final_stats.block_cache_size,
+        final_stats.block_cache_capacity,
+        (final_stats.block_cache_size as f64 / final_stats.block_cache_capacity as f64) * 100.0
+    );
+    println!(
+        "  Memory: {:.2} MB / {:.2} MB",
+        (final_stats.block_cache_size * 4096) as f64 / 1024.0 / 1024.0,
+        (final_stats.block_cache_capacity * 4096) as f64 / 1024.0 / 1024.0
+    );
     println!();
 
     println!("Performance Analysis:");

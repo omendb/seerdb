@@ -33,7 +33,8 @@ use varint_rs::VarintWriter;
 /// Helper to write varint to BytesMut
 fn write_varint(buf: &mut BytesMut, value: u64) {
     let mut temp = Vec::new();
-    temp.write_u64_varint(value).expect("write to memory failed");
+    temp.write_u64_varint(value)
+        .expect("write to memory failed");
     buf.extend_from_slice(&temp);
 }
 
@@ -244,7 +245,8 @@ impl BlockBuilder {
             final_buffer.freeze()
         } else {
             // Uncompressed: append metadata directly to buffer
-            self.buffer.extend_from_slice(&uncompressed_size.to_le_bytes()); // 4 bytes
+            self.buffer
+                .extend_from_slice(&uncompressed_size.to_le_bytes()); // 4 bytes
             self.buffer.extend_from_slice(&[0u8]); // compressed flag: 0 = uncompressed
             self.buffer.extend_from_slice(&restart_offset.to_le_bytes()); // 4 bytes
 
@@ -350,7 +352,8 @@ impl Block {
             if compressed {
                 // If compressed, we MUST decompress into a new buffer (Owned)
                 let compressed_slice = &raw_data[..raw_data.len() - 13];
-                let uncompressed_data = decompress_size_prepended(compressed_slice).map_err(|_| BlockError::InvalidFormat)?;
+                let uncompressed_data = decompress_size_prepended(compressed_slice)
+                    .map_err(|_| BlockError::InvalidFormat)?;
                 let data = Bytes::from(uncompressed_data);
 
                 // Parse num_restarts from uncompressed data

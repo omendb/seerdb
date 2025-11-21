@@ -1,7 +1,7 @@
 // Benchmark for range scan micro-optimizations
 // Measures impact of inline hints on iterator hot path
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use seerdb::{DBOptions, DB};
 use std::sync::Arc;
 

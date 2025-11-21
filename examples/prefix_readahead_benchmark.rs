@@ -5,10 +5,10 @@ use seerdb::{DBOptions, SyncPolicy, DB};
 use std::time::Instant;
 use tempfile::tempdir;
 
-const NUM_NODES: usize = 10_000;  // 10x larger
-const EDGES_PER_NODE: usize = 64;  // 2x larger
+const NUM_NODES: usize = 10_000; // 10x larger
+const EDGES_PER_NODE: usize = 64; // 2x larger
 const NUM_LEVELS: usize = 4;
-const VALUE_SIZE: usize = 128;  // 2x larger
+const VALUE_SIZE: usize = 128; // 2x larger
 
 fn main() {
     println!("=== Read-Ahead Prefetching Benchmark ===");
@@ -17,7 +17,7 @@ fn main() {
     let dir = tempdir().unwrap();
     let opts = DBOptions {
         data_dir: dir.path().to_path_buf(),
-        memtable_capacity: 4 * 1024 * 1024,  // Smaller to create more SSTables
+        memtable_capacity: 4 * 1024 * 1024, // Smaller to create more SSTables
         wal_sync_policy: SyncPolicy::None,
         background_compaction: false,
         block_cache_capacity: 16_384,
@@ -28,9 +28,13 @@ fn main() {
     let value = vec![0u8; VALUE_SIZE];
 
     println!("Phase 1: Building graph...");
-    println!("  {} nodes × {} edges × {} levels = {} entries",
-             NUM_NODES, EDGES_PER_NODE, NUM_LEVELS,
-             NUM_NODES * EDGES_PER_NODE * NUM_LEVELS);
+    println!(
+        "  {} nodes × {} edges × {} levels = {} entries",
+        NUM_NODES,
+        EDGES_PER_NODE,
+        NUM_LEVELS,
+        NUM_NODES * EDGES_PER_NODE * NUM_LEVELS
+    );
 
     let write_start = Instant::now();
     let mut flush_count = 0;
@@ -53,7 +57,11 @@ fn main() {
     }
     db.flush().unwrap();
     flush_count += 1;
-    println!("\n  Created {} SSTables in {:.2}s", flush_count, write_start.elapsed().as_secs_f64());
+    println!(
+        "\n  Created {} SSTables in {:.2}s",
+        flush_count,
+        write_start.elapsed().as_secs_f64()
+    );
 
     let stats = db.stats();
     println!("  Total SSTables: {}", stats.total_sstables);

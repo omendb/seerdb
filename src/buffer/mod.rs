@@ -1,8 +1,8 @@
-pub mod manager;
 pub mod eviction;
+pub mod manager;
 
-pub use manager::{BufferPool, BufferPoolOptions, PageId, FrameRef};
 pub use eviction::{EvictionPolicy, LruPolicy};
+pub use manager::{BufferPool, BufferPoolOptions, FrameRef, PageId};
 
 use thiserror::Error;
 

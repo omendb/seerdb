@@ -7,7 +7,7 @@
 // - Trade-off: Blocked has slightly higher FPR due to reduced entropy
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use seerdb::bloom::{BloomFilter, BlockedBloomFilter};
+use seerdb::bloom::{BlockedBloomFilter, BloomFilter};
 
 fn generate_keys(n: usize, start: usize) -> Vec<String> {
     (start..start + n)
@@ -143,8 +143,16 @@ fn benchmark_cache_misses(c: &mut Criterion) {
     }
 
     println!("\n=== Cache Behavior (1M capacity, testing 10K queries) ===");
-    println!("Standard filter size: {} bytes ({:.1} MB)", bf.size_bytes(), bf.size_bytes() as f64 / 1_048_576.0);
-    println!("Blocked filter size:  {} bytes ({:.1} MB)", bbf.size_bytes(), bbf.size_bytes() as f64 / 1_048_576.0);
+    println!(
+        "Standard filter size: {} bytes ({:.1} MB)",
+        bf.size_bytes(),
+        bf.size_bytes() as f64 / 1_048_576.0
+    );
+    println!(
+        "Blocked filter size:  {} bytes ({:.1} MB)",
+        bbf.size_bytes(),
+        bbf.size_bytes() as f64 / 1_048_576.0
+    );
 
     group.bench_function("standard_cold_cache", |b| {
         b.iter(|| {
@@ -202,9 +210,22 @@ fn benchmark_false_positive_rate(c: &mut Criterion) {
     let blocked_fpr = blocked_fp as f64 / test_keys.len() as f64;
 
     println!("\n=== False Positive Rate Comparison (target: 1%) ===");
-    println!("Standard: {:.3}% ({}/{})", standard_fpr * 100.0, standard_fp, test_keys.len());
-    println!("Blocked:  {:.3}% ({}/{})", blocked_fpr * 100.0, blocked_fp, test_keys.len());
-    println!("FPR Ratio: {:.2}x (blocked/standard)", blocked_fpr / standard_fpr);
+    println!(
+        "Standard: {:.3}% ({}/{})",
+        standard_fpr * 100.0,
+        standard_fp,
+        test_keys.len()
+    );
+    println!(
+        "Blocked:  {:.3}% ({}/{})",
+        blocked_fpr * 100.0,
+        blocked_fp,
+        test_keys.len()
+    );
+    println!(
+        "FPR Ratio: {:.2}x (blocked/standard)",
+        blocked_fpr / standard_fpr
+    );
 
     group.finish();
 }

@@ -1,9 +1,9 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use parking_lot::{RwLock, Mutex};
+use crate::buffer::eviction::{ClockProPolicy, EvictionPolicy, FrameId};
 use dashmap::DashMap;
-use crate::buffer::eviction::{EvictionPolicy, ClockProPolicy, FrameId};
+use parking_lot::{Mutex, RwLock};
 use std::fmt;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
 
 pub type FileId = u64;
 pub type BlockId = u64;
@@ -18,15 +18,15 @@ pub struct PageId {
 pub struct BufferPoolOptions {
     pub capacity_bytes: usize,
     pub frame_size: usize,
-    pub num_shards: usize,  // New: Number of shards for partitioning
+    pub num_shards: usize, // New: Number of shards for partitioning
 }
 
 impl Default for BufferPoolOptions {
     fn default() -> Self {
         Self {
             capacity_bytes: 128 * 1024 * 1024, // 128MB
-            frame_size: 16 * 1024, // 16KB
-            num_shards: 16,  // 16 shards for multi-core systems
+            frame_size: 16 * 1024,             // 16KB
+            num_shards: 16,                    // 16 shards for multi-core systems
         }
     }
 }
@@ -107,7 +107,11 @@ impl Drop for FrameRef {
 
 impl fmt::Debug for FrameRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FrameRef(page={:?}, frame={})", self.page_id, self.frame_id)
+        write!(
+            f,
+            "FrameRef(page={:?}, frame={})",
+            self.page_id, self.frame_id
+        )
     }
 }
 
@@ -130,7 +134,7 @@ struct BufferShard {
     page_table: DashMap<PageId, FrameId>,
     free_list: Mutex<Vec<FrameId>>,
     eviction: Box<dyn EvictionPolicy>,
-    frame_offset: usize,  // Global frame ID offset for this shard
+    frame_offset: usize, // Global frame ID offset for this shard
     frames_per_shard: usize,
 }
 
@@ -149,7 +153,7 @@ impl BufferShard {
                 },
                 data: RwLock::new(vec![0u8; frame_size]),
             });
-            free_list.push(frame_offset + i);  // Global frame ID
+            free_list.push(frame_offset + i); // Global frame ID
         }
 
         Self {
@@ -236,7 +240,11 @@ impl BufferPool {
 
         let mut shards = Vec::with_capacity(options.num_shards);
         for shard_idx in 0..options.num_shards {
-            shards.push(BufferShard::new(shard_idx, frames_per_shard, options.frame_size));
+            shards.push(BufferShard::new(
+                shard_idx,
+                frames_per_shard,
+                options.frame_size,
+            ));
         }
 
         Arc::new(Self {
@@ -305,7 +313,7 @@ impl BufferPool {
 
             // Execute loader with mutable access to the buffer
             match loader(&mut *data_guard) {
-                Ok(_) => {},
+                Ok(_) => {}
                 Err(e) => {
                     drop(data_guard);
                     shard.free_frame(frame_id);
@@ -353,21 +361,21 @@ impl BufferPool {
             let slot = &shard.frames[local_frame_id];
             let current_pid = slot.header.page_id.read();
             if *current_pid == Some(page_id) {
-                 shard.eviction.access(local_frame_id);
+                shard.eviction.access(local_frame_id);
 
-                 // Capture data pointer for lock-free access
-                 let (data_ptr, data_len) = {
-                     let data_guard = slot.data.read();
-                     (data_guard.as_ptr(), data_guard.len())
-                 };
+                // Capture data pointer for lock-free access
+                let (data_ptr, data_len) = {
+                    let data_guard = slot.data.read();
+                    (data_guard.as_ptr(), data_guard.len())
+                };
 
-                 return Some(FrameRef {
-                     pool: self.clone(),
-                     page_id,
-                     frame_id,
-                     data_ptr,
-                     data_len,
-                 });
+                return Some(FrameRef {
+                    pool: self.clone(),
+                    page_id,
+                    frame_id,
+                    data_ptr,
+                    data_len,
+                });
             }
 
             // Wrong page (was evicted and repurposed before we pinned)
@@ -379,13 +387,19 @@ impl BufferPool {
     fn pin_frame(&self, frame_id: FrameId) {
         let shard = self.get_shard_by_frame(frame_id);
         let local_id = shard.local_frame_id(frame_id);
-        shard.frames[local_id].header.pin_count.fetch_add(1, Ordering::SeqCst);
+        shard.frames[local_id]
+            .header
+            .pin_count
+            .fetch_add(1, Ordering::SeqCst);
     }
 
     fn unpin(&self, frame_id: FrameId) {
         let shard = self.get_shard_by_frame(frame_id);
         let local_id = shard.local_frame_id(frame_id);
-        shard.frames[local_id].header.pin_count.fetch_sub(1, Ordering::SeqCst);
+        shard.frames[local_id]
+            .header
+            .pin_count
+            .fetch_sub(1, Ordering::SeqCst);
     }
 
     fn get_frame_data(&self, frame_id: FrameId) -> parking_lot::RwLockReadGuard<'_, Vec<u8>> {

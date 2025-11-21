@@ -209,9 +209,12 @@ impl<'db> Batch<'db> {
         };
 
         // Pipelined Group Commit (WAL + Memtable)
-        self.db.pipelined_wal.put(batch_record, |records| {
-            self.db.apply_wal_records(records);
-        }).map_err(DBError::Wal)?;
+        self.db
+            .pipelined_wal
+            .put(batch_record, |records| {
+                self.db.apply_wal_records(records);
+            })
+            .map_err(DBError::Wal)?;
 
         Ok(())
     }

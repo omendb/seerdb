@@ -1,8 +1,8 @@
 // LSM-Tree Compaction
 // Implements leveled compaction to keep read amplification bounded
 
-pub mod merge;
 pub mod filter;
+pub mod merge;
 
 use crate::sstable::{SSTable, SSTableBuilder};
 use bytes::Bytes;

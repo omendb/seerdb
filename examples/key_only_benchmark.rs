@@ -6,7 +6,7 @@ use std::time::Instant;
 use tempfile::tempdir;
 
 const NUM_KEYS: usize = 100_000;
-const VALUE_SIZE: usize = 1024;  // Large values to show vLog skip benefit
+const VALUE_SIZE: usize = 1024; // Large values to show vLog skip benefit
 
 fn main() {
     println!("=== Key-Only Iteration Benchmark ===\n");
@@ -24,7 +24,11 @@ fn main() {
     let db = DB::open(opts).unwrap();
     let value = vec![0u8; VALUE_SIZE];
 
-    println!("Phase 1: Writing {} keys with {}KB values each", NUM_KEYS, VALUE_SIZE / 1024);
+    println!(
+        "Phase 1: Writing {} keys with {}KB values each",
+        NUM_KEYS,
+        VALUE_SIZE / 1024
+    );
     for i in 0..NUM_KEYS {
         let key = format!("user:{:08}", i);
         db.put(key.as_bytes(), &value).unwrap();
@@ -44,7 +48,10 @@ fn main() {
     let duration = start.elapsed();
     println!("  Count: {}", count);
     println!("  Duration: {:.3}s", duration.as_secs_f64());
-    println!("  Throughput: {:.0} keys/sec\n", count as f64 / duration.as_secs_f64());
+    println!(
+        "  Throughput: {:.0} keys/sec\n",
+        count as f64 / duration.as_secs_f64()
+    );
 
     // Test 2: Count with key-only iteration (optimized)
     println!("Test 2: Count with keys-only (optimized)");

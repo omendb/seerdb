@@ -1,8 +1,8 @@
+use crate::wal::{Record, Result, WAL};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, Thread};
 use std::time::{Duration, Instant};
-use crate::wal::{WAL, Record, Result};
 
 struct Writer {
     record: Record,
@@ -34,13 +34,17 @@ impl Writer {
         }
         self.thread.unpark();
     }
-    
+
     fn is_done(&self) -> bool {
         *self.done.lock().expect("mutex poisoned")
     }
-    
+
     fn take_result(&self) -> Result<u64> {
-        self.result.lock().expect("mutex poisoned").take().expect("result must be set before waking writer")
+        self.result
+            .lock()
+            .expect("mutex poisoned")
+            .take()
+            .expect("result must be set before waking writer")
     }
 }
 
@@ -118,27 +122,27 @@ impl PipelinedWAL {
     {
         loop {
             let mut batch_writers = Vec::new();
-            
+
             // 1. Wait strategy (Group Commit Delay)
             if self.delay > Duration::ZERO {
                 let deadline = Instant::now() + self.delay;
-                
+
                 loop {
                     let mut state = self.state.lock().expect("mutex poisoned");
                     if state.queue.is_empty() {
                         state.writer_active = false;
                         return;
                     }
-                    
+
                     // If batch is full or deadline reached, proceed
                     if state.queue.len() >= self.max_batch_size || Instant::now() >= deadline {
                         batch_writers = state.queue.drain(..).collect();
                         break;
                     }
-                    
+
                     // Release lock and spin/yield
                     drop(state);
-                    thread::yield_now(); 
+                    thread::yield_now();
                     // spin loop is better than sleep for short delays (<1ms)
                 }
             } else {
@@ -150,7 +154,7 @@ impl PipelinedWAL {
                 }
                 batch_writers = state.queue.drain(..).collect();
             }
-            
+
             if batch_writers.is_empty() {
                 continue;
             }
@@ -179,9 +183,7 @@ impl PipelinedWAL {
                 Err(e) => {
                     let err_str = e.to_string();
                     for writer in batch_writers.iter() {
-                        let err = crate::wal::WALError::Io(std::io::Error::other(
-                            err_str.clone(),
-                        ));
+                        let err = crate::wal::WALError::Io(std::io::Error::other(err_str.clone()));
                         writer.signal_done(Err(err));
                     }
                 }

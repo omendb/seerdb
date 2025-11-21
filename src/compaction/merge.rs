@@ -51,22 +51,22 @@ impl MergeIterator {
             while i < all_entries.len() {
                 let key = &all_entries[i].0;
                 let mut j = i + 1;
-                
+
                 // Find all versions of this key
                 while j < all_entries.len() && all_entries[j].0 == key {
                     j += 1;
                 }
-                
+
                 // Slice of all versions for this key (already sorted by recency)
                 let versions = &all_entries[i..j];
-                
+
                 // 1. Merge phase
                 let values: Vec<&[u8]> = versions.iter().map(|(_, v, _)| v.as_ref()).collect();
-                
+
                 // Default: pick newest (first in slice)
                 let newest_value = &versions[0].1;
                 let mut merged_value_bytes = newest_value.clone();
-                
+
                 // Try custom merge
                 if let Some(merged) = filter.merge(level, key, &values) {
                     // If merged, we treat it as a new INLINE value
@@ -298,31 +298,31 @@ mod tests {
 
         assert_eq!(count, 50); // 5 SSTables * 10 keys each
     }
-    
+
     // Test compaction filter
     #[derive(Debug)]
     struct TestFilter;
-    
+
     impl CompactionFilter for TestFilter {
         fn filter(&self, _level: usize, key: &[u8], value: &[u8]) -> FilterDecision {
             // Remove key "remove_me"
             if key == b"remove_me" {
                 return FilterDecision::Remove;
             }
-            
+
             // Change value for "change_me"
             if key == b"change_me" {
                 return FilterDecision::ChangeValue(b"changed".to_vec());
             }
-            
+
             // Check value content (skip flag byte)
             if value.len() > 1 && &value[1..] == b"filter_me" {
-                 return FilterDecision::Remove;
+                return FilterDecision::Remove;
             }
-            
+
             FilterDecision::Keep
         }
-        
+
         fn merge(&self, _level: usize, key: &[u8], values: &[&[u8]]) -> Option<Vec<u8>> {
             if key == b"merge_me" {
                 // Concat all values (skipping flags)
@@ -337,50 +337,62 @@ mod tests {
             None
         }
     }
-    
+
     #[test]
     fn test_merge_with_filter() {
         let dir = tempdir().unwrap();
-        
+
         let path1 = dir.path().join("test1.sst");
         let mut builder1 = SSTableBuilder::create(&path1).unwrap();
-        builder1.add(Bytes::from("keep_me"), Bytes::from("val1")).unwrap();
-        builder1.add(Bytes::from("remove_me"), Bytes::from("val2")).unwrap();
-        builder1.add(Bytes::from("change_me"), Bytes::from("val3")).unwrap();
-        builder1.add(Bytes::from("filter_by_val"), Bytes::from("filter_me")).unwrap();
-        builder1.add(Bytes::from("merge_me"), Bytes::from("part1")).unwrap();
+        builder1
+            .add(Bytes::from("keep_me"), Bytes::from("val1"))
+            .unwrap();
+        builder1
+            .add(Bytes::from("remove_me"), Bytes::from("val2"))
+            .unwrap();
+        builder1
+            .add(Bytes::from("change_me"), Bytes::from("val3"))
+            .unwrap();
+        builder1
+            .add(Bytes::from("filter_by_val"), Bytes::from("filter_me"))
+            .unwrap();
+        builder1
+            .add(Bytes::from("merge_me"), Bytes::from("part1"))
+            .unwrap();
         builder1.finish().unwrap();
         let sstable1 = SSTable::open(&path1).unwrap();
-        
+
         let path2 = dir.path().join("test2.sst");
         let mut builder2 = SSTableBuilder::create(&path2).unwrap();
-        builder2.add(Bytes::from("merge_me"), Bytes::from("part2")).unwrap();
+        builder2
+            .add(Bytes::from("merge_me"), Bytes::from("part2"))
+            .unwrap();
         builder2.finish().unwrap();
         let sstable2 = SSTable::open(&path2).unwrap();
-        
+
         let filter = Arc::new(TestFilter);
         let mut merge = MergeIterator::new(vec![sstable1, sstable2], 0, Some(filter)).unwrap();
-        
+
         let entries: Vec<_> = std::iter::from_fn(|| merge.next())
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-            
+
         // "change_me" -> "changed"
         // "filter_by_val" -> Removed
         // "keep_me" -> "val1"
         // "merge_me" -> "part2part1" (newest first, so part2 then part1)
         // "remove_me" -> Removed
-        
+
         assert_eq!(entries.len(), 3);
-        
+
         // change_me
         assert_eq!(entries[0].0, Bytes::from("change_me"));
         assert_eq!(&entries[0].1[1..], b"changed");
-        
+
         // keep_me
         assert_eq!(entries[1].0, Bytes::from("keep_me"));
         assert_eq!(&entries[1].1[1..], b"val1");
-        
+
         // merge_me
         assert_eq!(entries[2].0, Bytes::from("merge_me"));
         // part2 is newer (sstable2), part1 is older (sstable1)

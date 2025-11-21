@@ -40,7 +40,10 @@ fn main() {
     db.flush().unwrap(); // Force flush
     let duration = start.elapsed();
     println!("  Write time: {:.2}s", duration.as_secs_f64());
-    println!("  Write throughput: {:.0} ops/sec", operations as f64 / duration.as_secs_f64());
+    println!(
+        "  Write throughput: {:.0} ops/sec",
+        operations as f64 / duration.as_secs_f64()
+    );
     println!();
 
     // Phase 2: Random reads from SSTables
@@ -55,7 +58,10 @@ fn main() {
 
     let duration = start.elapsed();
     println!("  Read time: {:.2}s", duration.as_secs_f64());
-    println!("  Read throughput: {:.0} ops/sec", operations as f64 / duration.as_secs_f64());
+    println!(
+        "  Read throughput: {:.0} ops/sec",
+        operations as f64 / duration.as_secs_f64()
+    );
     println!();
 
     // Phase 3: Mixed workload (50/50 read/write)
@@ -78,7 +84,10 @@ fn main() {
 
     let duration = start.elapsed();
     println!("  Mixed time: {:.2}s", duration.as_secs_f64());
-    println!("  Mixed throughput: {:.0} ops/sec", operations as f64 / duration.as_secs_f64());
+    println!(
+        "  Mixed throughput: {:.0} ops/sec",
+        operations as f64 / duration.as_secs_f64()
+    );
     println!();
 
     // Phase 4: Prefix scans (hot path for graph traversal)
@@ -100,8 +109,14 @@ fn main() {
 
     let duration = start.elapsed();
     println!("  Scan time: {:.2}s", duration.as_secs_f64());
-    println!("  Scan throughput: {:.0} scans/sec", num_scans as f64 / duration.as_secs_f64());
-    println!("  Avg latency: {:.2} ms/scan", duration.as_millis() as f64 / num_scans as f64);
+    println!(
+        "  Scan throughput: {:.0} scans/sec",
+        num_scans as f64 / duration.as_secs_f64()
+    );
+    println!(
+        "  Avg latency: {:.2} ms/scan",
+        duration.as_millis() as f64 / num_scans as f64
+    );
     println!();
 
     // Stats
@@ -112,10 +127,13 @@ fn main() {
     println!("  Total SSTables: {}", stats.total_sstables);
     println!("  Cache hits: {}", stats.cache_hits);
     println!("  Cache misses: {}", stats.cache_misses);
-    println!("  Cache hit rate: {:.2}%",
+    println!(
+        "  Cache hit rate: {:.2}%",
         if stats.cache_hits + stats.cache_misses > 0 {
             100.0 * stats.cache_hits as f64 / (stats.cache_hits + stats.cache_misses) as f64
-        } else { 0.0 }
+        } else {
+            0.0
+        }
     );
 
     println!("\n=== Profiling Complete ===");
