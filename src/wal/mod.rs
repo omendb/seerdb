@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
-pub use pipelined::PipelinedWAL;
+pub use pipelined::{PipelineConfig, PipelinedWAL};
 pub use reader::WALReader;
 pub use record::{BatchOp, Record};
 

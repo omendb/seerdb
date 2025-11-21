@@ -156,6 +156,10 @@ harness = false
 name = "sharded_buffer_pool_bench"
 harness = false
 
+[[bench]]
+name = "pipelined_wal_bench"
+harness = false
+
 # Examples that require optional features
 [[example]]
 name = "baseline_benchmark"
