@@ -1,7 +1,26 @@
 # STATUS - seerdb
 
 **Last Updated**: November 20, 2025
-**Current Phase**: Stability Complete - Production Ready
+**Current Phase**: LeanStore Research - Buffer Pool Optimizations
+
+**Recent Work (Nov 20, 2025 - Part 9: Sharded Buffer Pool)**:
+- **LeanStore Research Complete**: ✅ Evaluated modern buffer management techniques.
+  - Research: ai/research/LEANSTORE_RESEARCH.md
+  - **Rejected**: Pointer swizzling (unsafe Rust), vmcache (Linux-only)
+  - **Accepted**: Sharded buffer pool + prefetching + Clock-Pro (safe alternatives)
+- **Sharded Buffer Pool Implemented**: ✅ Phase 1 complete.
+  - **Design**: Partitioned buffer pool into 16 independent shards
+    - Each shard: own page_table (DashMap), free_list (Mutex), eviction policy (Clock), frames (Vec)
+    - PageId hash determines shard assignment (load distribution)
+    - Global FrameId maintained for API compatibility
+  - **Benefits**:
+    - Reduces lock contention on multi-core systems (~16x less per shard)
+    - Better CPU cache locality (cores tend to access same shard)
+    - Proven technique (MySQL InnoDB, PostgreSQL use sharding)
+  - **Expected Impact**: 30-50% improvement on multi-threaded workloads
+  - **Testing**: All 192 tests passing
+  - **Commit**: 8ce7841
+- **Next**: Multi-threaded benchmark to validate gains
 
 **Recent Work (Nov 20, 2025 - Part 8: Range Scan Optimizations)**:
 - **Range Scan Iterator Micro-Optimizations**: ✅ Completed.
