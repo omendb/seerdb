@@ -42,30 +42,28 @@ All critical work complete! Zero blocking issues for production deployment.
 - ❌ **Rejected vmcache** - Linux-only (userfaultfd), breaks Mac development
 - ✅ **Identified safe alternatives** - Sharded buffer pool + prefetching + Clock-Pro
 
-**Actionable optimizations** (in priority order):
+**Actionable optimizations**:
 
-#### 1. Sharded Buffer Pool (Highest ROI)
+#### 1. Sharded Buffer Pool ⚠️ (Implemented, Limited Results)
 - **Goal**: 30-50% improvement on multi-threaded workloads
-- **Technique**: Partition buffer pool into 16 shards, per-shard locking
-- **Effort**: 2-3 days
-- **Risk**: Low (proven in MySQL, PostgreSQL)
-- **Status**: Ready to implement
+- **Status**: ✅ Implemented (16 shards), ⚠️ benchmark deadlocks at 8 threads
+- **Partial Results** (Mac): 1.23x speedup at 2 threads (expected 30-50%)
+- **Issue**: Benchmark needs refinement or deeper investigation
+- **Commits**: 8ce7841 (impl), d613b22/be37612/3160112 (benchmark fixes)
 
-#### 2. Prefetching for Range Scans
+#### 2. Prefetching for Range Scans ✅ (Already Implemented)
 - **Goal**: 20-40% improvement on prefix scans (graph workloads)
-- **Technique**: Async prefetch next blocks during range iteration
-- **Effort**: 3-4 days
-- **Risk**: Medium (async complexity)
-- **Status**: Deferred until Phase 1 complete
+- **Status**: ✅ Already implemented (src/sstable/mod.rs:1422-1432)
+- **Implementation**: `readahead_size=2`, synchronous prefetch into block cache
+- **Code**: `prefetch_data_blocks()` called after each block advance
+- **Note**: Already included in range scan performance
 
-#### 3. Clock-Pro Eviction
+#### 3. Clock-Pro Eviction (Remaining Task)
 - **Goal**: 10-20% hit rate improvement
 - **Technique**: Adaptive eviction with hot/cold separation
 - **Effort**: 2-3 days
-- **Risk**: Low (fallback to Clock)
-- **Status**: Low priority (incremental gains)
-
-**Expected combined impact**: 50-80% improvement (not additive, Amdahl's Law applies)
+- **Risk**: Low (fallback to current Clock)
+- **Status**: ⏭️ Next task from LeanStore research
 
 ---
 
