@@ -2093,7 +2093,11 @@ impl DB {
                             Entry::Tombstone => {
                                 builder.add_tombstone(key.clone())?;
                             }
-                            crate::memtable::Entry::Merge(_) => todo!(),
+                            crate::memtable::Entry::Merge(operands) => {
+                                for op in operands {
+                                    builder.add_merge(key.clone(), op.clone())?;
+                                }
+                            }
                         }
                     }
 
@@ -2129,7 +2133,11 @@ impl DB {
                             Entry::Tombstone => {
                                 builder.add_tombstone(key.clone())?;
                             }
-                            crate::memtable::Entry::Merge(_) => todo!(),
+                            crate::memtable::Entry::Merge(operands) => {
+                                for op in operands {
+                                    builder.add_merge(key.clone(), op.clone())?;
+                                }
+                            }
                         }
                     }
 
@@ -2155,7 +2163,11 @@ impl DB {
                         Entry::Tombstone => {
                             builder.add_tombstone(key.clone())?;
                         }
-                        crate::memtable::Entry::Merge(_) => todo!(),
+                        crate::memtable::Entry::Merge(operands) => {
+                            for op in operands {
+                                builder.add_merge(key.clone(), op.clone())?;
+                            }
+                        }
                     }
                 }
 
@@ -2182,7 +2194,11 @@ impl DB {
                             Entry::Tombstone => {
                                 builder.add_tombstone(key.clone())?;
                             }
-                            crate::memtable::Entry::Merge(_) => todo!(),
+                            crate::memtable::Entry::Merge(operands) => {
+                                for op in operands {
+                                    builder.add_merge(key.clone(), op.clone())?;
+                                }
+                            }
                         }
                     }
 
@@ -2214,7 +2230,11 @@ impl DB {
                             Entry::Tombstone => {
                                 builder.add_tombstone(key.clone())?;
                             }
-                            crate::memtable::Entry::Merge(_) => todo!(),
+                            crate::memtable::Entry::Merge(operands) => {
+                                for op in operands {
+                                    builder.add_merge(key.clone(), op.clone())?;
+                                }
+                            }
                         }
                     }
 
@@ -2235,7 +2255,11 @@ impl DB {
                         Entry::Tombstone => {
                             builder.add_tombstone(key.clone())?;
                         }
-                        crate::memtable::Entry::Merge(_) => todo!(),
+                        crate::memtable::Entry::Merge(operands) => {
+                            for op in operands {
+                                builder.add_merge(key.clone(), op.clone())?;
+                            }
+                        }
                     }
                 }
 

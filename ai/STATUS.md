@@ -27,6 +27,11 @@
     - `test_no_memory_leak_repeated_flushes` (resource monitoring flaky in CI)
     - `test_no_fd_leak_multiple_flushes` (resource monitoring flaky in CI)
     - `test_memory_stable_after_reopen` (resource monitoring flaky in CI)
+- **Benchmark**: `recovery_bench` created and run.
+  - **Results**:
+    - 10k keys (450KB WAL): ~21.2ms (470k records/sec)
+    - 100k keys (4.5MB WAL): ~107.7ms (929k records/sec)
+  - **Conclusion**: Recovery is fast (~930k ops/sec) and scalable.
 - **Commits**: c4b00bf, a58efba, 36afa38
 - **CI Run**: 19569135533 ✅ Success
 
