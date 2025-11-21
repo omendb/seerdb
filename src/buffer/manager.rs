@@ -224,6 +224,9 @@ pub struct BufferPool {
     num_shards: usize,
     #[allow(dead_code)] // Kept for future use (e.g. resizing)
     options: BufferPoolOptions,
+    // Stable hasher for consistent shard selection
+    // CRITICAL: Must be created once and reused, NOT per-call!
+    hasher: std::collections::hash_map::RandomState,
 }
 
 impl BufferPool {
@@ -240,17 +243,16 @@ impl BufferPool {
             shards,
             num_shards: options.num_shards,
             options,
+            hasher: std::collections::hash_map::RandomState::new(),
         })
     }
 
     #[inline]
     fn hash_page_id(&self, page_id: PageId) -> usize {
-        // Use fast hash for shard selection
-        // Note: std::collections::hash_map::DefaultHasher is fast enough for shard selection
-        use std::collections::hash_map::RandomState;
+        // Use stored hasher for CONSISTENT shard selection
+        // CRITICAL: Same page_id must ALWAYS hash to same shard!
         use std::hash::BuildHasher;
-        let hasher = RandomState::new();
-        let hash = hasher.hash_one(page_id);
+        let hash = self.hasher.hash_one(page_id);
         (hash as usize) % self.num_shards
     }
 
