@@ -3,6 +3,21 @@
 **Last Updated**: November 20, 2025
 **Current Phase**: Stability Complete - Production Ready
 
+**Recent Work (Nov 20, 2025 - Part 8: Range Scan Optimizations)**:
+- **Range Scan Iterator Micro-Optimizations**: ✅ Completed.
+  - Added #[inline] hints to 6 hot functions in critical iterator path.
+  - **Hot Path Analysis**: RangeIterator → KWayMergeIterator → SSTableRangeIterator.
+  - **Optimized Functions**:
+    - RangeIterator::next() - Main adapter converting Entry to (key, value)
+    - SSTableRangeAdapter::next() - Error type conversion wrapper
+    - KWayMergeIterator::next() - K-way merge with min-heap (O(k log k))
+    - KWayMergeIterator::resolve_merges() - Merge operator resolution
+    - SSTableRangeIterator::next() - Per-SSTable block iteration
+    - SSTableRangeIterator::advance_to_next_data_block() - Block loading
+  - **Benchmark**: benches/micro_opt_scan_bench.rs (prefix + range scans).
+  - **Expected Impact**: 5-15% improvement on prefix/range scans (graph workloads).
+  - **Testing**: All 192 tests passing.
+
 **Recent Work (Nov 20, 2025 - Part 7: Write Path Optimizations)**:
 - **Write Path Micro-Optimizations**: ✅ Completed.
   - Added #[inline] hints to 7 hot functions in critical write path.
