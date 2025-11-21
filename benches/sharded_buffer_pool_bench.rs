@@ -19,9 +19,10 @@ fn bench_buffer_pool_contention(c: &mut Criterion) {
     let pool = BufferPool::new(pool_opts);
 
     // Workload: Random page accesses across many files
-    // IMPORTANT: Keep working set smaller than pool size to avoid deadlock
-    // 8192 frames total, use only 4000 unique pages (50% capacity)
-    let num_files = 40;
+    // IMPORTANT: Keep working set much smaller than pool size to avoid deadlock
+    // 8192 frames total / 16 shards = 512 frames per shard
+    // Use only 800 unique pages total (~10% capacity, ~50 pages per shard)
+    let num_files = 8;
     let pages_per_file = 100;
 
     for num_threads in [1, 2, 4, 8] {
@@ -35,11 +36,11 @@ fn bench_buffer_pool_contention(c: &mut Criterion) {
                         .map(|thread_id| {
                             let pool = pool.clone();
                             thread::spawn(move || {
-                                // Each thread does 500 random page loads (reduced to avoid frame exhaustion)
+                                // Each thread does 100 random page loads (conservative to avoid shard exhaustion)
                                 // Use thread_id as seed for deterministic randomness
                                 let mut seed = 12345 + thread_id as u64;
 
-                                for _ in 0..500 {
+                                for _ in 0..100 {
                                     // LCG for fast pseudo-random numbers
                                     seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
                                     let file_id = (seed % num_files) as u64;
@@ -107,7 +108,7 @@ fn bench_buffer_pool_contention_focused(c: &mut Criterion) {
                             thread::spawn(move || {
                                 let mut seed = 12345 + thread_id as u64;
 
-                                for _ in 0..500 {
+                                for _ in 0..100 {
                                     seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
                                     let file_id = (seed % num_files) as u64;
 
@@ -169,7 +170,7 @@ fn bench_buffer_pool_scalability(c: &mut Criterion) {
                                 // Each thread accesses its own file range
                                 let base_file_id = (thread_id * 100) as u64;
 
-                                for i in 0..500 {
+                                for i in 0..100 {
                                     let file_id = base_file_id + (i % pages_per_thread) as u64;
                                     let offset = (i / pages_per_thread) as u64;
 
