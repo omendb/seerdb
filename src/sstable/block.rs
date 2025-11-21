@@ -146,6 +146,7 @@ impl BlockBuilder {
 
     /// Add an entry to the block
     /// Returns false if block is full
+    #[inline]
     pub fn add(&mut self, key: &[u8], value: &[u8]) -> bool {
         // Calculate shared prefix length (0 for restart points) using SIMD
         let prefix_len = if self.counter > 0 && !self.last_key.is_empty() {
@@ -206,6 +207,7 @@ impl BlockBuilder {
     }
 
     /// Finalize the block and return bytes
+    #[inline]
     pub fn finish(mut self) -> Bytes {
         // Save restart offset (where restart points begin in uncompressed data)
         let restart_offset = self.buffer.len() as u32;

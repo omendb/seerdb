@@ -59,6 +59,7 @@ impl BlockedBloomFilter {
     }
 
     /// Insert an element into the blocked bloom filter
+    #[inline]
     pub fn insert<T: Hash + ?Sized>(&mut self, item: &T) {
         let (block_index, block_hash) = self.hash_to_block(item);
 

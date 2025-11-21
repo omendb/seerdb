@@ -53,6 +53,7 @@ pub enum Record {
 impl Record {
     /// Encode record to bytes with format:
     /// [length: u32][type: u8][data][crc32: u32]
+    #[inline]
     pub fn encode(&self) -> Bytes {
         // Pre-calculate total size to avoid reallocation (single allocation)
         let data_len = match self {

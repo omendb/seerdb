@@ -287,11 +287,13 @@ impl<W: Read + Write + Seek> SSTableBuilder<W> {
         self.num_entries
     }
 
+    #[inline]
     pub fn add(&mut self, key: Bytes, value: Bytes) -> Result<()> {
         let encoded_value = self.encode_entry(&key, FLAG_INLINE, &value);
         self.add_raw(key, encoded_value)
     }
 
+    #[inline]
     pub fn add_raw(&mut self, key: Bytes, encoded_value: Bytes) -> Result<()> {
         // Track min/max keys for range filtering
         if self.min_key.is_none() {
@@ -398,6 +400,7 @@ impl<W: Read + Write + Seek> SSTableBuilder<W> {
         Ok(())
     }
 
+    #[inline]
     fn encode_entry(&self, _key: &[u8], flag: u8, data: &[u8]) -> Bytes {
         let mut buf = BytesMut::with_capacity(1 + data.len());
         buf.extend_from_slice(&[flag]);

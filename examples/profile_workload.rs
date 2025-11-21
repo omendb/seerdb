@@ -135,10 +135,10 @@ fn profile_range_scans() -> Result<(), Box<dyn std::error::Error>> {
         let src = rng.gen_range(0..num_nodes);
         let prefix = format!("user:{:06}:edges:", src);
 
-        let mut count = 0;
+        let mut _count = 0;
         for result in db.prefix(prefix.as_bytes())? {
             let _ = result?;
-            count += 1;
+            _count += 1;
         }
 
         if i % 2_500 == 0 && i > 0 {
