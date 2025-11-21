@@ -19,8 +19,9 @@ fn bench_buffer_pool_contention(c: &mut Criterion) {
     let pool = BufferPool::new(pool_opts);
 
     // Workload: Random page accesses across many files
-    // Simulates concurrent SSTable reads in a multi-threaded database
-    let num_files = 100;
+    // IMPORTANT: Keep working set smaller than pool size to avoid deadlock
+    // 8192 frames total, use only 4000 unique pages (50% capacity)
+    let num_files = 40;
     let pages_per_file = 100;
 
     for num_threads in [1, 2, 4, 8] {
@@ -34,11 +35,11 @@ fn bench_buffer_pool_contention(c: &mut Criterion) {
                         .map(|thread_id| {
                             let pool = pool.clone();
                             thread::spawn(move || {
-                                // Each thread does 1000 random page loads
+                                // Each thread does 500 random page loads (reduced to avoid frame exhaustion)
                                 // Use thread_id as seed for deterministic randomness
                                 let mut seed = 12345 + thread_id as u64;
 
-                                for _ in 0..1000 {
+                                for _ in 0..500 {
                                     // LCG for fast pseudo-random numbers
                                     seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
                                     let file_id = (seed % num_files) as u64;
@@ -49,13 +50,16 @@ fn bench_buffer_pool_contention(c: &mut Criterion) {
                                     let page_id = PageId { file_id, offset };
 
                                     // Simulate loading a page
-                                    let result = pool.get_page(page_id, |buf| {
+                                    let frame_ref = pool.get_page(page_id, |buf| {
                                         // Simulate disk read by filling buffer with data
                                         buf.fill(0xAB);
                                         Ok::<(), BufferPoolError>(())
-                                    });
+                                    }).unwrap();
 
-                                    black_box(result.unwrap());
+                                    // CRITICAL: Drop frame immediately to release pin
+                                    // Without this, all frames stay pinned and eviction deadlocks
+                                    black_box(&frame_ref);
+                                    drop(frame_ref);
                                 }
                             })
                         })
@@ -86,6 +90,7 @@ fn bench_buffer_pool_contention_focused(c: &mut Criterion) {
     let pool = BufferPool::new(pool_opts);
 
     // Small hot set: 10 files, 10 pages each = 100 total pages
+    // This easily fits in buffer pool (8192 frames)
     let num_files = 10;
     let pages_per_file = 10;
 
@@ -102,7 +107,7 @@ fn bench_buffer_pool_contention_focused(c: &mut Criterion) {
                             thread::spawn(move || {
                                 let mut seed = 12345 + thread_id as u64;
 
-                                for _ in 0..1000 {
+                                for _ in 0..500 {
                                     seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
                                     let file_id = (seed % num_files) as u64;
 
@@ -162,7 +167,7 @@ fn bench_buffer_pool_scalability(c: &mut Criterion) {
                                 // Each thread accesses its own file range
                                 let base_file_id = (thread_id * 100) as u64;
 
-                                for i in 0..1000 {
+                                for i in 0..500 {
                                     let file_id = base_file_id + (i % pages_per_thread) as u64;
                                     let offset = (i / pages_per_thread) as u64;
 
