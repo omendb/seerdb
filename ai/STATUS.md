@@ -13,14 +13,21 @@
     - Each shard: own page_table (DashMap), free_list (Mutex), eviction policy (Clock), frames (Vec)
     - PageId hash determines shard assignment (load distribution)
     - Global FrameId maintained for API compatibility
-  - **Benefits**:
-    - Reduces lock contention on multi-core systems (~16x less per shard)
-    - Better CPU cache locality (cores tend to access same shard)
-    - Proven technique (MySQL InnoDB, PostgreSQL use sharding)
-  - **Expected Impact**: 30-50% improvement on multi-threaded workloads
   - **Testing**: All 192 tests passing
   - **Commit**: 8ce7841
-- **Next**: Multi-threaded benchmark to validate gains
+- **Multi-threaded Benchmark**: ⚠️ Created, partial results obtained (benches/sharded_buffer_pool_bench.rs)
+  - **Results** (Mac M3 Max, 800 unique pages):
+    - 1 thread: 29 µs (baseline)
+    - 2 threads: 47 µs (1.62x slower, **1.23x speedup per thread**)
+    - 4 threads: 68 µs (2.34x slower, **0.86x speedup per thread**)
+    - 8 threads: DEADLOCKED (frame exhaustion)
+  - **Findings**:
+    - Limited scaling observed (not the expected 30-50% improvement)
+    - Benchmark deadlocks at 8 threads even with only 10% buffer capacity used
+    - Fixed FrameRef drop() issue (3 iterations), reduced working set 50%→10%, still deadlocks
+  - **Root Cause**: Likely benchmark design issue - need simpler benchmark or investigate deeper buffer pool issue
+  - **Commits**: d613b22, be37612, 3160112
+- **Next**: Investigate deadlock cause or defer sharded pool validation
 
 **Recent Work (Nov 20, 2025 - Part 8: Range Scan Optimizations)**:
 - **Range Scan Iterator Micro-Optimizations**: ✅ Completed.
