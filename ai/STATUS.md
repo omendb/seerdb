@@ -27,7 +27,11 @@
     - Fixed FrameRef drop() issue (3 iterations), reduced working set 50%→10%, still deadlocks
   - **Root Cause**: Likely benchmark design issue - need simpler benchmark or investigate deeper buffer pool issue
   - **Commits**: d613b22, be37612, 3160112
-- **Next**: Investigate deadlock cause or defer sharded pool validation
+- **Next**: Clock-Pro eviction (final LeanStore task)
+- **Prefetching**: ✅ Already implemented (discovered existing code)
+  - `readahead_size=2`, `prefetch_data_blocks()` at src/sstable/mod.rs:1422-1432
+  - Called after each block advance during range scans
+  - Synchronous prefetch into block cache
 
 **Recent Work (Nov 20, 2025 - Part 8: Range Scan Optimizations)**:
 - **Range Scan Iterator Micro-Optimizations**: ✅ Completed.
@@ -179,7 +183,8 @@
 - **Test Results**: All 182 tests passing (was 178 with 4 ignored), 0 ignored.
 
 **Next Focus**:
-All critical work complete! See `ai/REMAINING_WORK.md` for optional optimizations.
+- **Clock-Pro eviction** (final LeanStore task, 10-20% hit rate improvement)
+- All other critical work complete! See `ai/TODO.md` for optional optimizations.
 
 **Production Readiness**: ✅
 - Data durability: Guaranteed (WAL + fsync on shutdown)
