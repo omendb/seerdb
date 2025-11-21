@@ -11,7 +11,10 @@ mod learned;
 #[cfg(test)]
 mod traditional; // Naive Vec<bool> implementation for benchmarking only
 
-pub use bitpacked::BloomFilter;
+// Export blocked (cache-line optimized) as default BloomFilter (3.4x faster)
+pub use blocked::BlockedBloomFilter as BloomFilter;
+// Keep old implementations available with explicit names
+pub use bitpacked::BloomFilter as BitPackedBloomFilter;
 pub use blocked::BlockedBloomFilter;
 pub use learned::LearnedBloomFilter;
 // pub use simd::SimdBloomFilter; // Disabled - see SIMD_OPPORTUNITIES.md
