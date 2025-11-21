@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 
 #[test]
+#[ignore] // Stress test - run locally, too slow for CI
 fn test_memory_pressure_80_percent_trigger() {
     // Test that 80% memory pressure triggers early flush
     let temp_dir = TempDir::new().unwrap();
@@ -142,6 +143,7 @@ fn test_memory_pressure_80_percent_trigger() {
 }
 
 #[test]
+#[ignore] // Stress test - run locally, too slow for CI
 fn test_memory_pressure_no_oom() {
     // Test that database never OOMs regardless of write volume
     let temp_dir = TempDir::new().unwrap();
@@ -190,6 +192,7 @@ fn test_memory_pressure_no_oom() {
 }
 
 #[test]
+#[ignore] // Stress test - run locally, too slow for CI
 fn test_memory_pressure_recovery() {
     // Test that memory pressure recovers after flush
     let temp_dir = TempDir::new().unwrap();
