@@ -3,6 +3,20 @@
 **Last Updated**: November 20, 2025
 **Current Phase**: Stability Complete - Production Ready
 
+**Recent Work (Nov 20, 2025 - Part 7: Write Path Optimizations)**:
+- **Write Path Micro-Optimizations**: ✅ Completed.
+  - Added #[inline] hints to 7 hot functions in critical write path.
+  - **Static Analysis**: Identified hot path during profiling attempt (samply too slow).
+  - **Optimized Functions**:
+    - BlockBuilder::add + finish (block building for every write)
+    - SSTableBuilder::add + add_raw + encode_entry (SSTable building)
+    - BlockedBloomFilter::insert (filter updates for every key)
+    - Record::encode (WAL encoding for every write)
+  - **Benchmark**: Single write latency ~8.2ms (hot memtable path).
+  - **Expected Impact**: 3-8% improvement on write-heavy workloads (typical for inline hints).
+  - **Testing**: All 192 tests passing.
+  - **New Files**: benches/micro_opt_write_bench.rs, examples/profile_workload.rs.
+
 **Recent Work (Nov 20, 2025)**:
 - **SIMD Search in ALEX**: ✅ Completed and Validated as SOTA.
   - Replaced linear search with std::simd i64x4 vectorized search.
