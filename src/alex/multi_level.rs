@@ -230,7 +230,7 @@ impl MultiLevelAlexTree {
             Ok(self.leaves.len() - 1)
         } else {
             // Traverse inner nodes
-            self.root.as_ref().unwrap().route_to_leaf(key)
+            self.root.as_ref().expect("root node exists").route_to_leaf(key)
         }
     }
 

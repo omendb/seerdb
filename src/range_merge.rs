@@ -244,7 +244,8 @@ where
                         }
 
                         // Pop older version
-                        let Reverse(mut next_entry) = self.heap.pop().unwrap();
+                        // Safe: we just peeked and confirmed existence
+                        let Reverse(mut next_entry) = self.heap.pop().expect("heap not empty after peek");
 
                         // Advance iterator
                         if let Some(result) = next_entry.iter.next() {

@@ -28,55 +28,23 @@
 
 ---
 
+## 🔍 Verification Gaps (High Priority)
+
+### Benchmarking
+- [ ] **Mixed Workload**: Simulate realistic production load (concurrent R/W/Scan).
+- [ ] **Write Amplification**: Formalize measurement of physical vs logical writes.
+- [ ] **Recovery Scale**: Verify recovery performance at >1GB WAL size.
+
+### Integration Testing
+- [ ] **Merge Operator**: Verify full lifecycle (Memtable -> SSTable -> Compaction -> Read).
+
+---
+
 ## 🔧 Remaining Work (Optional Optimizations)
-
-### Performance Optimizations (Non-Critical)
-
-#### 1. Blocked Bloom Filter (Expected: 3x speedup)
-**File**: `src/bloom/mod.rs:8`
-**Impact**: 3x speedup from cache-line locality
-**Effort**: Medium (2-3 hours)
-**Priority**: Low (current bloom filters work well)
-
-```rust
-// TODO: Blocked bloom filter - 3x speedup expected (cache-line locality)
-```
-
-**Research**: Blocked bloom filters pack multiple hash checks into a single cache line,
-reducing cache misses by ~3x. Current implementation scatters checks across memory.
-
-#### 2. SIMD Search in ALEX (Performance improvement)
-**File**: `src/alex/gapped_node.rs:332`
-**Impact**: Faster ALEX index searches
-**Effort**: Medium (2-3 hours)
-**Priority**: Low (ALEX already fast)
-
-```rust
-// TODO: Re-enable SIMD search
-```
-
-**Context**: SIMD search was disabled during refactoring. Re-enabling would speed up
-gapped node searches in ALEX learned index.
 
 ### Feature Completion (Nice-to-Have)
 
-#### 3. Merge Resolution in RangeIterator
-**Files**: `src/range.rs:139`, `src/range.rs:153`
-**Impact**: Range scans would see merged values
-**Effort**: Medium (3-4 hours)
-**Priority**: Medium (merge operators work in get(), just not in scans)
-
-```rust
-// TODO: Implement merge resolution in RangeIterator
-// Currently we treat Merge as Tombstone to avoid returning raw operands
-// This means range scans will NOT see merged values yet
-```
-
-**Status**: Merge operators work perfectly in `DB::get()`. Range scans currently
-hide merged entries (treat as tombstone) to avoid exposing raw operands. Need to
-implement lazy merge resolution during iteration.
-
-#### 4. Dirty Page Flush in BufferPool
+#### 1. Dirty Page Flush in BufferPool
 **File**: `src/buffer/manager.rs:312`
 **Impact**: Support for mutable pages (currently read-only)
 **Effort**: Medium (3-4 hours)

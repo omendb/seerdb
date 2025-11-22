@@ -164,6 +164,14 @@ harness = false
 name = "recovery_bench"
 harness = false
 
+[[bench]]
+name = "mixed_workload"
+harness = false
+
+[[bench]]
+name = "write_amplification"
+harness = false
+
 # Examples that require optional features
 [[example]]
 name = "baseline_benchmark"

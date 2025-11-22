@@ -9,7 +9,7 @@ fn bench_recovery(c: &mut Criterion) {
     // 10k keys * 100 bytes = 1MB WAL
     // 100k keys * 100 bytes = 10MB WAL
     // 1M keys * 100 bytes = 100MB WAL
-    let sizes = [10_000, 100_000]; 
+    let sizes = [10_000, 100_000, 1_000_000]; 
 
     for &num_keys in &sizes {
         group.throughput(Throughput::Elements(num_keys as u64));
@@ -24,7 +24,7 @@ fn bench_recovery(c: &mut Criterion) {
             let opts = DBOptions {
                 data_dir: db_path.clone(),
                 memtable_capacity: 1024 * 1024 * 1024, // 1GB (prevent flush)
-                wal_sync_policy: SyncPolicy::SyncData,
+                wal_sync_policy: SyncPolicy::None,     // Fast setup (no fsync)
                 ..Default::default()
             };
             let db = DB::open(opts).unwrap();

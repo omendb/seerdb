@@ -1392,8 +1392,35 @@ impl DB {
                                     return self.resolve_merge(key, None, operands, start);
                                 }
                                 FLAG_MERGE => {
-                                    // Found merge operand
-                                    operands.push(data);
+                                    // Found merge operand(s).
+                                    // CRITICAL FIX: An SSTable might contain MULTIPLE merge entries for the same key
+                                    // (generated from a single Memtable Entry::Merge list).
+                                    // get_entry() only returns one of them. We must retrieve ALL of them.
+                                    // We use scan_range to find all entries for this key in this SSTable.
+                                    
+                                    // Note: scan_range is correct/safe here because a single SSTable (flush)
+                                    // will only contain Merges for a key if the Memtable had Entry::Merge.
+                                    // It won't mix Values and Merges for the same key in one SSTable.
+                                    
+                                    let end_key_vec = increment_bytes(key);
+                                    let end_key_slice = end_key_vec.as_deref();
+                                    
+                                    // Use scan_range_keys_only(false) i.e. read_values=true
+                                    // SSTableRangeIterator handles block boundaries and caching
+                                    let iter = sstable.scan_range(key, end_key_slice);
+                                    
+                                    for entry_res in iter {
+                                        if let Ok((k, entry)) = entry_res {
+                                            if k == key {
+                                                match entry {
+                                                    Entry::Merge(ops) => {
+                                                        operands.extend(ops.iter().rev().cloned());
+                                                    }
+                                                    _ => {} 
+                                                }
+                                            }
+                                        }
+                                    }
                                     // Continue to next SSTable/Level
                                 }
                                 _ => return Err(crate::sstable::SSTableError::InvalidFormat.into()),
@@ -3785,6 +3812,7 @@ impl DB {
     ) -> Result<Option<Bytes>> {
         // operands are collected [Newest ... Oldest]
         // We need to apply them [Oldest ... Newest]
+        
         if operands.is_empty() {
             self.metrics.record_get(start.elapsed());
             return Ok(base);

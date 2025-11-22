@@ -516,7 +516,8 @@ impl GappedNode {
                 if let Some(key) = self.keys[pos] {
                     if key >= search_key {
                         // Found a candidate - but keep searching in this range for earlier matches
-                        if candidate.is_none() || key < candidate.unwrap().0 {
+                        // Safe replacement for: candidate.is_none() || key < candidate.unwrap().0
+                        if candidate.as_ref().map_or(true, |c| key < c.0) {
                             candidate = Some((key, pos));
                         }
                         // If we found exact match or earlier key, we can stop

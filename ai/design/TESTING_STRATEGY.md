@@ -5,6 +5,29 @@
 
 ---
 
+## 5. System-Level Benchmarking Strategy
+
+**Goal**: Validate concurrency model, lock contention, and macro-level performance.
+
+### Benchmarks
+1.  **Mixed Workload (`mixed_workload`)**:
+    *   **Pattern**: 50% Get, 40% Put, 10% Scan (YCSB-like).
+    *   **Concurrency**: 1, 2, 4, 8, 16 threads.
+    *   **Metric**: Ops/sec, P99 Latency, Lock Contention.
+    *   **Focus**: Validate `ArcSwap` and `PipelinedWAL` under contention.
+
+2.  **Write Amplification (`write_amplification`)**:
+    *   **Pattern**: sustained random overwrites.
+    *   **Metric**: (Physical Bytes Written to Disk) / (Logical Bytes Written by User).
+    *   **Target**: < 1.0x (with VLog), < 10x (pure LSM).
+
+3.  **Recovery Scale (`recovery_scale`)**:
+    *   **Pattern**: Replay 1GB+ WAL.
+    *   **Metric**: MB/sec replay speed.
+    *   **Target**: > 500 MB/sec.
+
+---
+
 ## 1. Test Inventory & Gaps
 
 ### Current State

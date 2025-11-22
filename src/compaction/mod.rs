@@ -466,6 +466,7 @@ impl LSMTree {
 
         // Scan data directory for .sst files
         let entries = std::fs::read_dir(&self.data_dir)?;
+        let mut sstable_paths = Vec::new();
 
         for entry in entries {
             let entry = entry?;
@@ -473,30 +474,38 @@ impl LSMTree {
 
             // Only process .sst files
             if path.extension().and_then(|s| s.to_str()) == Some("sst") {
-                // Get file size
-                let metadata = std::fs::metadata(&path)?;
-                let size = metadata.len();
-
-                // Verify SSTable by opening it and validating all blocks
-                // If corrupt, this will return an error
-                let mut sstable = SSTable::open(&path).map_err(|e| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!("Corrupt SSTable: {}", e),
-                    )
-                })?;
-
-                // Validate all blocks to detect corruption
-                sstable.validate().map_err(|e| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!("Corrupt SSTable: {}", e),
-                    )
-                })?;
-
-                // Add to L0 (all recovered SSTables go to L0)
-                self.levels[0].add_sstable(path, size);
+                sstable_paths.push(path);
             }
+        }
+
+        // Sort paths lexicographically to ensure L0 order (Oldest -> Newest)
+        // Filenames are formatted as "L{level}_{seq:06}.sst", so lexicographical sort works
+        sstable_paths.sort();
+
+        for path in sstable_paths {
+            // Get file size
+            let metadata = std::fs::metadata(&path)?;
+            let size = metadata.len();
+
+            // Verify SSTable by opening it and validating all blocks
+            // If corrupt, this will return an error
+            let mut sstable = SSTable::open(&path).map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("Corrupt SSTable: {}", e),
+                )
+            })?;
+
+            // Validate all blocks to detect corruption
+            sstable.validate().map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("Corrupt SSTable: {}", e),
+                )
+            })?;
+
+            // Add to L0 (all recovered SSTables go to L0)
+            self.levels[0].add_sstable(path, size);
         }
 
         Ok(())
