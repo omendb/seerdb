@@ -197,7 +197,7 @@ where
             if self
                 .last_key
                 .as_ref()
-                .is_some_and(|last| &entry.key == last)
+                .is_some_and(|last| entry.key == last)
             {
                 // We are seeing an older version of the same key.
                 // Since we fully resolve keys in one go (see below), this implies

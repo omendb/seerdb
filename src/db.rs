@@ -1409,19 +1409,13 @@ impl DB {
                                     // SSTableRangeIterator handles block boundaries and caching
                                     let iter = sstable.scan_range(key, end_key_slice);
                                     
-                                    for entry_res in iter {
-                                        if let Ok((k, entry)) = entry_res {
-                                            if k == key {
-                                                match entry {
-                                                    Entry::Merge(ops) => {
-                                                        operands.extend(ops.iter().rev().cloned());
-                                                    }
-                                                    _ => {} 
-                                                }
-                                            }
-                                        }
-                                    }
-                                    // Continue to next SSTable/Level
+                                                        for (k, entry) in iter.flatten() {
+                                                            if k == key {
+                                                                if let Entry::Merge(ops) = entry {
+                                                                    operands.extend(ops.iter().rev().cloned());
+                                                                }
+                                                            }
+                                                        }                                    // Continue to next SSTable/Level
                                 }
                                 _ => return Err(crate::sstable::SSTableError::InvalidFormat.into()),
                             }

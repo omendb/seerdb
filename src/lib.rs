@@ -1,4 +1,6 @@
 #![cfg_attr(feature = "simd", feature(portable_simd))] // SIMD optimizations (nightly-only)
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::type_complexity)]
 
 //! seerdb - Research-grade embedded storage engine
 //!

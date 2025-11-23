@@ -53,7 +53,7 @@ impl BlockedBloomFilter {
         Self {
             blocks: vec![[0u64; WORDS_PER_BLOCK]; num_blocks],
             num_blocks,
-            num_hashes: num_hashes.max(1).min(CACHE_LINE_BITS), // Cap at block size
+            num_hashes: num_hashes.clamp(1, CACHE_LINE_BITS), // Cap at block size
             count: 0,
         }
     }
@@ -162,9 +162,9 @@ impl BlockedBloomFilter {
         let mut blocks = Vec::with_capacity(num_blocks);
         for block_idx in 0..num_blocks {
             let mut block = [0u64; WORDS_PER_BLOCK];
-            for word_idx in 0..WORDS_PER_BLOCK {
+            for (word_idx, word) in block.iter_mut().enumerate().take(WORDS_PER_BLOCK) {
                 let start = 20 + block_idx * CACHE_LINE_BYTES + word_idx * 8;
-                block[word_idx] = u64::from_le_bytes(bytes[start..start + 8].try_into().ok()?);
+                *word = u64::from_le_bytes(bytes[start..start + 8].try_into().ok()?);
             }
             blocks.push(block);
         }

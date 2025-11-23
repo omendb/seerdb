@@ -53,13 +53,7 @@ pub fn simd_search_i64(keys: &[Option<i64>], key: i64) -> Option<usize> {
     }
 
     // Scalar fallback for remaining elements
-    for j in i..len {
-        if keys[j] == Some(key) {
-            return Some(j);
-        }
-    }
-
-    None
+        (i..len).find(|&j| keys[j] == Some(key))
 }
 
 #[cfg(test)]

@@ -236,7 +236,7 @@ pub struct BufferPool {
 impl BufferPool {
     pub fn new(options: BufferPoolOptions) -> Arc<Self> {
         let num_frames = options.capacity_bytes / options.frame_size;
-        let frames_per_shard = (num_frames + options.num_shards - 1) / options.num_shards;
+        let frames_per_shard = num_frames.div_ceil(options.num_shards);
 
         let mut shards = Vec::with_capacity(options.num_shards);
         for shard_idx in 0..options.num_shards {
@@ -312,7 +312,7 @@ impl BufferPool {
             let mut data_guard = slot.data.write();
 
             // Execute loader with mutable access to the buffer
-            match loader(&mut *data_guard) {
+            match loader(&mut data_guard) {
                 Ok(_) => {}
                 Err(e) => {
                     drop(data_guard);

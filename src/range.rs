@@ -113,18 +113,20 @@ impl Iterator for RangeIterator {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        // K-way merge already filters tombstones and deduplicates
-        self.inner.next().map(|result| {
-            result
-                .and_then(|(key, entry)| match entry {
-                    Entry::Value(val) => Ok((key, val)),
-                    Entry::Merge(val) => Ok((key, val.last().cloned().unwrap_or_default())), // Return last raw operand if unresolved
-                    Entry::Tombstone => {
-                        unreachable!("Tombstones should be filtered by KWayMergeIterator")
-                    }
+        // Convert entries to (key, value)
+        let result = self
+            .inner
+            .next()
+            .map(|res| {
+                res.map(|(key, entry)| match entry {
+                    Entry::Value(val) => (key, val),
+                    Entry::Merge(val) => (key, val.last().cloned().unwrap_or_default()), // Return last raw operand if unresolved
+                    Entry::Tombstone => (key, Bytes::new()),                             // Should be filtered out
                 })
                 .map_err(|e| e as Box<dyn std::error::Error>)
-        })
+            });
+        
+        result
     }
 }
 

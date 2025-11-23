@@ -1394,7 +1394,7 @@ impl SSTableRangeIterator {
             vlog,
             top_level_index,
             start_key: Bytes::copy_from_slice(start_key),
-            end_key: end_key.map(|k| Bytes::copy_from_slice(k)),
+            end_key: end_key.map(Bytes::copy_from_slice),
             cache_hits,
             cache_misses,
             top_idx: 0,
