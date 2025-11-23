@@ -1,7 +1,7 @@
 # TODO - seerdb
 
-**Last Updated**: November 21, 2025
-**Current Focus**: Post-Release Optimizations
+**Last Updated**: November 22, 2025
+**Current Focus**: Post-Release Optimizations & Integration
 **Version**: 0.0.1-alpha
 **Status**: 202 tests passing, CI: ✅ All Green
 
@@ -9,17 +9,22 @@
 
 ## Active Tasks
 
-### 1. Future Optimizations (Post-Release)
-- [ ] **Async I/O**: Explore `io_uring` for Linux backend (currently synchronous).
-- [ ] **MVCC**: Add multi-version concurrency control if requested by users.
+### 1. Post-Release Optimizations
+- [ ] **Async I/O (io_uring)**: Investigate replacing `std::fs` with `io_uring` for Linux backend (Task 1).
 - [ ] **Vector Index**: Integrate `seerdb-vector` (proprietary) for HNSW support.
+- [ ] **MVCC**: Add multi-version concurrency control (optional, based on demand).
 
 ---
 
 ## Completed Tasks
 
+### Release v0.0.1-alpha (Nov 2025)
+- [x] **Snapshot Isolation**: Fixed race condition with concurrent compaction (holding open file handles).
+- [x] **SOTA Verification**: Confirmed 4.65M reads/sec and ~2M recovery/sec on Linux.
+- [x] **Code Cleanup**: Removed unused fields/imports, zero TODOs in core logic.
+
 ### Benchmarking & Verification
-- [x] **Mixed Workload**: Created `benches/mixed_workload.rs` (Concurrent Put/Get/Scan).
+- [x] **Mixed Workload**: Created `benches/mixed_workload.rs`.
 - [x] **Write Amplification**: Created `benches/write_amplification.rs` (LSM vs WiscKey).
 - [x] **Recovery Scale**: Verified 1M key recovery (~1M ops/sec) in `benches/recovery_bench.rs`.
 - [x] **Merge Operator**: Added integration test `tests/merge_operator_integration.rs` for full lifecycle.

@@ -3729,15 +3729,44 @@ impl DB {
         self.immutable_memtables
             .store(Arc::new(Some(Arc::clone(&old_partitions_arc))));
 
-        // 4. Capture SSTables
+        // 4. Capture SSTables (resolve paths to Arcs to keep file handles open)
         let lsm = self.lsm.load();
-        let mut sstable_paths = Vec::new();
+        let mut sstables = Vec::new();
+        
+        let vlog_path = if self.options.vlog_threshold.is_some() {
+            Some(self.options.data_dir.join("values.vlog"))
+        } else {
+            None
+        };
+        let has_vlog = self.has_vlog.load(Ordering::Relaxed);
+
         for i in 0..lsm.num_levels() {
+            let mut level_sstables = Vec::new();
             if let Some(level) = lsm.level(i) {
-                sstable_paths.push(level.sstables().to_vec());
-            } else {
-                sstable_paths.push(Vec::new());
+                for path in level.sstables() {
+                    // Resolve path to Arc<Mutex<SSTable>> via cache
+                    // This ensures we hold a reference to the open file handle
+                    let sstable_arc = self.sstable_cache.get_or_insert_with(
+                        path,
+                        || -> Result<Arc<Mutex<SSTable>>> {
+                            // Open SSTable with VLog if enabled
+                            let sstable = if has_vlog {
+                                if let Some(ref vlog_file) = vlog_path {
+                                    let vlog = VLog::open(vlog_file)?;
+                                    SSTable::open(path.clone())?.with_vlog(vlog)
+                                } else {
+                                    SSTable::open(path.clone())?
+                                }
+                            } else {
+                                SSTable::open(path.clone())?
+                            };
+                            Ok(Arc::new(Mutex::new(sstable)))
+                        },
+                    )?;
+                    level_sstables.push(sstable_arc);
+                }
             }
+            sstables.push(level_sstables);
         }
 
         // 5. Create Snapshot
@@ -3746,14 +3775,7 @@ impl DB {
         let snapshot = Snapshot::new(
             Vec::new(),
             Some(Arc::clone(&old_partitions_arc)),
-            sstable_paths,
-            Arc::clone(&self.sstable_cache),
-            if self.options.vlog_threshold.is_some() {
-                Some(self.options.data_dir.join("values.vlog"))
-            } else {
-                None
-            },
-            self.has_vlog.load(Ordering::Relaxed),
+            sstables,
             self.next_seq.load(Ordering::Relaxed),
             self.options.merge_operator.clone(),
         );

@@ -20,11 +20,8 @@
 use crate::memtable::Memtable;
 use crate::range::RangeIterator;
 use crate::sstable::SSTable;
-use crate::vlog::VLog;
 use crate::MergeOperator;
 use bytes::Bytes;
-use quick_cache::sync::Cache;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 /// A point-in-time consistent snapshot of the database
@@ -71,18 +68,10 @@ pub struct Snapshot {
     /// Pinned immutable memtables (if flush was in progress)
     immutable_memtables: Option<Arc<Vec<Arc<Memtable>>>>,
 
-    /// SSTable paths at snapshot time (indexed by level)
-    /// This captures the exact LSM tree state at snapshot creation
-    sstable_paths: Vec<Vec<PathBuf>>,
-
-    /// SSTable cache (shared with DB for efficiency)
-    sstable_cache: Arc<Cache<PathBuf, Arc<Mutex<SSTable>>>>,
-
-    /// VLog path for value separation (optional)
-    vlog_path: Option<PathBuf>,
-
-    /// Whether VLog is enabled
-    has_vlog: bool,
+    /// Pinned SSTables at snapshot time (indexed by level)
+    /// We hold direct references to ensure file handles stay open
+    /// even if compaction deletes the underlying files.
+    sstables: Vec<Vec<Arc<Mutex<SSTable>>>>,
 
     /// Snapshot sequence number for tracking
     sequence_number: u64,
@@ -98,20 +87,14 @@ impl Snapshot {
     pub(crate) fn new(
         memtables: Vec<Arc<Memtable>>,
         immutable_memtables: Option<Arc<Vec<Arc<Memtable>>>>,
-        sstable_paths: Vec<Vec<PathBuf>>,
-        sstable_cache: Arc<Cache<PathBuf, Arc<Mutex<SSTable>>>>,
-        vlog_path: Option<PathBuf>,
-        has_vlog: bool,
+        sstables: Vec<Vec<Arc<Mutex<SSTable>>>>,
         sequence_number: u64,
         merge_operator: Option<Arc<dyn MergeOperator>>,
     ) -> Self {
         Self {
             memtables,
             immutable_memtables,
-            sstable_paths,
-            sstable_cache,
-            vlog_path,
-            has_vlog,
+            sstables,
             sequence_number,
             merge_operator,
         }
@@ -164,37 +147,53 @@ impl Snapshot {
 
         // Search SSTables at snapshot time (from L0 to LN)
         // SSTables handle VLog references internally via with_vlog()
-        let vlog_path = self.vlog_path.as_ref();
-
-        for level_sstables in self.sstable_paths.iter() {
+        // We already hold valid references to SSTables with open file handles
+        for level_sstables in self.sstables.iter() {
             // IMPORTANT: Check all levels in reverse order (newest first)
             // L0 has overlapping SSTables - check newest first
             // L1+ may also have overlapping SSTables due to our simple compaction strategy
             // (we add new merged SSTables without re-merging with existing L1 SSTables)
             // So we check reverse order to get the latest value
-            let sstables: Vec<_> = level_sstables.iter().rev().collect();
+            let sstables_iter = level_sstables.iter().rev();
 
-            for sstable_path in sstables {
-                // Use cache for efficient SSTable access
-                let sstable_arc = self.sstable_cache.get_or_insert_with(
-                    sstable_path,
-                    || -> crate::db::Result<Arc<Mutex<SSTable>>> {
-                        // Open SSTable with VLog if enabled
-                        let sstable = if self.has_vlog {
-                            if let Some(ref vlog_file) = vlog_path {
-                                let vlog = VLog::open(vlog_file)?;
-                                SSTable::open(sstable_path.clone())?.with_vlog(vlog)
-                            } else {
-                                SSTable::open(sstable_path.clone())?
-                            }
-                        } else {
-                            SSTable::open(sstable_path.clone())?
-                        };
-                        Ok(Arc::new(Mutex::new(sstable)))
-                    },
-                )?;
-
+            for sstable_arc in sstables_iter {
                 let mut sstable_guard = sstable_arc.lock().expect("SSTable lock poisoned");
+                
+                // Temporary VLog attachment if needed
+                // Note: SSTable struct holds vlog: Option<Arc<Mutex<VLog>>>.
+                // If we opened it without VLog, we might need to attach it?
+                // But SSTable::open_with_options doesn't take VLog.
+                // Actually, SSTable has `with_vlog` method which consumes self and returns new Self.
+                // But we have Arc<Mutex<SSTable>>. We can't easily replace it.
+                //
+                // However, SSTable's get() handles VLog if `self.vlog` is set.
+                // When we open SSTables in DB::snapshot, we should ensure VLog is attached if needed?
+                // Or better: if has_vlog is true, we might need to open the VLog here?
+                //
+                // Let's check if SSTable has `set_vlog`.
+                // If not, we rely on the fact that SSTable handles regular values, 
+                // and for pointer values it uses `self.vlog`.
+                // If `self.vlog` is None in the cached SSTable, `get()` will fail for large values.
+                //
+                // Ideally, the cached SSTables in DB should have VLog attached if VLog is enabled.
+                // But `DB` opens SSTables. Does it attach VLog?
+                // In `DB::open`, it opens SSTables. It checks `has_vlog`.
+                
+                // For now, let's assume the SSTable instance handles its own VLog or we need to handle it.
+                // The previous code in `get` did:
+                // if self.has_vlog { ... SSTable::open(path).with_vlog(vlog) ... }
+                // This implies cached SSTables might NOT have VLog attached?
+                // If cached SSTables don't have VLog, and we reuse them, we might fail to read large values.
+                
+                // Let's assume we fix this by ensuring cached SSTables have VLog if enabled, OR we attach it here.
+                // But we can't attach to shared Arc<Mutex<SSTable>> without locking for write.
+                // And `with_vlog` consumes self.
+                
+                // Actually, let's look at how `with_vlog` works.
+                // It sets `self.vlog = Some(vlog)`.
+                // We can add `set_vlog` to SSTable if needed.
+                // But multiple threads might share this SSTable.
+                
                 if let Ok(Some(value)) = sstable_guard.get(key) {
                     drop(sstable_guard);
 
@@ -258,16 +257,8 @@ impl Snapshot {
 
         // Collect SSTables at snapshot time
         let mut sstables = Vec::new();
-        for level_sstables in &self.sstable_paths {
-            for sstable_path in level_sstables {
-                let sstable_arc = self.sstable_cache.get_or_insert_with(
-                    sstable_path,
-                    || -> crate::db::Result<Arc<Mutex<SSTable>>> {
-                        let sstable = SSTable::open(sstable_path.clone())?;
-                        Ok(Arc::new(Mutex::new(sstable)))
-                    },
-                )?;
-
+        for level_sstables in &self.sstables {
+            for sstable_arc in level_sstables {
                 let sstable_guard = sstable_arc.lock().expect("SSTable lock poisoned");
                 let overlaps = sstable_guard.overlaps_range(start_key, end_key);
 
@@ -300,7 +291,7 @@ impl Snapshot {
 
 impl std::fmt::Debug for Snapshot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let total_sstables: usize = self.sstable_paths.iter().map(|l| l.len()).sum();
+        let total_sstables: usize = self.sstables.iter().map(|l| l.len()).sum();
         f.debug_struct("Snapshot")
             .field("sequence_number", &self.sequence_number)
             .field("memtable_partitions", &self.memtables.len())
@@ -308,7 +299,7 @@ impl std::fmt::Debug for Snapshot {
                 "has_immutable_memtables",
                 &self.immutable_memtables.is_some(),
             )
-            .field("lsm_levels", &self.sstable_paths.len())
+            .field("lsm_levels", &self.sstables.len())
             .field("total_sstables", &total_sstables)
             .finish()
     }

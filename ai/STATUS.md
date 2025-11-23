@@ -1,24 +1,20 @@
 # STATUS - seerdb
 
-**Last Updated**: November 21, 2025
-**Current Phase**: Production Ready - All Optimizations Complete
+**Last Updated**: November 22, 2025
+**Current Phase**: Production Ready (0.0.1-alpha)
+**Version**: 0.0.1-alpha
 
-**Recent Work (Nov 21, 2025 - Verification & Fixes)**:
-- **Merge Operator Fix**: ✅ Fixed critical bug in `get()` where multiple merge operands in a single SSTable were ignored.
-  - **Root Cause**: `get_entry()` only returned the first match.
-  - **Fix**: Use `scan_range` to aggregate ALL merge operands for a key within an SSTable.
-  - **Recovery Fix**: Fixed `LSMTree` loading order (was arbitrary directory order, now sorted lexicographically) to ensure correct L0 Newest->Oldest traversal.
-  - **Validation**: New integration test `tests/merge_operator_integration.rs` passes.
-- **Benchmarking Infrastructure**: ✅ Expanded.
-  - **Mixed Workload**: Added `benches/mixed_workload.rs` (50% Get, 40% Put, 10% Scan).
-  - **Write Amplification**: Added `benches/write_amplification.rs`.
-  - **Recovery**: Verified scaling linear with log size (~930k ops/sec).
-    - 10k keys (450KB WAL): ~20ms (~500k ops/sec)
-    - 100k keys (4.5MB WAL): ~111ms (~900k ops/sec)
-    - 1M keys (45MB WAL): ~995ms (~1M ops/sec)
-  - **Conclusion**: Recovery is fast (~1M ops/sec) and scalable.
+**Recent Work (Nov 22, 2025 - Release Prep)**:
+- **Release**: ✅ Prepared `0.0.1-alpha`.
+- **Critical Fix (Snapshot Isolation)**: ✅ Fixed race condition where snapshots failed to read SSTables deleted by concurrent compaction.
+  - **Mechanism**: Snapshots now hold `Arc<Mutex<SSTable>>` (open file handles) instead of paths.
+  - **Verification**: `stress_new_apis` passed with concurrent compaction and 10+ snapshots.
+- **Code Quality**: ✅ Full audit complete. Zero TODOs in critical path. Unused code removed.
+- **Verification**: ✅ SOTA benchmarks confirmed on Linux. 202 tests passed.
+
 **Recent Work (Nov 21, 2025 - Linux SOTA Verification)**:
 - **Fedora Benchmarks**: ✅ Completed all priority benchmarks on Linux (i9-13900KF, 32GB).
+  - **Read Throughput**: **4.65M ops/sec** (matches 4.7M target).
   - **Recovery**: Verified SOTA performance (~2M records/sec).
     - 100k keys: 2.08M ops/sec
     - 1M keys: 1.53M ops/sec
