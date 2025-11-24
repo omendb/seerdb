@@ -164,9 +164,7 @@ impl DBOptions {
 | Suite | Status | Notes |
 |-------|--------|-------|
 | seerdb lib tests | ✅ 193 pass | Updated Nov 24, 2025 |
-| seerdb integration | ⚠️ 1 fail | `test_corrupted_wal_detected` |
-
-**Known Issue**: `test_corrupted_wal_detected` fails - likely needs corruption offset adjustment for MVCC record format changes.
+| seerdb integration | ✅ All pass | Crash recovery tests fixed |
 
 ---
 
@@ -183,7 +181,6 @@ impl DBOptions {
 - [ ] Add `embedded()` config profile
 - [ ] Consider disabling MVCC option
 - [ ] Research inverted index integration for full-text search
-- [ ] Fix `test_corrupted_wal_detected`
 
 ---
 

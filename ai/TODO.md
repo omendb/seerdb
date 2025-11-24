@@ -21,11 +21,11 @@
 | **DB flush MVCC** | 🚧 TODO | `flush()` needs to use `add_internal()` |
 | **MVCC garbage collection** | ❌ TODO | Old versions accumulate |
 
-### 2. Bug Fixes (High Priority)
+### 2. Bug Fixes
 
 | Task | Status | Notes |
 |------|--------|-------|
-| Fix `test_corrupted_wal_detected` | 🚧 TODO | Corruption offset needs MVCC format adjustment |
+| Fix `test_corrupted_wal_detected` | ✅ Done | Already fixed in previous WAL format changes |
 
 ### 3. Transaction API (Medium Priority)
 
