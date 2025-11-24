@@ -1,51 +1,62 @@
 # PLAN - SeerDB: The "omendb" Engine
 
-**Goal**: Optimize SeerDB specifically for `omendb` (Vector/Graph workloads) while maintaining general-purpose excellence.
+**Goal**: Optimize SeerDB for `omendb` (Vector/Graph) development.
+**Strategy**: Hold public release. Focus on internal features required by the graph layer.
 
-**Status**: ACTIVE (Nov 20, 2025)
+**Status**: ACTIVE (Nov 23, 2025) - **Omendb Integration Phase**
 
-## 1. The "omendb" Workload
-*   **Data Model**: Graphs (Adjacency Lists) + Vectors (Blobs).
-*   **Access Pattern**:
-    *   **Ingest**: Massive edge addition (appending to lists).
-    *   **Query**: Prefix scans (`node_id:*`) and Point lookups (`node_id:property`).
-*   **Constraints**: Latency sensitive, high write throughput required.
+## 1. Active Priorities (Omendb Requirements)
 
-## 2. Critical Features (Priority Order)
+### A. MVCC Transactions (Snapshot Isolation) 🔄 **NEXT**
+*   **Why**: Graph updates (e.g., `addEdge(A, B)`) touch multiple keys (`A->B`, `B->A`). They must be atomic and consistent.
+*   **Requirement**: `db.begin_transaction()` -> `txn.get/set` -> `txn.commit()`.
+*   **Implementation**:
+    *   **Reads**: Use existing Snapshot mechanism (already fixed).
+    *   **Writes**: Buffer in `Transaction` object.
+    *   **Commit**: Atomic batch write (already supported).
+    *   **Conflict Detection**: Optimistic Concurrency Control (OCC) - fail if keys modified since snapshot.
 
-### A. Merge Operator (The "Graph Killer" Feature) ✅ **COMPLETE**
-*   **Why**: Currently, adding an edge requires `Get` -> `Deserialize` -> `Append` -> `Serialize` -> `Put`. This is slow (RMW).
-*   **Solution**: `db.merge(key, new_edge)`.
-    *   Writes are O(1) (append to WAL/Memtable).
-    *   Read pays the cost (merging on the fly).
-    *   Compaction merges permanently.
-*   **Status**: Implemented & Merged.
-*   **Action**: None (Maintenance).
+### B. Reverse Iteration 🔄 **NEXT**
+*   **Why**: Time-series graph edges (e.g., "User X's recent posts") are stored as `Key: <Timestamp>`, requiring `iter_rev()` to scan newest-first.
+*   **Gap**: `SSTable` and `Memtable` iterators currently only go forward.
+*   **Action**: Implement `DoubleEndedIterator` for:
+    1.  `MemtableIterator` (Skiplist supports this).
+    2.  `SSTableIterator` (Block-based, requires efficient block caching/jumping).
+    3.  `KWayMergeIterator` (Requires max-heap for reverse merge).
 
-### B. Prefix Bloom Filters ✅ **COMPLETE**
-*   **Why**: `omendb` relies heavily on `prefix_scan(node_id)`.
-*   **Problem**: Standard Bloom Filters only hash the full key. A scan for `prefix:` has to check every SSTable unless we index prefixes.
-*   **Solution**: Create a separate Bloom Filter for key prefixes (e.g., fixed length or separator based).
-*   **Status**: Implemented & Enabled.
-*   **Action**: Benchmark performance gain.
+### C. Omendb Workload Simulation 🔄 **NEXT**
+*   **Why**: Verify `seerdb` performance on the exact `omendb` access pattern before integration.
+*   **Pattern**:
+    *   **Write**: Massive Merge Operator usage (appending to edge lists).
+    *   **Read**: High-volume `prefix_scan` (finding edges).
+*   **Action**: Create `benches/omendb_simulation.rs`.
 
-### C. MVCC Transactions (Snapshot Isolation) 🔄 **NEXT**
-*   **Why**: Graph updates often span multiple keys (e.g., Node A -> Node B requires updating both adj lists).
-*   **Solution**: Optimistic Concurrency Control (OCC).
-*   **Action**: Implement `Transaction` API.
+## 2. Backlog (Post-Integration)
 
-## 3. Buffer Management Strategy
-*   **Decision**: Stick to **Software Buffer Pool** (Safe Rust).
-*   **Rejected**: Pointer Swizzling (Too unsafe/complex for now), `vmcache` (Linux only).
-*   **Goal**: Optimize the existing `BufferPool` (e.g. lock contention) rather than rewriting architecture.
-*   **Status**: LeanStore Phase 1 Integrated.
+### A. Async I/O (io_uring) 
+*   **Status**: Defer. `std::fs` is fast enough for development (4.65M ops/sec).
+*   **Trigger**: When Linux CPU profiling shows syscall overhead as primary bottleneck.
+
+### B. Cloud Native Storage (S3)
+*   **Status**: Feature complete for v1. Harden during scaling phase.
+
+### C. Vector Index (HNSW)
+*   **Status**: Handled in `omendb` repo (`seerdb-vector` crate).
+
+## 3. Architecture Decisions
+
+### Buffer Management
+*   **Decision**: Stick to **Software Buffer Pool** (LeanStore-lite).
+*   **Status**: Working. No major changes needed for now.
+
+### Compaction
+*   **Decision**: Tiered Compaction (Write Optimized).
+*   **Reason**: Graph ingestion is write-heavy. Leveled compaction write stalls would be fatal.
 
 ## 4. Execution Plan
 
-1.  **Merge Operator**: Done.
-2.  **Prefix Bloom**: Done.
-3.  **Safety & Stability**: Done.
-4.  **Cloud Storage**: Deepen robustness (Next).
-5.  **Benchmarks**: Verify SOTA claims on Linux.
-6.  **LeanStore**: Buffer management research.
-7.  **MVCC**: Correctness for multi-key graph updates.
+1.  **Tag v0.0.1-alpha** (Done) - Stable Checkpoint.
+2.  **Omendb Simulation** - Establish baseline.
+3.  **Reverse Iteration** - Enable time-series queries.
+4.  **MVCC** - Enable safe graph updates.
+5.  **Integration** - Move to `omendb` repo for full integration.

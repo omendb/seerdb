@@ -1694,6 +1694,12 @@ impl SSTable {
         })
     }
 
+    /// Return an iterator over all entries in reverse sorted order
+    pub fn iter_rev(&mut self) -> Result<impl Iterator<Item = Result<(Bytes, Bytes)>>> {
+        // Since SSTableIterator implements DoubleEndedIterator, we can just reverse it
+        Ok(self.iter()?.rev())
+    }
+
     /// Scan a range of keys from this SSTable using lazy iteration
     ///
     /// Returns an iterator that yields (key, `Option<value>`) where None indicates a tombstone.
@@ -1735,6 +1741,12 @@ impl Iterator for SSTableIterator {
 
     fn next(&mut self) -> Option<Self::Item> {
         self.entries.next().map(Ok)
+    }
+}
+
+impl DoubleEndedIterator for SSTableIterator {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.entries.next_back().map(Ok)
     }
 }
 
@@ -1943,6 +1955,27 @@ mod tests {
             sst_buffered.get(b"key2").unwrap(),
             sst_file.get(b"key2").unwrap()
         );
+    }
+
+    #[test]
+    fn test_sstable_iter_rev() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("rev.sst");
+
+        let mut builder = SSTableBuilder::new_buffered();
+        builder.add(Bytes::from("key1"), Bytes::from("val1")).unwrap();
+        builder.add(Bytes::from("key2"), Bytes::from("val2")).unwrap();
+        builder.add(Bytes::from("key3"), Bytes::from("val3")).unwrap();
+
+        builder.finish_to_file(&path).unwrap();
+
+        let mut sst = SSTable::open(&path).unwrap();
+        let entries: Vec<_> = sst.iter_rev().unwrap().map(|r| r.unwrap()).collect();
+
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].0, Bytes::from("key3"));
+        assert_eq!(entries[1].0, Bytes::from("key2"));
+        assert_eq!(entries[2].0, Bytes::from("key1"));
     }
 
     #[test]

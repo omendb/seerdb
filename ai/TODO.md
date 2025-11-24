@@ -1,44 +1,47 @@
 # TODO - seerdb
 
-**Last Updated**: November 22, 2025
-**Current Focus**: Post-Release Optimizations & Integration
-**Version**: 0.0.1-alpha
-**Status**: 202 tests passing, CI: ✅ All Green
+**Last Updated**: November 23, 2025
+**Current Focus**: Omendb Development Support (MVCC)
+**Version**: 0.0.1-alpha (Stable Checkpoint)
+**Status**: 202+ tests passing. Release Halted for Dev.
 
 ---
 
-## Active Tasks
+## Active Tasks (Omendb Priorities)
 
-### 1. Post-Release Optimizations
-- [ ] **Async I/O (io_uring)**: Investigate replacing `std::fs` with `io_uring` for Linux backend (Task 1).
-- [ ] **Vector Index**: Integrate `seerdb-vector` (proprietary) for HNSW support.
-- [ ] **MVCC**: Add multi-version concurrency control (optional, based on demand).
+### 1. MVCC Transactions
+- [ ] **API Design**: Define `Transaction` struct and `db.begin_transaction()`.
+- [ ] **Write Buffer**: Implement local mutation buffer in `Transaction`.
+- [ ] **Conflict Detection**: Implement OCC (Optimistic Concurrency Control) validation on commit.
+- [ ] **Integration**: Wire up to `Batch` commit.
+
+---
+
+## Backlog (Deferred)
+
+### Performance
+- [ ] **Async I/O (io_uring)**: Investigate replacing `std::fs` (Defer until needed).
+- [ ] **Vector Index**: Integrate `seerdb-vector` (Proprietary/Omendb side).
 
 ---
 
 ## Completed Tasks
 
+### Omendb Integration (Nov 2025)
+- [x] **Omendb Benchmark**: `benches/omendb_simulation.rs` created.
+  - Validated `MergeOperator` throughput (230K ops/sec, equal to raw Put).
+- [x] **Reverse Iteration**: Implemented `iter_rev()` and `range_rev()`.
+  - Added `DoubleEndedIterator` support to Memtable, Block, and SSTable.
+  - Implemented `KWayMergeIteratorRev` (Max-Heap merge).
+  - Added `DB::iter_rev()`, `DB::range_rev()`.
+
 ### Release v0.0.1-alpha (Nov 2025)
-- [x] **Snapshot Isolation**: Fixed race condition with concurrent compaction (holding open file handles).
-- [x] **SOTA Verification**: Confirmed 4.65M reads/sec and ~2M recovery/sec on Linux.
-- [x] **Code Cleanup**: Removed unused fields/imports, zero TODOs in core logic.
-
-### Benchmarking & Verification
-- [x] **Mixed Workload**: Created `benches/mixed_workload.rs`.
-- [x] **Write Amplification**: Created `benches/write_amplification.rs` (LSM vs WiscKey).
-- [x] **Recovery Scale**: Verified 1M key recovery (~1M ops/sec) in `benches/recovery_bench.rs`.
-- [x] **Merge Operator**: Added integration test `tests/merge_operator_integration.rs` for full lifecycle.
-- [x] **Linux SOTA Verification**: Verified performance claims on reference hardware (i9-13900KF + NVMe).
-  - Pipelined WAL, Recovery, Full Suite, Zero-Copy benchmarks completed.
-
+- [x] **Snapshot Isolation**: Fixed race condition with concurrent compaction.
+- [x] **SOTA Verification**: Confirmed 4.65M reads/sec on Linux.
+- [x] **Tag**: `v0.0.1-alpha` created.
 
 ### Core Features
-- [x] **Data Durability**: WAL + fsync on shutdown.
-- [x] **Stability**: 192 tests passing, zero data loss bugs.
-- [x] **Performance**: 878K writes/sec, 4.7M reads/sec (Mac M3).
 - [x] **Merge Operators**: O(1) blind writes for graphs.
-- [x] **SIMD Optimizations**: ALEX search, block parsing.
-- [x] **Blocked Bloom Filters**: 3.4x speedup.
-- [x] **Cloud Storage**: S3/GCS with retry logic.
-- [x] **LeanStore**: Sharded Buffer Pool, Clock-Pro.
-- [x] **WAL Pipelining**: Lock-free queue, adaptive delay.
+- [x] **Prefix Bloom Filters**: Optimized for graph scans.
+- [x] **Durability**: WAL + fsync.
+- [x] **LeanStore**: Buffer Pool implemented.

@@ -556,13 +556,14 @@ impl Block {
 
 /// Iterator over block entries (now iterates over decompressed cache)
 pub struct BlockIterator<'a> {
-    entries: &'a [(Bytes, Bytes)],
-    index: usize,
+    iter: std::slice::Iter<'a, (Bytes, Bytes)>,
 }
 
 impl<'a> BlockIterator<'a> {
     fn new_cached(entries: &'a [(Bytes, Bytes)]) -> Self {
-        Self { entries, index: 0 }
+        Self {
+            iter: entries.iter(),
+        }
     }
 }
 
@@ -570,15 +571,17 @@ impl<'a> Iterator for BlockIterator<'a> {
     type Item = Result<(Bytes, Bytes)>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.index >= self.entries.len() {
-            return None;
-        }
+        self.iter
+            .next()
+            .map(|(k, v)| Ok((k.clone(), v.clone())))
+    }
+}
 
-        let entry = &self.entries[self.index];
-        self.index += 1;
-
-        // Clone Bytes (cheap - just refcount increment)
-        Some(Ok((entry.0.clone(), entry.1.clone())))
+impl<'a> DoubleEndedIterator for BlockIterator<'a> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.iter
+            .next_back()
+            .map(|(k, v)| Ok((k.clone(), v.clone())))
     }
 }
 

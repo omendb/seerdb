@@ -150,6 +150,29 @@ impl Memtable {
             .map(|entry| (entry.key().clone(), entry.value().clone()))
     }
 
+    /// Iterate over all entries in reverse sorted order
+    pub fn iter_rev(&self) -> impl Iterator<Item = (Bytes, Entry)> + '_ {
+        self.data
+            .iter()
+            .rev()
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+    }
+
+    /// Range scan in reverse: iterate over keys in [start, end) backwards
+    pub fn range_rev<'a>(
+        &'a self,
+        start: &[u8],
+        end: &[u8],
+    ) -> impl Iterator<Item = (Bytes, Entry)> + 'a {
+        let start_key = Bytes::copy_from_slice(start);
+        let end_key = Bytes::copy_from_slice(end);
+
+        self.data
+            .range(start_key..end_key)
+            .rev()
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+    }
+
     /// Get capacity
     pub fn capacity(&self) -> usize {
         self.capacity
@@ -302,6 +325,37 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].0, Bytes::from("key2"));
         assert_eq!(entries[1].0, Bytes::from("key3"));
+    }
+
+    #[test]
+    fn test_memtable_iter_rev() {
+        let memtable = Memtable::new(1024);
+
+        memtable.put(Bytes::from("key1"), Bytes::from("value1"));
+        memtable.put(Bytes::from("key2"), Bytes::from("value2"));
+        memtable.put(Bytes::from("key3"), Bytes::from("value3"));
+
+        let entries: Vec<_> = memtable.iter_rev().collect();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].0, Bytes::from("key3"));
+        assert_eq!(entries[1].0, Bytes::from("key2"));
+        assert_eq!(entries[2].0, Bytes::from("key1"));
+    }
+
+    #[test]
+    fn test_memtable_range_rev() {
+        let memtable = Memtable::new(1024);
+
+        memtable.put(Bytes::from("key1"), Bytes::from("value1"));
+        memtable.put(Bytes::from("key2"), Bytes::from("value2"));
+        memtable.put(Bytes::from("key3"), Bytes::from("value3"));
+        memtable.put(Bytes::from("key4"), Bytes::from("value4"));
+
+        // Range [key2, key4) -> key2, key3. Rev -> key3, key2.
+        let entries: Vec<_> = memtable.range_rev(b"key2", b"key4").collect();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].0, Bytes::from("key3"));
+        assert_eq!(entries[1].0, Bytes::from("key2"));
     }
 
     #[test]

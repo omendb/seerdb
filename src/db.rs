@@ -3481,6 +3481,138 @@ impl DB {
         )
     }
 
+    /// Reverse Range scan: iterate over a range of keys in reverse order
+    pub fn range_rev(&self, start_key: &[u8], end_key: Option<&[u8]>) -> Result<crate::range::RangeIteratorRev> {
+        self.range_rev_internal(start_key, end_key, true)
+    }
+
+    /// Reverse key-only scan
+    pub fn range_keys_only_rev(
+        &self,
+        start_key: &[u8],
+        end_key: Option<&[u8]>,
+    ) -> Result<crate::range::RangeIteratorRev> {
+        self.range_rev_internal(start_key, end_key, false)
+    }
+
+    /// Iterate over all keys in reverse order
+    pub fn iter_rev(&self) -> Result<crate::range::RangeIteratorRev> {
+        self.range_rev(&[], None)
+    }
+
+    fn range_rev_internal(
+        &self,
+        start_key: &[u8],
+        end_key: Option<&[u8]>,
+        read_values: bool,
+    ) -> Result<crate::range::RangeIteratorRev> {
+        use crate::range::RangeIteratorRev;
+        use crate::memtable::Entry;
+
+        self.read_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        // Collect memtable partitions (lock-free)
+        let partition_arcs: Vec<Arc<Memtable>> = self
+            .memtables
+            .iter()
+            .map(|mt| (*mt.load()).clone())
+            .collect();
+        let mut partition_refs: Vec<&Memtable> =
+            partition_arcs.iter().map(|arc| arc.as_ref()).collect();
+
+        let immutable_arc = self.immutable_memtables.load();
+        let immutable_refs: Vec<&Memtable> = if let Some(ref immutable_partitions) = **immutable_arc
+        {
+            immutable_partitions
+                .iter()
+                .map(|arc| arc.as_ref())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        partition_refs.extend(immutable_refs);
+
+        // Collect SSTables
+        let lsm_arc = self.lsm.load();
+        let mut sstable_iters: Vec<Box<dyn Iterator<Item = crate::sstable::Result<(Bytes, Entry)>>>> = Vec::new();
+
+        for level_idx in 0..lsm_arc.num_levels() {
+            if let Some(level) = lsm_arc.level(level_idx) {
+                // REVERSE ORDER of SSTables for this level
+                let sstables_rev: Vec<_> = level.sstables().iter().rev().collect();
+
+                for sstable_path in sstables_rev {
+                    let sstable_arc = self.sstable_cache.get_or_insert_with(
+                        sstable_path,
+                        || -> Result<Arc<Mutex<SSTable>>> {
+                            let global_cache = Some(Arc::clone(&self.global_block_cache));
+                            let sstable = SSTable::open_with_global_cache(
+                                sstable_path.clone(),
+                                global_cache,
+                            )?;
+                            Ok(Arc::new(Mutex::new(sstable)))
+                        },
+                    )?;
+
+                    // We need to lock, create iterator, and then we have a problem:
+                    // The iterator needs to hold the lock or the Arc.
+                    // SSTableIterator holds Arc<Mutex<File>> but NOT Arc<Mutex<SSTable>>.
+                    // BUT we need to call iter_rev() which loads ALL entries into memory.
+                    // This is inefficient but safe given current implementation.
+                    
+                    // TODO: Make SSTable::iter_rev() lazy like scan_range().
+                    // For now, we load everything.
+                    let mut sstable_guard = sstable_arc.lock().expect("SSTable lock poisoned");
+                    
+                    // Check range overlap
+                    if !sstable_guard.overlaps_range(start_key, end_key) {
+                        continue;
+                    }
+
+                    // iter_rev returns Result<impl Iterator>
+                    // We collect it into a Box<dyn Iterator>
+                    let iter = sstable_guard.iter_rev()?; 
+                    // iter is impl Iterator<Item = Result<(Bytes, Bytes)>>
+                    // But we need Result<(Bytes, Entry)>
+                    // And we need to filter by range!
+                    
+                    // Map (Bytes, Bytes) -> (Bytes, Entry)
+                    let mapped_iter = iter.map(|res| {
+                        res.map(|(k, v)| (k, Entry::Value(v)))
+                    });
+
+                    // Filter by range (since we are iterating everything)
+                    let start = Bytes::copy_from_slice(start_key);
+                    let end = end_key.map(Bytes::copy_from_slice);
+                    
+                    let filtered_iter = mapped_iter.filter(move |res| {
+                        match res {
+                            Ok((k, _)) => {
+                                if k < &start { return false; }
+                                if let Some(ref e) = end {
+                                    if k >= e { return false; }
+                                }
+                                true
+                            }
+                            Err(_) => true // Propagate errors
+                        }
+                    });
+
+                    sstable_iters.push(Box::new(filtered_iter));
+                }
+            }
+        }
+
+        RangeIteratorRev::new(
+            start_key,
+            end_key,
+            &partition_refs,
+            sstable_iters,
+            self.options.merge_operator.clone(),
+        )
+    }
+
     /// Iterate over all keys in the database
     ///
     /// This is a convenience method equivalent to `range(&[], None)`.
@@ -4756,6 +4888,28 @@ mod tests {
         assert_eq!(results[2].0.as_ref(), b"c");
         assert_eq!(results[3].0.as_ref(), b"d");
         assert_eq!(results[4].0.as_ref(), b"e");
+    }
+
+    #[test]
+    fn test_db_iter_rev() {
+        let dir = tempdir().unwrap();
+        let options = DBOptions {
+            data_dir: dir.path().to_path_buf(),
+            ..Default::default()
+        };
+
+        let db = DB::open(options).unwrap();
+
+        db.put(b"a", b"1").unwrap();
+        db.put(b"b", b"2").unwrap();
+        db.put(b"c", b"3").unwrap();
+
+        let results: Vec<_> = db.iter_rev().unwrap().map(|r| r.unwrap()).collect();
+
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].0.as_ref(), b"c");
+        assert_eq!(results[1].0.as_ref(), b"b");
+        assert_eq!(results[2].0.as_ref(), b"a");
     }
 
     #[test]

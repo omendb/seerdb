@@ -1,7 +1,7 @@
 // Range scan iterator for efficient key range queries
 
 use crate::memtable::Entry;
-use crate::range_merge::KWayMergeIterator;
+use crate::range_merge::{KWayMergeIterator, KWayMergeIteratorRev};
 use crate::sstable::SSTableRangeIterator;
 use crate::MergeOperator;
 use bytes::Bytes;
@@ -127,6 +127,97 @@ impl Iterator for RangeIterator {
             });
         
         result
+    }
+}
+
+/// Reverse range iterator that merges memtable and SSTable data using reverse k-way merge
+pub struct RangeIteratorRev {
+    inner: KWayMergeIteratorRev<
+        Box<dyn Iterator<Item = Result<(Bytes, Entry), Box<dyn std::error::Error + Send + Sync>>>>,
+    >,
+}
+
+impl RangeIteratorRev {
+    pub fn new(
+        start_key: &[u8],
+        end_key: Option<&[u8]>,
+        memtables: &[&crate::memtable::Memtable],
+        // SSTable iterators must already be initialized for reverse iteration (iter_rev)
+        sstable_iters: Vec<Box<dyn Iterator<Item = crate::sstable::Result<(Bytes, Entry)>>>>,
+        merge_operator: Option<Arc<dyn MergeOperator>>,
+    ) -> crate::db::Result<Self> {
+        let mut iterators: Vec<
+            Box<
+                dyn Iterator<
+                    Item = Result<(Bytes, Entry), Box<dyn std::error::Error + Send + Sync>>,
+                >,
+            >,
+        > = Vec::new();
+
+        // Level 0: Memtable partitions (Reverse Range)
+        for memtable in memtables {
+            // Collect entries in reverse order
+            let partition_entries: Vec<(Bytes, Entry)> = if let Some(end_key) = end_key {
+                memtable
+                    .range_rev(start_key, end_key)
+                    .map(|(key, entry)| (key, entry.clone()))
+                    .collect()
+            } else {
+                // range_from().rev() logic if supported, or filter
+                // Memtable doesn't have range_from_rev, so we simulate:
+                // If end_key is None, we scan everything >= start_key.
+                // range_from(start).rev() ?
+                // SkipMap::range(start..) is DoubleEndedIterator.
+                memtable
+                    .range_from(start_key)
+                    .map(|(key, entry)| (key, entry.clone()))
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect()
+            };
+
+            let partition_iter: Box<
+                dyn Iterator<
+                    Item = Result<(Bytes, Entry), Box<dyn std::error::Error + Send + Sync>>,
+                >,
+            > = Box::new(partition_entries.into_iter().map(Ok));
+            iterators.push(partition_iter);
+        }
+
+        // Level 1+: SSTable iterators (passed in, already reversed)
+        for sst_iter in sstable_iters {
+            // Adapt them
+            let adapted: Box<
+                dyn Iterator<
+                    Item = Result<(Bytes, Entry), Box<dyn std::error::Error + Send + Sync>>,
+                >,
+            > = Box::new(SSTableRangeAdapter::new(sst_iter));
+            iterators.push(adapted);
+        }
+
+        let merge =
+            KWayMergeIteratorRev::new(iterators, merge_operator).map_err(std::io::Error::other)?;
+
+        Ok(RangeIteratorRev { inner: merge })
+    }
+}
+
+impl Iterator for RangeIteratorRev {
+    type Item = Result<RangeItem, Box<dyn std::error::Error>>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner
+            .next()
+            .map(|res| {
+                res.map(|(key, entry)| match entry {
+                    Entry::Value(val) => (key, val),
+                    Entry::Merge(val) => (key, val.last().cloned().unwrap_or_default()),
+                    Entry::Tombstone => (key, Bytes::new()),
+                })
+                .map_err(|e| e as Box<dyn std::error::Error>)
+            })
     }
 }
 

@@ -84,6 +84,7 @@ rand = "0.8"              # Random data generation for soak tests
 sysinfo = "0.29"          # Resource monitoring (memory, CPU, fd)
 hdrhistogram = "7.5"      # Accurate latency percentiles
 dhat = "0.3.3"
+byteorder = "1.5.0"
 
 [features]
 default = ["simd"]
@@ -170,6 +171,10 @@ harness = false
 
 [[bench]]
 name = "write_amplification"
+harness = false
+
+[[bench]]
+name = "omendb_simulation"
 harness = false
 
 # Examples that require optional features

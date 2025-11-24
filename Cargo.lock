@@ -2200,6 +2200,7 @@ dependencies = [
  "anyhow",
  "arc-swap",
  "bincode",
+ "byteorder",
  "bytes",
  "crc32c",
  "criterion",
