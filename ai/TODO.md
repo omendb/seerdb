@@ -12,7 +12,7 @@
 
 | Task | Status | Notes |
 |------|--------|-------|
-| **DB flush MVCC** | 🚧 TODO | `flush()` needs to use `add_internal()` |
+| **DB flush MVCC** | ✅ Done | Flush uses `add_internal()`, compaction uses `add_raw_mvcc()` |
 | **MVCC garbage collection** | ❌ TODO | Old versions accumulate |
 
 ### 2. Transaction API (Medium Priority)

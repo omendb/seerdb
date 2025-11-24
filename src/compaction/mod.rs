@@ -63,9 +63,9 @@ pub fn compact_sstables(
 
     for result in merge {
         let (key, value) = result?;
-        // Use add_raw to preserve vlog pointers (FLAG_POINTER + data)
-        // without double-wrapping with FLAG_INLINE
-        builder.add_raw(key, value)?;
+        // Use add_raw_mvcc to preserve vlog pointers (FLAG_POINTER + data)
+        // and extract user key for bloom filter (for MVCC-encoded keys)
+        builder.add_raw_mvcc(key, value)?;
     }
 
     // Finish writing
@@ -116,9 +116,9 @@ pub fn compact_sstables_buffered(
 
     for result in merge {
         let (key, value) = result?;
-        // Use add_raw to preserve vlog pointers (FLAG_POINTER + data)
-        // without double-wrapping with FLAG_INLINE
-        builder.add_raw(key, value)?;
+        // Use add_raw_mvcc to preserve vlog pointers (FLAG_POINTER + data)
+        // and extract user key for bloom filter (for MVCC-encoded keys)
+        builder.add_raw_mvcc(key, value)?;
     }
 
     // Finish building and return bytes

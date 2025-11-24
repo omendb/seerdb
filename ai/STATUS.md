@@ -43,7 +43,7 @@
 
 | Feature | Status | Gap |
 |---------|--------|-----|
-| **DB flush MVCC** | TODO | `DB::flush()` needs to use `add_internal()` |
+| **DB flush MVCC** | ✅ Done | Flush/compaction write MVCC entries |
 | **MVCC GC** | Not started | Old versions not garbage collected |
 
 ### ❌ Not Implemented

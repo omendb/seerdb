@@ -301,12 +301,48 @@ impl<W: Read + Write + Seek> SSTableBuilder<W> {
         }
         self.max_key = Some(key.clone());
 
-        // Insert key into bloom filter
-        // Note: For MVCC, keys are encoded InternalKeys; for direct usage, they're user keys.
-        // The bloom filter uses the full key as provided.
+        // Insert key into bloom filter as-is (for non-MVCC add() calls)
         self.bloom.insert(&key);
         if self.prefix_len > 0 && key.len() >= self.prefix_len {
             self.prefix_bloom.insert(&key[..self.prefix_len]);
+        }
+
+        if !self.data_block.add(&key, &encoded_value) {
+            self.flush_data_block()?;
+            if !self.data_block.add(&key, &encoded_value) {
+                // Entry too large for default block - create custom-sized block
+                let entry_size = key.len() + encoded_value.len() + 8;
+                let custom_size = (entry_size * 2).max(DEFAULT_BLOCK_SIZE * 2);
+                self.data_block = BlockBuilder::with_capacity(custom_size);
+
+                if !self.data_block.add(&key, &encoded_value) {
+                    return Err(SSTableError::InvalidFormat);
+                }
+            }
+        }
+
+        self.num_entries += 1;
+        Ok(())
+    }
+
+    /// Add a raw entry from MVCC-encoded SSTable (for compaction)
+    ///
+    /// Similar to `add_raw()` but extracts user key from encoded InternalKey for bloom filter.
+    /// This ensures get_mvcc() can find keys in compacted SSTables.
+    #[inline]
+    pub fn add_raw_mvcc(&mut self, key: Bytes, encoded_value: Bytes) -> Result<()> {
+        // Track min/max keys for range filtering
+        if self.min_key.is_none() {
+            self.min_key = Some(key.clone());
+        }
+        self.max_key = Some(key.clone());
+
+        // Extract user key from encoded InternalKey for bloom filter
+        // This allows get_mvcc(user_key) to find the entry
+        let user_key = InternalKey::extract_user_key(&key);
+        self.bloom.insert(&user_key);
+        if self.prefix_len > 0 && user_key.len() >= self.prefix_len {
+            self.prefix_bloom.insert(&user_key[..self.prefix_len]);
         }
 
         if !self.data_block.add(&key, &encoded_value) {
@@ -1812,8 +1848,11 @@ impl Iterator for SSTableRangeIterator {
                     }
                 }
 
+                // Extract user key from encoded InternalKey (handles both MVCC and legacy formats)
+                let user_key = InternalKey::extract_user_key(key);
+
                 if !self.read_values {
-                    return Some(Ok((key.clone(), Entry::Value(Bytes::new()))));
+                    return Some(Ok((user_key, Entry::Value(Bytes::new()))));
                 }
 
                 if entry_value.is_empty() {
@@ -1851,7 +1890,7 @@ impl Iterator for SSTableRangeIterator {
                     _ => continue,
                 };
 
-                return Some(Ok((key.clone(), entry)));
+                return Some(Ok((user_key, entry)));
             }
 
             // Need to advance to next data block

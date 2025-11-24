@@ -6,6 +6,7 @@ use crate::buffer::{BufferPool, BufferPoolOptions};
 use crate::compaction::{compact_sstables, LSMTree};
 use crate::health::{HealthCheck, HealthStatus};
 use crate::memtable::{Entry, Memtable};
+use crate::types::InternalKey;
 use crate::merge_operator::MergeOperator;
 use crate::metrics::{DBStats, MetricsCollector};
 use crate::range::RangeIterator;
@@ -1383,8 +1384,9 @@ impl DB {
 
                     let mut sstable = cached_sstable.lock().expect("SSTable lock poisoned");
 
-                    // Use get_entry to see flags (Merge/Tombstone)
-                    let result = sstable.get_entry(key)?;
+                    // Use MVCC-aware get to handle InternalKey format
+                    // u64::MAX = get latest version (no snapshot isolation)
+                    let result = sstable.get_entry_mvcc(key, u64::MAX)?;
 
                     match result {
                         Some((data, flag)) => {
@@ -1764,8 +1766,6 @@ impl DB {
     ///
     /// Not typically needed in normal operation (automatic flushing works well).
     pub fn flush(&self) -> Result<()> {
-        use crate::memtable::Entry;
-
         // **CRITICAL FIX (Bug #10): Wait for background flush to complete BEFORE acquiring mutex
         // If background_flush is enabled AND immutable_memtables is occupied,
         // we must wait for the background flush worker to complete.
@@ -1837,19 +1837,19 @@ impl DB {
                 *counter += 1;
                 drop(counter);
 
-                // Collect and sort entries from all pending partitions
-                let mut all_entries: Vec<(Bytes, Entry)> = Vec::new();
+                // Collect and sort entries from all pending partitions (MVCC-aware)
+                let mut all_entries: Vec<(InternalKey, Bytes)> = Vec::new();
                 for partition_mt in pending_partitions_arc.iter() {
-                    for (key, entry) in partition_mt.iter_entries() {
-                        all_entries.push((key, entry));
+                    for (ikey, value) in partition_mt.iter() {
+                        all_entries.push((ikey, value));
                     }
                 }
 
-                // Sort by key (deduplication handled by taking last value for each key)
+                // Sort by InternalKey (user_key ASC, seq DESC - preserves all versions)
                 all_entries.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
 
-                // Build SSTable from sorted entries
-                self.build_sstable_from_entries(
+                // Build SSTable from sorted entries (MVCC-aware)
+                self.build_sstable_from_internal(
                     &pending_sstable_path,
                     all_entries.iter(),
                     pending_flush_sequence,
@@ -1921,11 +1921,11 @@ impl DB {
             flushing_partitions.push(old_arc);
         }
 
-        // Collect entries from ALL partitions FIRST (before storing in immutable)
-        let mut all_entries: Vec<(Bytes, Entry)> = Vec::new();
+        // Collect entries from ALL partitions FIRST (MVCC-aware: preserves all versions)
+        let mut all_entries: Vec<(InternalKey, Bytes)> = Vec::new();
         for partition_mt in &flushing_partitions {
-            for (key, entry) in partition_mt.iter_entries() {
-                all_entries.push((key, entry));
+            for (ikey, value) in partition_mt.iter() {
+                all_entries.push((ikey, value));
             }
         }
 
@@ -1933,12 +1933,11 @@ impl DB {
         self.immutable_memtables
             .store(Arc::new(Some(Arc::new(flushing_partitions))));
 
-        // Sort by key to build sorted SSTable
-        // If there are duplicates (same key in multiple partitions due to race), keep last one
+        // Sort by InternalKey (user_key ASC, seq DESC - preserves all MVCC versions)
         all_entries.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
 
-        // Build SSTable from sorted entries
-        self.build_sstable_from_entries(&sstable_path, all_entries.iter(), flush_sequence)?;
+        // Build SSTable from sorted entries (MVCC-aware)
+        self.build_sstable_from_internal(&sstable_path, all_entries.iter(), flush_sequence)?;
 
         let size = std::fs::metadata(&sstable_path)?.len();
 
@@ -2023,18 +2022,19 @@ impl DB {
         Ok(())
     }
 
-    /// Helper: Build SSTable from iterator of (key, entry) pairs
-    /// Handles both normal values and vLog separation
-    fn build_sstable_from_entries<'a, I>(
+    /// Helper: Build SSTable from iterator of (InternalKey, value) pairs (MVCC-aware)
+    ///
+    /// Preserves all MVCC versions by using `add_internal()` methods.
+    /// Handles both normal values and vLog separation.
+    fn build_sstable_from_internal<'a, I>(
         &self,
         sstable_path: &Path,
         entries: I,
-        sequence: u64,
+        _sequence: u64, // Unused: max_sequence derived from entries
     ) -> Result<()>
     where
-        I: Iterator<Item = &'a (Bytes, crate::memtable::Entry)>,
+        I: Iterator<Item = &'a (InternalKey, Bytes)>,
     {
-        use crate::memtable::Entry;
         use crate::sstable::SSTableBuilder;
 
         let mut vlog_guard = self.vlog.lock().expect("vLog mutex poisoned");
@@ -2052,25 +2052,12 @@ impl DB {
             #[cfg(feature = "object-store")]
             {
                 if use_cloud_storage {
-                    // Cloud storage + vLog: use buffered builder
-                    let mut builder = SSTableBuilder::new_buffered()
-                        .with_vlog_threshold(threshold)
-                        .with_max_sequence(sequence);
+                    // Cloud storage + vLog: use buffered builder (MVCC-aware)
+                    let mut builder =
+                        SSTableBuilder::new_buffered().with_vlog_threshold(threshold);
 
-                    for (key, entry) in entries {
-                        match entry {
-                            Entry::Value(value) => {
-                                builder.add_with_vlog(key.clone(), value.clone(), vlog)?;
-                            }
-                            Entry::Tombstone => {
-                                builder.add_tombstone(key.clone())?;
-                            }
-                            crate::memtable::Entry::Merge(operands) => {
-                                for op in operands {
-                                    builder.add_merge(key.clone(), op.clone())?;
-                                }
-                            }
-                        }
+                    for (ikey, value) in entries {
+                        builder.add_internal_with_vlog(ikey, value.clone(), vlog)?;
                     }
 
                     // ALWAYS sync vLog after flush
@@ -2092,25 +2079,12 @@ impl DB {
                         );
                     }
                 } else {
-                    // No cloud storage + vLog: use traditional SSTableBuilder
-                    let mut builder = SSTableBuilder::create(sstable_path)?
-                        .with_vlog_threshold(threshold)
-                        .with_max_sequence(sequence);
+                    // No cloud storage + vLog: use traditional SSTableBuilder (MVCC-aware)
+                    let mut builder =
+                        SSTableBuilder::create(sstable_path)?.with_vlog_threshold(threshold);
 
-                    for (key, entry) in entries {
-                        match entry {
-                            Entry::Value(value) => {
-                                builder.add_with_vlog(key.clone(), value.clone(), vlog)?;
-                            }
-                            Entry::Tombstone => {
-                                builder.add_tombstone(key.clone())?;
-                            }
-                            crate::memtable::Entry::Merge(operands) => {
-                                for op in operands {
-                                    builder.add_merge(key.clone(), op.clone())?;
-                                }
-                            }
-                        }
+                    for (ikey, value) in entries {
+                        builder.add_internal_with_vlog(ikey, value.clone(), vlog)?;
                     }
 
                     builder.finish()?;
@@ -2123,24 +2097,11 @@ impl DB {
             // When object-store feature is not enabled, always use traditional SSTableBuilder
             #[cfg(not(feature = "object-store"))]
             {
-                let mut builder = SSTableBuilder::create(sstable_path)?
-                    .with_vlog_threshold(threshold)
-                    .with_max_sequence(sequence);
+                let mut builder =
+                    SSTableBuilder::create(sstable_path)?.with_vlog_threshold(threshold);
 
-                for (key, entry) in entries {
-                    match entry {
-                        Entry::Value(value) => {
-                            builder.add_with_vlog(key.clone(), value.clone(), vlog)?;
-                        }
-                        Entry::Tombstone => {
-                            builder.add_tombstone(key.clone())?;
-                        }
-                        crate::memtable::Entry::Merge(operands) => {
-                            for op in operands {
-                                builder.add_merge(key.clone(), op.clone())?;
-                            }
-                        }
-                    }
+                for (ikey, value) in entries {
+                    builder.add_internal_with_vlog(ikey, value.clone(), vlog)?;
                 }
 
                 builder.finish()?;
@@ -2149,29 +2110,17 @@ impl DB {
                 vlog.sync()?;
             }
         } else {
-            // No KV separation - traditional flush
+            // No KV separation - MVCC-aware flush
             drop(vlog_guard);
 
             // Use buffered builder when cloud storage is enabled (fewer syscalls + upload)
             #[cfg(feature = "object-store")]
             {
                 if self.storage_backend.is_some() {
-                    let mut builder = SSTableBuilder::new_buffered().with_max_sequence(sequence);
+                    let mut builder = SSTableBuilder::new_buffered();
 
-                    for (key, entry) in entries {
-                        match entry {
-                            Entry::Value(value) => {
-                                builder.add(key.clone(), value.clone())?;
-                            }
-                            Entry::Tombstone => {
-                                builder.add_tombstone(key.clone())?;
-                            }
-                            crate::memtable::Entry::Merge(operands) => {
-                                for op in operands {
-                                    builder.add_merge(key.clone(), op.clone())?;
-                                }
-                            }
-                        }
+                    for (ikey, value) in entries {
+                        builder.add_internal(ikey, value.clone())?;
                     }
 
                     // Build SSTable in memory
@@ -2190,24 +2139,11 @@ impl DB {
                         );
                     }
                 } else {
-                    // No cloud storage - use traditional SSTableBuilder
-                    let mut builder =
-                        SSTableBuilder::create(sstable_path)?.with_max_sequence(sequence);
+                    // No cloud storage - use traditional SSTableBuilder (MVCC-aware)
+                    let mut builder = SSTableBuilder::create(sstable_path)?;
 
-                    for (key, entry) in entries {
-                        match entry {
-                            Entry::Value(value) => {
-                                builder.add(key.clone(), value.clone())?;
-                            }
-                            Entry::Tombstone => {
-                                builder.add_tombstone(key.clone())?;
-                            }
-                            crate::memtable::Entry::Merge(operands) => {
-                                for op in operands {
-                                    builder.add_merge(key.clone(), op.clone())?;
-                                }
-                            }
-                        }
+                    for (ikey, value) in entries {
+                        builder.add_internal(ikey, value.clone())?;
                     }
 
                     builder.finish()?;
@@ -2217,22 +2153,10 @@ impl DB {
             // When object-store feature is not enabled, always use traditional SSTableBuilder
             #[cfg(not(feature = "object-store"))]
             {
-                let mut builder = SSTableBuilder::create(sstable_path)?.with_max_sequence(sequence);
+                let mut builder = SSTableBuilder::create(sstable_path)?;
 
-                for (key, entry) in entries {
-                    match entry {
-                        Entry::Value(value) => {
-                            builder.add(key.clone(), value.clone())?;
-                        }
-                        Entry::Tombstone => {
-                            builder.add_tombstone(key.clone())?;
-                        }
-                        crate::memtable::Entry::Merge(operands) => {
-                            for op in operands {
-                                builder.add_merge(key.clone(), op.clone())?;
-                            }
-                        }
-                    }
+                for (ikey, value) in entries {
+                    builder.add_internal(ikey, value.clone())?;
                 }
 
                 builder.finish()?;

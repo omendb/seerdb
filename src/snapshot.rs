@@ -57,7 +57,8 @@ impl Snapshot {
             let sstables_iter = level_sstables.iter().rev();
             for sstable_arc in sstables_iter {
                 let mut sstable_guard = sstable_arc.lock().expect("SSTable lock poisoned");
-                if let Ok(Some(value)) = sstable_guard.get(key) {
+                // Use MVCC-aware lookup to respect snapshot sequence number
+                if let Ok(Some(value)) = sstable_guard.get_mvcc(key, self.sequence_number) {
                     drop(sstable_guard);
                     if value.is_empty() {
                         return Ok(None);
