@@ -10,10 +10,12 @@
 
 | Metric | Value |
 |--------|-------|
-| **Tests** | 193 lib + integration tests passing |
+| **Tests** | 193 lib passing, 1 integration failing |
 | **Compilation** | Clean (no errors, no warnings) |
 | **Lines of Code** | ~30K Rust |
-| **ai/ Files** | 15 (cleaned from 68) |
+| **ai/ Files** | 16 (cleaned from 68) |
+
+**Known Failing Test**: `test_corrupted_wal_detected` - corruption offset needs adjustment for MVCC record format
 
 ## Feature Implementation Status
 

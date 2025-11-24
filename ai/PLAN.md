@@ -69,6 +69,22 @@
 
 ---
 
+## Future Phases
+
+### Phase 4: Config Profiles
+- [ ] `DBOptions::embedded()` - Lower memory (64MB memtable)
+- [ ] `DBOptions::cloud()` - Aggressive compaction
+- [ ] Optional MVCC disable for oadb
+
+### Phase 10: Full-Text Search (OmenDB)
+- [ ] Inverted index support
+- [ ] Tokenization (word splitting, stemming)
+- [ ] BM25 ranking
+
+**Note**: See `ai/REQUIREMENTS.md` for oadb/OmenDB product requirements
+
+---
+
 ## Deferred (Post-Integration)
 
 | Feature | Trigger |

@@ -2,7 +2,7 @@
 
 **Purpose**: Session context for seerdb development
 **Last Updated**: November 24, 2025
-**Files**: 15 (cleaned from 68)
+**Files**: 16 (cleaned from 68)
 
 ---
 
@@ -22,6 +22,7 @@ ai/
 ├── STATUS.md           # Current state, feature matrix
 ├── TODO.md             # Active tasks
 ├── PLAN.md             # Roadmap
+├── REQUIREMENTS.md     # Product requirements (oadb, OmenDB)
 ├── README.md           # This file
 ├── OMENDB_INSTRUCTIONS.md  # Omendb integration context
 │
@@ -67,6 +68,7 @@ ai/
 | `STATUS.md` | Every session | After significant work |
 | `TODO.md` | Every session | When tasks change |
 | `PLAN.md` | Strategic planning | Phase transitions |
+| `REQUIREMENTS.md` | Feature planning | New product requirements |
 | `OMENDB_INSTRUCTIONS.md` | Omendb integration | Rarely |
 | `decisions/*.md` | Design questions | New decisions |
 | `design/*.md` | Implementation | Design changes |

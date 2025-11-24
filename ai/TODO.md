@@ -21,7 +21,13 @@
 | **DB flush MVCC** | 🚧 TODO | `flush()` needs to use `add_internal()` |
 | **MVCC garbage collection** | ❌ TODO | Old versions accumulate |
 
-### 2. Transaction API (Medium Priority)
+### 2. Bug Fixes (High Priority)
+
+| Task | Status | Notes |
+|------|--------|-------|
+| Fix `test_corrupted_wal_detected` | 🚧 TODO | Corruption offset needs MVCC format adjustment |
+
+### 3. Transaction API (Medium Priority)
 
 | Task | Status | Notes |
 |------|--------|-------|
