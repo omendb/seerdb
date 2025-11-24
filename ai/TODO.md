@@ -1,36 +1,54 @@
 # TODO - seerdb
 
 **Last Updated**: November 24, 2025
-**Current Focus**: Omendb Development Support (MVCC)
-**Version**: 0.0.1-alpha (Stable Checkpoint)
-**Status**: Active Development
+**Focus**: Omendb Integration (MVCC completion)
+**Version**: 0.0.1-alpha
 
 ---
 
-## Active Tasks (Omendb Priorities)
+## Active Tasks
 
-### 1. MVCC Transactions (Snapshot Isolation)
-- [x] **Core Types**: Create `src/types.rs` for `InternalKey` (UserKey + SeqNum + Type).
-- [x] **Memtable Refactor**: Update `Memtable` to store `InternalKey` (sorted by Key ASC, Seq DESC).
-- [x] **WAL Versioning**: Update `Record` to include sequence numbers.
-- [x] **DB Integration**: Refactor `DB::put`/`get`/`delete`/`merge` to assign sequence numbers.
-- [ ] **SSTable Lookup**: Update `SSTable::get()` to use InternalKey for MVCC-aware lookups.
-- [ ] **Snapshot API**: Implement `db.snapshot()` returning read-only view at sequence number.
-- [ ] **Transaction API**: Implement `db.begin_transaction()` and `Transaction` struct.
+### 1. MVCC Completion (High Priority)
+
+| Task | Status | Notes |
+|------|--------|-------|
+| InternalKey type | ✅ Done | `src/types.rs` |
+| Memtable MVCC | ✅ Done | Sorted by (key ASC, seq DESC) |
+| WAL versioning | ✅ Done | Records include seq numbers |
+| DB seq assignment | ✅ Done | `put()`, `delete()`, `merge()` |
+| Snapshot API | ✅ Done | `db.snapshot()` works |
+| **SSTable MVCC lookup** | 🚧 TODO | `SSTable::get()` needs InternalKey |
+| **MVCC garbage collection** | ❌ TODO | Old versions accumulate |
+
+### 2. Transaction API (Medium Priority)
+
+| Task | Status | Notes |
+|------|--------|-------|
+| `db.begin_transaction()` | ❌ TODO | Returns `Transaction` handle |
+| `Transaction.get/put/delete` | ❌ TODO | Buffered writes |
+| `Transaction.commit()` | ❌ TODO | Atomic batch + OCC validation |
+| `Transaction.abort()` | ❌ TODO | Discard buffer |
 
 ---
 
 ## Backlog (Deferred)
 
-### Performance
-- [ ] **Async I/O (io_uring)**: Investigate replacing `std::fs` (Defer until needed).
-- [ ] **Vector Index**: Integrate `seerdb-vector` (Proprietary/Omendb side).
+| Task | Priority | Trigger |
+|------|----------|---------|
+| Async I/O (io_uring) | Low | When syscall overhead is bottleneck |
+| Cloud storage hardening | Low | Production scaling phase |
+| Compaction tuning | Low | Write stall reports |
 
 ---
 
-## Completed Tasks
-- ✅ MVCC core types and memtable refactor (Nov 24, 2025)
-- ✅ WAL reader/writer compatibility fix (Nov 24, 2025)
-- ✅ DB sequence number assignment (Nov 24, 2025)
-- ✅ Integration tests updated for MVCC API (Nov 24, 2025)
-- ✅ Fixed flaky crash recovery test (Nov 24, 2025)
+## Completed (Nov 2025)
+
+- ✅ MVCC core types and memtable refactor
+- ✅ WAL reader/writer compatibility (length prefixes)
+- ✅ Snapshot API with sequence number isolation
+- ✅ Reverse iteration (`iter_rev()`, `range_rev()`)
+- ✅ Range iterators (`range()`, `prefix()`)
+- ✅ Merge operators (`db.merge()`)
+- ✅ Fixed flaky crash recovery test
+- ✅ ai/ directory cleanup (68 → 15 files)
+- ✅ Documentation audit and update

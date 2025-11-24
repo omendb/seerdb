@@ -1,39 +1,101 @@
 # STATUS - seerdb
 
 **Last Updated**: November 24, 2025
-**Current Phase**: Omendb Development (Integration Prep)
-**Version**: 0.0.1-alpha (Stable Checkpoint)
-**Status**: Active Development
+**Version**: 0.0.1-alpha
+**Status**: Active Development (Omendb Integration)
 
-**Strategic Shift (Nov 23, 2025)**:
-- **Decision**: Halted public release of v0.0.1-alpha to prioritize `omendb` integration.
-- **New Focus**: MVCC Transactions (Snapshot Isolation) and Graph optimizations.
-- **Architecture Decision**: Implementing Native MVCC via "Internal Keys" (RocksDB style) rather than external libraries.
+---
 
-**Recent Work (Nov 24, 2025)**:
-- **MVCC Core**: ✅ **COMPLETE**
-  - Created `InternalKey` (UserKey + SeqNum + Type) in `src/types.rs`
-  - Refactored `Memtable` to use `InternalKey` (breaking change)
-  - Versioned WAL `Record` to include sequence numbers
-  - Updated `db.rs` to assign sequence numbers in `put()`, `delete()`, `merge()`
-  - Fixed WAL writer to include length prefixes (reader/writer compatibility)
-  - Fixed WAL reader to pass correct buffer to Record::decode
-  - Fixed flaky crash recovery test (adjusted corruption offset for MVCC record format)
-  - All 189 lib tests passing
-  - All integration tests passing
+## Current State
 
-**Current State**:
-- **Compilation**: ✅ Clean (no errors, no warnings)
-- **Tests**: ✅ All passing (189 lib + integration tests)
-- **MVCC Foundation**: Complete - sequence numbers flowing through WAL → Memtable → SSTable
-- **Uncommitted Changes**: 16 files modified, ready to commit
+| Metric | Value |
+|--------|-------|
+| **Tests** | 189 lib + integration tests passing |
+| **Compilation** | Clean (no errors, no warnings) |
+| **Lines of Code** | ~29.5K Rust |
+| **ai/ Files** | 15 (cleaned from 68) |
 
-**Remaining MVCC Tasks**:
-1. SSTable lookup with InternalKey (bloom filter query using user key)
-2. Snapshot API for reads at specific sequence numbers
-3. Garbage collection for old versions
+## Feature Implementation Status
 
-**Metrics (v0.0.1-alpha baseline)**:
-- **Writes**: 878K ops/sec
-- **Reads**: 4.65M ops/sec
-- **Graph Merge**: 230K ops/sec
+### ✅ Implemented (Working)
+
+| Feature | Location | Notes |
+|---------|----------|-------|
+| **MVCC InternalKey** | `src/types.rs` | UserKey + SeqNum + ValueType |
+| **Memtable MVCC** | `src/memtable/mod.rs` | Sorted by (key ASC, seq DESC) |
+| **WAL Versioning** | `src/wal/record.rs` | Records include sequence numbers |
+| **Snapshot API** | `src/snapshot.rs`, `db.snapshot()` | Read isolation at sequence number |
+| **Range Iterators** | `db.range()`, `db.iter()` | Forward iteration with merge |
+| **Reverse Iteration** | `db.iter_rev()`, `db.range_rev()` | Backward iteration |
+| **Prefix Scans** | `db.prefix()`, `db.prefix_batch()` | Efficient prefix queries |
+| **Merge Operators** | `src/merge_operator.rs`, `db.merge()` | Custom merge functions |
+| **Batch Writes** | `src/batch.rs`, `db.batch()` | Atomic multi-key writes |
+| **WiscKey vLog** | `src/vlog/` | Value separation for large values |
+| **Background Compaction** | `src/background_workers.rs` | Async compaction |
+| **Bloom Filters** | `src/bloom/`, SSTable | Traditional + prefix bloom |
+| **ALEX Learned Index** | `src/alex/`, SSTable | Faster block lookups |
+| **Buffer Pool** | `src/buffer/` | Page caching with eviction |
+| **Health Checks** | `src/health.rs` | Database health monitoring |
+| **Object Store** | Feature flag `object-store` | S3/GCS backend support |
+
+### 🚧 Partial / Needs Work
+
+| Feature | Status | Gap |
+|---------|--------|-----|
+| **SSTable MVCC Lookup** | Partial | `SSTable::get()` needs InternalKey for proper MVCC |
+| **MVCC GC** | Not started | Old versions not garbage collected |
+
+### ❌ Not Implemented
+
+| Feature | Priority | Notes |
+|---------|----------|-------|
+| **Transaction API** | Medium | `begin_transaction()` / `commit()` / `abort()` |
+| **Column Families** | None | Use key prefixes instead |
+
+---
+
+## Performance Baseline (v0.0.1-alpha)
+
+| Workload | Performance | vs RocksDB |
+|----------|-------------|------------|
+| **Writes** | 878K ops/sec | 2.47x faster |
+| **Reads** | 4.65M ops/sec | 2.07x faster |
+| **Graph Merge** | 230K ops/sec | - |
+| **Write Amp** | 1.01x (with vLog) | 4.82x better |
+
+---
+
+## Architecture
+
+```
+Write Path:  put() → WAL (seq#) → Memtable (InternalKey) → [flush] → SSTable
+Read Path:   get() → Memtable → Immutable Memtables → L0..L6 SSTables
+Snapshot:    Captures current seq# → reads filter by seq ≤ snapshot_seq
+```
+
+### Module Map
+
+```
+src/
+├── types.rs          # InternalKey, ValueType (MVCC core)
+├── db.rs             # Main DB interface (~200K lines)
+├── memtable/         # Partitioned concurrent skiplist
+├── wal/              # Write-ahead log with seq numbers
+├── sstable/          # SSTable format with bloom + ALEX
+├── compaction/       # Leveled compaction + filters
+├── vlog/             # WiscKey value separation
+├── snapshot.rs       # Point-in-time reads
+├── range.rs          # Range iteration
+├── batch.rs          # Atomic batch writes
+├── bloom/            # Traditional + learned bloom
+├── alex/             # ALEX learned index
+└── buffer/           # Buffer pool management
+```
+
+---
+
+## Recent Changes (Nov 24, 2025)
+
+1. **MVCC Core Complete**: Sequence numbers flow through entire write path
+2. **Cleaned ai/ Directory**: 68 → 15 files
+3. **Documentation Audit**: Identified stale docs claiming features not implemented

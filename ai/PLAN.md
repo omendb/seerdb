@@ -1,62 +1,76 @@
-# PLAN - SeerDB: The "omendb" Engine
+# PLAN - seerdb
 
-**Goal**: Optimize SeerDB for `omendb` (Vector/Graph) development.
-**Strategy**: Hold public release. Focus on internal features required by the graph layer.
+**Goal**: Storage engine for `omendb` (Vector/Graph database)
+**Status**: Active Development
+**Last Updated**: November 24, 2025
 
-**Status**: ACTIVE (Nov 23, 2025) - **Omendb Integration Phase**
+---
 
-## 1. Active Priorities (Omendb Requirements)
+## Current Phase: MVCC Completion
 
-### A. MVCC Transactions (Snapshot Isolation) 🔄 **NEXT**
-*   **Why**: Graph updates (e.g., `addEdge(A, B)`) touch multiple keys (`A->B`, `B->A`). They must be atomic and consistent.
-*   **Requirement**: `db.begin_transaction()` -> `txn.get/set` -> `txn.commit()`.
-*   **Implementation**:
-    *   **Reads**: Use existing Snapshot mechanism (already fixed).
-    *   **Writes**: Buffer in `Transaction` object.
-    *   **Commit**: Atomic batch write (already supported).
-    *   **Conflict Detection**: Optimistic Concurrency Control (OCC) - fail if keys modified since snapshot.
+### ✅ Completed
 
-### B. Reverse Iteration 🔄 **NEXT**
-*   **Why**: Time-series graph edges (e.g., "User X's recent posts") are stored as `Key: <Timestamp>`, requiring `iter_rev()` to scan newest-first.
-*   **Gap**: `SSTable` and `Memtable` iterators currently only go forward.
-*   **Action**: Implement `DoubleEndedIterator` for:
-    1.  `MemtableIterator` (Skiplist supports this).
-    2.  `SSTableIterator` (Block-based, requires efficient block caching/jumping).
-    3.  `KWayMergeIterator` (Requires max-heap for reverse merge).
+| Feature | Status | Notes |
+|---------|--------|-------|
+| InternalKey (MVCC core) | ✅ | `src/types.rs` |
+| Memtable MVCC | ✅ | Sorted by (key ASC, seq DESC) |
+| WAL versioning | ✅ | Records include seq numbers |
+| Snapshot API | ✅ | `db.snapshot()` with seq isolation |
+| Reverse iteration | ✅ | `iter_rev()`, `range_rev()` |
+| Range iterators | ✅ | `range()`, `prefix()`, `prefix_batch()` |
+| Merge operators | ✅ | `db.merge()` for graph edges |
 
-### C. Omendb Workload Simulation 🔄 **NEXT**
-*   **Why**: Verify `seerdb` performance on the exact `omendb` access pattern before integration.
-*   **Pattern**:
-    *   **Write**: Massive Merge Operator usage (appending to edge lists).
-    *   **Read**: High-volume `prefix_scan` (finding edges).
-*   **Action**: Create `benches/omendb_simulation.rs`.
+### 🚧 In Progress
 
-## 2. Backlog (Post-Integration)
+| Feature | Priority | Notes |
+|---------|----------|-------|
+| SSTable MVCC lookup | High | `get()` needs InternalKey |
+| MVCC garbage collection | Medium | Old versions accumulate |
 
-### A. Async I/O (io_uring) 
-*   **Status**: Defer. `std::fs` is fast enough for development (4.65M ops/sec).
-*   **Trigger**: When Linux CPU profiling shows syscall overhead as primary bottleneck.
+### ❌ Next Up
 
-### B. Cloud Native Storage (S3)
-*   **Status**: Feature complete for v1. Harden during scaling phase.
+| Feature | Priority | Notes |
+|---------|----------|-------|
+| Transaction API | Medium | `begin_transaction()` / `commit()` |
 
-### C. Vector Index (HNSW)
-*   **Status**: Handled in `omendb` repo (`seerdb-vector` crate).
+---
 
-## 3. Architecture Decisions
+## Roadmap
 
-### Buffer Management
-*   **Decision**: Stick to **Software Buffer Pool** (LeanStore-lite).
-*   **Status**: Working. No major changes needed for now.
+### Phase 1: MVCC Foundation ✅ (Nov 2025)
+- [x] InternalKey type
+- [x] Memtable MVCC
+- [x] WAL versioning
+- [x] Snapshot reads
 
-### Compaction
-*   **Decision**: Tiered Compaction (Write Optimized).
-*   **Reason**: Graph ingestion is write-heavy. Leveled compaction write stalls would be fatal.
+### Phase 2: MVCC Completion (Current)
+- [ ] SSTable MVCC-aware lookups
+- [ ] Version garbage collection
+- [ ] Transaction API (OCC)
 
-## 4. Execution Plan
+### Phase 3: Omendb Integration
+- [ ] Performance validation on graph workloads
+- [ ] Prefix scan optimization for edge lists
+- [ ] Integration with `seerdb-vector`
 
-1.  **Tag v0.0.1-alpha** (Done) - Stable Checkpoint.
-2.  **Omendb Simulation** - Establish baseline.
-3.  **Reverse Iteration** - Enable time-series queries.
-4.  **MVCC** - Enable safe graph updates.
-5.  **Integration** - Move to `omendb` repo for full integration.
+---
+
+## Architecture Decisions
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| MVCC | Native InternalKey | RocksDB-style, no external deps |
+| Compaction | Leveled | Bounded read amp for graph queries |
+| Value separation | WiscKey vLog | 4.82x better write amp |
+| Learned index | ALEX | Faster SSTable block lookups |
+| Buffer management | Software pool | LeanStore-lite approach |
+
+---
+
+## Deferred (Post-Integration)
+
+| Feature | Trigger |
+|---------|---------|
+| Async I/O (io_uring) | Syscall overhead bottleneck |
+| Cloud hardening | Production scaling |
+| Column families | User demand (use key prefixes) |
