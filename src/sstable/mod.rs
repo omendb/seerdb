@@ -7,6 +7,7 @@ use crate::alex::AlexTree;
 use crate::bloom::BloomFilter;
 use crate::buffer::{BufferPool, PageId};
 use crate::memtable::Entry;
+use crate::types::{InternalKey, ValueType};
 use crate::vlog::{VLog, ValuePointer};
 use block::{Block, BlockBuilder, BlockError, DEFAULT_BLOCK_SIZE};
 use bytes::{Bytes, BytesMut};
@@ -393,6 +394,124 @@ impl<W: Read + Write + Seek> SSTableBuilder<W> {
                 self.data_block = BlockBuilder::with_capacity(custom_size);
 
                 if !self.data_block.add(&key, &entry) {
+                    return Err(SSTableError::InvalidFormat);
+                }
+            }
+        }
+
+        self.num_entries += 1;
+        Ok(())
+    }
+
+    // ========================================================================
+    // MVCC-aware methods: Store encoded InternalKeys, bloom filter uses user keys
+    // ========================================================================
+
+    /// Add an entry with InternalKey (MVCC-aware)
+    ///
+    /// - Encodes InternalKey for storage (sorted by user_key ASC, seq DESC)
+    /// - Uses user_key for bloom filter (so get_mvcc can check bloom)
+    /// - Tracks max sequence number
+    pub fn add_internal(&mut self, ikey: &InternalKey, value: Bytes) -> Result<()> {
+        // Update max sequence for this SSTable
+        if ikey.seq > self.max_sequence {
+            self.max_sequence = ikey.seq;
+        }
+
+        // Bloom filter uses user_key (not encoded InternalKey)
+        // This allows get_mvcc(user_key) to check bloom correctly
+        self.bloom.insert(&ikey.user_key);
+        if self.prefix_len > 0 && ikey.user_key.len() >= self.prefix_len {
+            self.prefix_bloom.insert(&ikey.user_key[..self.prefix_len]);
+        }
+
+        // Encode the InternalKey for storage
+        let encoded_key = ikey.encode();
+
+        // Track min/max using encoded keys (for range filtering)
+        if self.min_key.is_none() {
+            self.min_key = Some(encoded_key.clone());
+        }
+        self.max_key = Some(encoded_key.clone());
+
+        // Encode value with appropriate flag based on ValueType
+        let flag = match ikey.kind {
+            ValueType::Value => FLAG_INLINE,
+            ValueType::Deletion => FLAG_TOMBSTONE,
+            ValueType::Merge => FLAG_MERGE,
+            ValueType::Log => FLAG_INLINE, // Treat log as inline value
+        };
+        let encoded_value = self.encode_entry(&encoded_key, flag, &value);
+
+        // Add to data block
+        if !self.data_block.add(&encoded_key, &encoded_value) {
+            self.flush_data_block()?;
+            if !self.data_block.add(&encoded_key, &encoded_value) {
+                let entry_size = encoded_key.len() + encoded_value.len() + 8;
+                let custom_size = (entry_size * 2).max(DEFAULT_BLOCK_SIZE * 2);
+                self.data_block = BlockBuilder::with_capacity(custom_size);
+
+                if !self.data_block.add(&encoded_key, &encoded_value) {
+                    return Err(SSTableError::InvalidFormat);
+                }
+            }
+        }
+
+        self.num_entries += 1;
+        Ok(())
+    }
+
+    /// Add an entry with InternalKey and vLog support (MVCC-aware)
+    pub fn add_internal_with_vlog(
+        &mut self,
+        ikey: &InternalKey,
+        value: Bytes,
+        vlog: &mut VLog,
+    ) -> Result<()> {
+        // Update max sequence
+        if ikey.seq > self.max_sequence {
+            self.max_sequence = ikey.seq;
+        }
+
+        // Bloom filter uses user_key
+        self.bloom.insert(&ikey.user_key);
+        if self.prefix_len > 0 && ikey.user_key.len() >= self.prefix_len {
+            self.prefix_bloom.insert(&ikey.user_key[..self.prefix_len]);
+        }
+
+        // Encode the InternalKey
+        let encoded_key = ikey.encode();
+
+        // Track min/max
+        if self.min_key.is_none() {
+            self.min_key = Some(encoded_key.clone());
+        }
+        self.max_key = Some(encoded_key.clone());
+
+        // Handle vLog for large values (only for Value type)
+        let (data, flag) = if matches!(ikey.kind, ValueType::Value) {
+            handle_vlog_value(&ikey.user_key, value, vlog, self.vlog_threshold)?
+        } else {
+            // Tombstone/Merge don't use vLog
+            let flag = match ikey.kind {
+                ValueType::Deletion => FLAG_TOMBSTONE,
+                ValueType::Merge => FLAG_MERGE,
+                _ => FLAG_INLINE,
+            };
+            (value, flag)
+        };
+
+        let encoded_value = self.encode_entry(&encoded_key, flag, &data);
+
+        // Add to data block
+        if !self.data_block.add(&encoded_key, &encoded_value) {
+            self.flush_data_block()?;
+            if !self.data_block.add(&encoded_key, &encoded_value) {
+                let entry_size = encoded_key.len() + encoded_value.len() + 8;
+                let custom_size = (entry_size * 2).max(DEFAULT_BLOCK_SIZE * 2);
+                self.data_block = BlockBuilder::with_capacity(custom_size);
+
+                if !self.data_block.add(&encoded_key, &encoded_value) {
                     return Err(SSTableError::InvalidFormat);
                 }
             }
@@ -888,6 +1007,148 @@ impl SSTable {
 
         // Check if key exists in data block
         Ok(data_block.find_exact(key).is_some())
+    }
+
+    // ========================================================================
+    // MVCC-aware get methods: Search for user_key with seq <= snapshot_seq
+    // ========================================================================
+
+    /// Get value for user_key visible at snapshot_seq (MVCC-aware)
+    ///
+    /// Searches for the first version of user_key with seq <= snapshot_seq.
+    /// Returns:
+    /// - Ok(Some(value)) if a live value is found
+    /// - Ok(None) if key not found or deleted (tombstone)
+    /// - Err if I/O or format error
+    ///
+    /// IMPORTANT: Only works on SSTables built with add_internal() methods.
+    pub fn get_mvcc(&mut self, user_key: &[u8], snapshot_seq: u64) -> Result<Option<Bytes>> {
+        match self.get_entry_mvcc(user_key, snapshot_seq)? {
+            Some((data, flag)) => {
+                if flag == FLAG_TOMBSTONE {
+                    Ok(None)
+                } else {
+                    Ok(Some(data))
+                }
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Get entry with type flag for user_key visible at snapshot_seq (MVCC-aware)
+    ///
+    /// Returns (value_data, flag) where flag indicates the entry type.
+    pub fn get_entry_mvcc(
+        &mut self,
+        user_key: &[u8],
+        snapshot_seq: u64,
+    ) -> Result<Option<(Bytes, u8)>> {
+        // Check bloom filter with user_key (bloom stores user keys, not encoded InternalKeys)
+        if !self.bloom.contains(user_key) {
+            return Ok(None);
+        }
+
+        // Create search key: looking for first entry with seq <= snapshot_seq
+        // Since encoded keys sort by (user_key ASC, seq DESC), searching for
+        // InternalKey(user_key, snapshot_seq) with find_lower_bound gives us
+        // the first version <= snapshot_seq
+        let search_key = InternalKey::new(
+            Bytes::copy_from_slice(user_key),
+            snapshot_seq,
+            ValueType::Value,
+        );
+        let encoded_search_key = search_key.encode();
+
+        // Find the index block containing this key
+        let (index_block_offset, index_block_size) =
+            match self.find_index_block(&encoded_search_key) {
+                Some((offset, size)) => (offset, size),
+                None => return Ok(None),
+            };
+
+        let index_block = self.load_block(index_block_offset, index_block_size)?;
+
+        // Find the data block containing this key
+        let (data_block_offset, data_block_size) =
+            match self.find_in_index_block(&index_block, &encoded_search_key)? {
+                Some((offset, size)) => (offset, size),
+                None => return Ok(None),
+            };
+
+        let data_block = self.load_block(data_block_offset, data_block_size)?;
+
+        // Search for the entry in the data block
+        self.find_in_data_block_mvcc(&data_block, user_key, &encoded_search_key)
+    }
+
+    /// Find entry in data block using MVCC semantics
+    ///
+    /// Uses find_lower_bound to locate the first version <= snapshot_seq,
+    /// then verifies the user_key matches.
+    #[inline]
+    fn find_in_data_block_mvcc(
+        &mut self,
+        data_block: &Block,
+        user_key: &[u8],
+        encoded_search_key: &[u8],
+    ) -> Result<Option<(Bytes, u8)>> {
+        // find_lower_bound returns first entry where key >= search_key
+        // Since keys are sorted (user_key ASC, seq DESC), this gives us
+        // the first version with seq <= snapshot_seq
+        let (found_key, entry_value) = match data_block.find_lower_bound(encoded_search_key) {
+            Some(entry) => entry,
+            None => return Ok(None),
+        };
+
+        // Verify the found key's user_key matches
+        // Keys are at least 9 bytes (1 byte user_key + 8 byte trailer)
+        if found_key.len() < 9 {
+            // Can't be a valid InternalKey, treat as not found
+            return Ok(None);
+        }
+
+        // Extract user_key from the found encoded InternalKey
+        let found_user_key = InternalKey::extract_user_key(&found_key);
+        if found_user_key.as_ref() != user_key {
+            // Different user key - not found
+            return Ok(None);
+        }
+
+        // Found a matching entry - decode the value
+        if entry_value.is_empty() {
+            return Err(SSTableError::InvalidFormat);
+        }
+
+        let flag = entry_value[0];
+        let data = entry_value.slice(1..);
+
+        match flag {
+            FLAG_INLINE => Ok(Some((data, flag))),
+            FLAG_POINTER => {
+                if data.len() < 12 {
+                    return Err(SSTableError::InvalidFormat);
+                }
+
+                let offset = u64::from_le_bytes([
+                    data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+                ]);
+                let length = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
+
+                if let Some(ref vlog) = self.vlog {
+                    let mut vlog_guard = vlog.lock().expect("vlog mutex poisoned");
+                    let pointer = ValuePointer { offset, length };
+                    let value = vlog_guard
+                        .read(pointer)
+                        .map_err(|e| SSTableError::VLog(e.to_string()))?;
+                    Ok(Some((value, flag)))
+                } else {
+                    Err(SSTableError::VLog("VLog not attached".to_string()))
+                }
+            }
+            FLAG_TOMBSTONE => Ok(Some((Bytes::new(), FLAG_TOMBSTONE))),
+            FLAG_MERGE => Ok(Some((data, flag))),
+            _ => Err(SSTableError::InvalidFormat),
+        }
     }
 
     #[inline]
@@ -1997,5 +2258,145 @@ mod tests {
 
         let mut sst = SSTable::open(&path).unwrap();
         assert_eq!(sst.get(b"large").unwrap().unwrap().as_ref(), &large_value);
+    }
+
+    // ========================================================================
+    // MVCC Tests
+    // ========================================================================
+
+    #[test]
+    fn test_mvcc_add_internal_basic() {
+        use crate::types::{InternalKey, ValueType};
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("mvcc.sst");
+
+        let mut builder = SSTableBuilder::new_buffered();
+
+        // Add entries with different sequence numbers for same key
+        // Higher seq = newer version, but sorted FIRST due to encoding
+        let ikey1 = InternalKey::new(Bytes::from("key1"), 100, ValueType::Value);
+        let ikey2 = InternalKey::new(Bytes::from("key1"), 200, ValueType::Value);
+        let ikey3 = InternalKey::new(Bytes::from("key2"), 100, ValueType::Value);
+
+        // Add in sorted order (required for SSTable builder)
+        // key1@200 < key1@100 < key2@100 (user_key ASC, seq DESC)
+        builder.add_internal(&ikey2, Bytes::from("v1_200")).unwrap();
+        builder.add_internal(&ikey1, Bytes::from("v1_100")).unwrap();
+        builder.add_internal(&ikey3, Bytes::from("v2_100")).unwrap();
+
+        builder.finish_to_file(&path).unwrap();
+
+        let mut sst = SSTable::open(&path).unwrap();
+        assert_eq!(sst.num_entries, 3);
+        assert_eq!(sst.max_sequence(), 200);
+
+        // MVCC lookup: snapshot_seq=200 should see v1_200
+        let result = sst.get_mvcc(b"key1", 200).unwrap();
+        assert_eq!(result, Some(Bytes::from("v1_200")));
+
+        // MVCC lookup: snapshot_seq=150 should see v1_100 (newest <= 150)
+        let result = sst.get_mvcc(b"key1", 150).unwrap();
+        assert_eq!(result, Some(Bytes::from("v1_100")));
+
+        // MVCC lookup: snapshot_seq=50 should see nothing (no version <= 50)
+        let result = sst.get_mvcc(b"key1", 50).unwrap();
+        assert_eq!(result, None);
+
+        // key2 lookup
+        let result = sst.get_mvcc(b"key2", 200).unwrap();
+        assert_eq!(result, Some(Bytes::from("v2_100")));
+    }
+
+    #[test]
+    fn test_mvcc_tombstone() {
+        use crate::types::{InternalKey, ValueType};
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("mvcc_tomb.sst");
+
+        let mut builder = SSTableBuilder::new_buffered();
+
+        // key1: value at seq 100, tombstone at seq 200
+        let ikey1_tomb = InternalKey::new(Bytes::from("key1"), 200, ValueType::Deletion);
+        let ikey1_val = InternalKey::new(Bytes::from("key1"), 100, ValueType::Value);
+
+        builder.add_internal(&ikey1_tomb, Bytes::new()).unwrap();
+        builder.add_internal(&ikey1_val, Bytes::from("value")).unwrap();
+
+        builder.finish_to_file(&path).unwrap();
+
+        let mut sst = SSTable::open(&path).unwrap();
+
+        // snapshot_seq=200 should see tombstone (deleted)
+        let result = sst.get_mvcc(b"key1", 200).unwrap();
+        assert_eq!(result, None);
+
+        // snapshot_seq=150 should see the value (tombstone not visible)
+        let result = sst.get_mvcc(b"key1", 150).unwrap();
+        assert_eq!(result, Some(Bytes::from("value")));
+    }
+
+    #[test]
+    fn test_mvcc_many_versions() {
+        use crate::types::{InternalKey, ValueType};
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("mvcc_many.sst");
+
+        let mut builder = SSTableBuilder::new_buffered();
+
+        // Add 100 versions of the same key
+        for seq in (1..=100).rev() {
+            let ikey = InternalKey::new(Bytes::from("key"), seq * 10, ValueType::Value);
+            let value = format!("value_seq{}", seq * 10);
+            builder.add_internal(&ikey, Bytes::from(value)).unwrap();
+        }
+
+        builder.finish_to_file(&path).unwrap();
+
+        let mut sst = SSTable::open(&path).unwrap();
+        assert_eq!(sst.num_entries, 100);
+
+        // Latest version
+        let result = sst.get_mvcc(b"key", 1000).unwrap();
+        assert_eq!(result, Some(Bytes::from("value_seq1000")));
+
+        // Middle version
+        let result = sst.get_mvcc(b"key", 505).unwrap();
+        assert_eq!(result, Some(Bytes::from("value_seq500")));
+
+        // Oldest version
+        let result = sst.get_mvcc(b"key", 10).unwrap();
+        assert_eq!(result, Some(Bytes::from("value_seq10")));
+
+        // Too old
+        let result = sst.get_mvcc(b"key", 5).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_mvcc_bloom_filter_uses_user_key() {
+        use crate::types::{InternalKey, ValueType};
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("mvcc_bloom.sst");
+
+        let mut builder = SSTableBuilder::new_buffered();
+
+        let ikey = InternalKey::new(Bytes::from("testkey"), 100, ValueType::Value);
+        builder.add_internal(&ikey, Bytes::from("testvalue")).unwrap();
+
+        builder.finish_to_file(&path).unwrap();
+
+        let sst = SSTable::open(&path).unwrap();
+
+        // Bloom filter should be indexed by user_key, not encoded InternalKey
+        assert!(sst.may_contain(b"testkey"));
+
+        // A key that doesn't exist should (probably) return false
+        // (Bloom filters can have false positives but should not for completely different keys)
+        // This tests that the bloom filter was built with user_key
+        assert!(!sst.may_contain(b"nonexistent_key_that_is_very_different"));
     }
 }

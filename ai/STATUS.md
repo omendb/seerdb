@@ -10,9 +10,9 @@
 
 | Metric | Value |
 |--------|-------|
-| **Tests** | 189 lib + integration tests passing |
+| **Tests** | 193 lib + integration tests passing |
 | **Compilation** | Clean (no errors, no warnings) |
-| **Lines of Code** | ~29.5K Rust |
+| **Lines of Code** | ~30K Rust |
 | **ai/ Files** | 15 (cleaned from 68) |
 
 ## Feature Implementation Status
@@ -24,6 +24,7 @@
 | **MVCC InternalKey** | `src/types.rs` | UserKey + SeqNum + ValueType |
 | **Memtable MVCC** | `src/memtable/mod.rs` | Sorted by (key ASC, seq DESC) |
 | **WAL Versioning** | `src/wal/record.rs` | Records include sequence numbers |
+| **SSTable MVCC** | `src/sstable/mod.rs` | `add_internal()`, `get_mvcc()` methods |
 | **Snapshot API** | `src/snapshot.rs`, `db.snapshot()` | Read isolation at sequence number |
 | **Range Iterators** | `db.range()`, `db.iter()` | Forward iteration with merge |
 | **Reverse Iteration** | `db.iter_rev()`, `db.range_rev()` | Backward iteration |
@@ -42,7 +43,7 @@
 
 | Feature | Status | Gap |
 |---------|--------|-----|
-| **SSTable MVCC Lookup** | Partial | `SSTable::get()` needs InternalKey for proper MVCC |
+| **DB flush MVCC** | TODO | `DB::flush()` needs to use `add_internal()` |
 | **MVCC GC** | Not started | Old versions not garbage collected |
 
 ### ❌ Not Implemented
@@ -96,6 +97,7 @@ src/
 
 ## Recent Changes (Nov 24, 2025)
 
-1. **MVCC Core Complete**: Sequence numbers flow through entire write path
-2. **Cleaned ai/ Directory**: 68 → 15 files
-3. **Documentation Audit**: Identified stale docs claiming features not implemented
+1. **SSTable MVCC Methods**: `add_internal()`, `get_mvcc()` for version-aware read/write
+2. **MVCC Core Complete**: Sequence numbers flow through entire write path
+3. **Cleaned ai/ Directory**: 68 → 15 files
+4. **Documentation Audit**: Identified stale docs claiming features not implemented

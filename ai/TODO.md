@@ -17,7 +17,8 @@
 | WAL versioning | ✅ Done | Records include seq numbers |
 | DB seq assignment | ✅ Done | `put()`, `delete()`, `merge()` |
 | Snapshot API | ✅ Done | `db.snapshot()` works |
-| **SSTable MVCC lookup** | 🚧 TODO | `SSTable::get()` needs InternalKey |
+| SSTable MVCC methods | ✅ Done | `add_internal()`, `get_mvcc()` |
+| **DB flush MVCC** | 🚧 TODO | `flush()` needs to use `add_internal()` |
 | **MVCC garbage collection** | ❌ TODO | Old versions accumulate |
 
 ### 2. Transaction API (Medium Priority)
@@ -43,6 +44,7 @@
 
 ## Completed (Nov 2025)
 
+- ✅ SSTable MVCC methods (`add_internal()`, `get_mvcc()`)
 - ✅ MVCC core types and memtable refactor
 - ✅ WAL reader/writer compatibility (length prefixes)
 - ✅ Snapshot API with sequence number isolation

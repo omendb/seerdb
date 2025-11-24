@@ -15,6 +15,7 @@
 | InternalKey (MVCC core) | ✅ | `src/types.rs` |
 | Memtable MVCC | ✅ | Sorted by (key ASC, seq DESC) |
 | WAL versioning | ✅ | Records include seq numbers |
+| SSTable MVCC methods | ✅ | `add_internal()`, `get_mvcc()` |
 | Snapshot API | ✅ | `db.snapshot()` with seq isolation |
 | Reverse iteration | ✅ | `iter_rev()`, `range_rev()` |
 | Range iterators | ✅ | `range()`, `prefix()`, `prefix_batch()` |
@@ -24,7 +25,7 @@
 
 | Feature | Priority | Notes |
 |---------|----------|-------|
-| SSTable MVCC lookup | High | `get()` needs InternalKey |
+| DB flush MVCC | High | `flush()` to use `add_internal()` |
 | MVCC garbage collection | Medium | Old versions accumulate |
 
 ### ❌ Next Up
@@ -44,7 +45,8 @@
 - [x] Snapshot reads
 
 ### Phase 2: MVCC Completion (Current)
-- [ ] SSTable MVCC-aware lookups
+- [x] SSTable MVCC-aware lookups (`add_internal()`, `get_mvcc()`)
+- [ ] DB flush integration (use `add_internal()`)
 - [ ] Version garbage collection
 - [ ] Transaction API (OCC)
 
