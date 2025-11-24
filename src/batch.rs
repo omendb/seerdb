@@ -7,6 +7,7 @@
 // - Better cache locality
 
 use bytes::Bytes;
+use std::sync::atomic::Ordering;
 
 use crate::db::{DBError, Result, DB};
 use crate::wal::{BatchOp, Record};
@@ -189,6 +190,10 @@ impl<'db> Batch<'db> {
             return Ok(());
         }
 
+        // Reserve sequence numbers for all operations in the batch
+        let op_count = self.operations.len() as u64;
+        let base_seq = self.db.next_seq.fetch_add(op_count, Ordering::SeqCst);
+
         // Convert internal operations to WAL BatchOp format
         let wal_ops: Vec<BatchOp> = self
             .operations
@@ -205,6 +210,7 @@ impl<'db> Batch<'db> {
         // Write single atomic batch record to WAL (durability)
         // This ensures atomicity: either ALL operations are written or NONE
         let batch_record = Record::Batch {
+            base_seq,
             operations: wal_ops,
         };
 

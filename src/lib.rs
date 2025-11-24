@@ -131,6 +131,7 @@ pub mod simd;
 pub mod snapshot;
 pub mod sstable;
 pub mod storage;
+pub mod types;
 pub mod vlog;
 pub mod wal;
 
@@ -150,6 +151,7 @@ pub use sstable::{SSTable, SSTableBuilder};
 pub use storage::LocalStorage;
 #[cfg(feature = "object-store")]
 pub use storage::{ObjectStoreBackend, RetryConfig, Storage};
+pub use types::{InternalKey, ValueType};
 pub use vlog::{VLog, ValuePointer};
 pub use wal::{Record, SyncPolicy, WAL};
 

@@ -1,19 +1,22 @@
 # TODO - seerdb
 
-**Last Updated**: November 23, 2025
+**Last Updated**: November 24, 2025
 **Current Focus**: Omendb Development Support (MVCC)
 **Version**: 0.0.1-alpha (Stable Checkpoint)
-**Status**: 202+ tests passing. Release Halted for Dev.
+**Status**: Active Development
 
 ---
 
 ## Active Tasks (Omendb Priorities)
 
-### 1. MVCC Transactions
-- [ ] **API Design**: Define `Transaction` struct and `db.begin_transaction()`.
-- [ ] **Write Buffer**: Implement local mutation buffer in `Transaction`.
-- [ ] **Conflict Detection**: Implement OCC (Optimistic Concurrency Control) validation on commit.
-- [ ] **Integration**: Wire up to `Batch` commit.
+### 1. MVCC Transactions (Snapshot Isolation)
+- [x] **Core Types**: Create `src/types.rs` for `InternalKey` (UserKey + SeqNum + Type).
+- [x] **Memtable Refactor**: Update `Memtable` to store `InternalKey` (sorted by Key ASC, Seq DESC).
+- [x] **WAL Versioning**: Update `Record` to include sequence numbers.
+- [x] **DB Integration**: Refactor `DB::put`/`get`/`delete`/`merge` to assign sequence numbers.
+- [ ] **SSTable Lookup**: Update `SSTable::get()` to use InternalKey for MVCC-aware lookups.
+- [ ] **Snapshot API**: Implement `db.snapshot()` returning read-only view at sequence number.
+- [ ] **Transaction API**: Implement `db.begin_transaction()` and `Transaction` struct.
 
 ---
 
@@ -26,22 +29,8 @@
 ---
 
 ## Completed Tasks
-
-### Omendb Integration (Nov 2025)
-- [x] **Omendb Benchmark**: `benches/omendb_simulation.rs` created.
-  - Validated `MergeOperator` throughput (230K ops/sec, equal to raw Put).
-- [x] **Reverse Iteration**: Implemented `iter_rev()` and `range_rev()`.
-  - Added `DoubleEndedIterator` support to Memtable, Block, and SSTable.
-  - Implemented `KWayMergeIteratorRev` (Max-Heap merge).
-  - Added `DB::iter_rev()`, `DB::range_rev()`.
-
-### Release v0.0.1-alpha (Nov 2025)
-- [x] **Snapshot Isolation**: Fixed race condition with concurrent compaction.
-- [x] **SOTA Verification**: Confirmed 4.65M reads/sec on Linux.
-- [x] **Tag**: `v0.0.1-alpha` created.
-
-### Core Features
-- [x] **Merge Operators**: O(1) blind writes for graphs.
-- [x] **Prefix Bloom Filters**: Optimized for graph scans.
-- [x] **Durability**: WAL + fsync.
-- [x] **LeanStore**: Buffer Pool implemented.
+- ✅ MVCC core types and memtable refactor (Nov 24, 2025)
+- ✅ WAL reader/writer compatibility fix (Nov 24, 2025)
+- ✅ DB sequence number assignment (Nov 24, 2025)
+- ✅ Integration tests updated for MVCC API (Nov 24, 2025)
+- ✅ Fixed flaky crash recovery test (Nov 24, 2025)

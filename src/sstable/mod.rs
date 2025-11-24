@@ -300,6 +300,9 @@ impl<W: Read + Write + Seek> SSTableBuilder<W> {
         }
         self.max_key = Some(key.clone());
 
+        // Insert key into bloom filter
+        // Note: For MVCC, keys are encoded InternalKeys; for direct usage, they're user keys.
+        // The bloom filter uses the full key as provided.
         self.bloom.insert(&key);
         if self.prefix_len > 0 && key.len() >= self.prefix_len {
             self.prefix_bloom.insert(&key[..self.prefix_len]);

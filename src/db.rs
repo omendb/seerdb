@@ -581,7 +581,7 @@ pub struct DB {
     /// This prevents compaction from deleting keys still in immutable memtables
     max_flushed_seq: Arc<AtomicU64>,
     /// Global sequence number counter (increments on every write)
-    next_seq: Arc<AtomicU64>,
+    pub(crate) next_seq: Arc<AtomicU64>,
     /// Health status of background flush worker thread (true = healthy, false = panicked)
     #[allow(dead_code)] // Reserved for future health monitoring API
     flush_healthy: Arc<AtomicBool>,
@@ -1012,29 +1012,31 @@ impl DB {
     pub(crate) fn apply_wal_records(&self, records: &[Record]) {
         for record in records {
             match record {
-                Record::Put { key, value } => {
-                    let _ = self.put_internal(key.clone(), value.clone());
+                Record::Put { key, value, seq } => {
+                    let _ = self.put_internal(key.clone(), value.clone(), *seq);
                 }
-                Record::Delete { key } => {
-                    let _ = self.delete_internal(key.clone());
+                Record::Delete { key, seq } => {
+                    let _ = self.delete_internal(key.clone(), *seq);
                 }
-                Record::Batch { operations } => {
+                Record::Batch { base_seq, operations } => {
+                    let mut current_seq = *base_seq;
                     for op in operations {
                         match op {
                             crate::wal::BatchOp::Put { key, value } => {
-                                let _ = self.put_internal(key.clone(), value.clone());
+                                let _ = self.put_internal(key.clone(), value.clone(), current_seq);
                             }
                             crate::wal::BatchOp::Delete { key } => {
-                                let _ = self.delete_internal(key.clone());
+                                let _ = self.delete_internal(key.clone(), current_seq);
                             }
                             crate::wal::BatchOp::Merge { key, operand } => {
-                                let _ = self.merge_internal(key.clone(), operand.clone());
+                                let _ = self.merge_internal(key.clone(), operand.clone(), current_seq);
                             }
                         }
+                        current_seq += 1;
                     }
                 }
-                Record::Merge { key, operand } => {
-                    let _ = self.merge_internal(key.clone(), operand.clone());
+                Record::Merge { key, operand, seq } => {
+                    let _ = self.merge_internal(key.clone(), operand.clone(), *seq);
                 }
             }
         }
@@ -1216,10 +1218,14 @@ impl DB {
         // Uses periodic caching (10s interval) to avoid performance impact
         self.check_disk_space_cached()?;
 
+        // Assign sequence number
+        let seq = self.next_seq.fetch_add(1, Ordering::SeqCst);
+
         // Create record
         let record = Record::Put {
             key: key.clone(),
             value: value.clone(),
+            seq,
         };
         let wal_bytes = record.encode().len() as u64;
 
@@ -1494,8 +1500,11 @@ impl DB {
         let start = Instant::now();
         let key = Bytes::copy_from_slice(key.as_ref());
 
+        // Assign sequence number
+        let seq = self.next_seq.fetch_add(1, Ordering::SeqCst);
+
         // Write to WAL (durability) - lock-free via channel
-        let record = Record::Delete { key: key.clone() };
+        let record = Record::Delete { key: key.clone(), seq };
 
         // Pipelined Group Commit (WAL + Memtable)
         self.pipelined_wal
@@ -1524,9 +1533,13 @@ impl DB {
         let key = Bytes::copy_from_slice(key.as_ref());
         let operand = Bytes::copy_from_slice(operand.as_ref());
 
+        // Assign sequence number
+        let seq = self.next_seq.fetch_add(1, Ordering::SeqCst);
+
         let record = Record::Merge {
             key: key.clone(),
             operand: operand.clone(),
+            seq,
         };
 
         // Pipelined Group Commit
@@ -1598,7 +1611,7 @@ impl DB {
     ///
     /// Writes directly to memtable without WAL logging. This is used by the
     /// batch API which handles WAL writes separately.
-    pub(crate) fn put_internal(&self, key: Bytes, value: Bytes) -> Result<()> {
+    pub(crate) fn put_internal(&self, key: Bytes, value: Bytes, seq: u64) -> Result<()> {
         // Track logical bytes written (user data)
         let logical_bytes = (key.len() + value.len()) as u64;
         self.metrics.record_logical_bytes(logical_bytes);
@@ -1606,8 +1619,8 @@ impl DB {
         // Write to correct partition (lock-free with ArcSwap)
         let partition = partition_for_key(&key);
         let mt = self.memtables[partition].load(); // Lock-free Arc load
-        mt.put(key, value); // SkipMap is already lock-free
-                            // Arc automatically dropped, no lock to release!
+        mt.put(key, value, seq); // SkipMap is already lock-free
+                                 // Arc automatically dropped, no lock to release!
 
         // Track write operation for Dostoevsky adaptive compaction
         self.write_count
@@ -1637,11 +1650,11 @@ impl DB {
     ///
     /// Writes tombstone directly to memtable without WAL logging. This is used by the
     /// batch API which handles WAL writes separately.
-    pub(crate) fn delete_internal(&self, key: Bytes) -> Result<()> {
+    pub(crate) fn delete_internal(&self, key: Bytes, seq: u64) -> Result<()> {
         // Write tombstone to correct partition (lock-free with ArcSwap)
         let partition = partition_for_key(&key);
         let mt = self.memtables[partition].load(); // Lock-free Arc load
-        mt.delete(key);
+        mt.delete(key, seq);
         // Arc automatically dropped, no lock to release!
 
         // Track write operation for Dostoevsky adaptive compaction
@@ -1669,75 +1682,13 @@ impl DB {
     }
 
     /// Internal merge method (skips WAL write)
-    pub(crate) fn merge_internal(&self, key: Bytes, operand: Bytes) -> Result<()> {
+    pub(crate) fn merge_internal(&self, key: Bytes, operand: Bytes, seq: u64) -> Result<()> {
         let partition = partition_for_key(&key);
         let mt = self.memtables[partition].load();
 
-        // Read-Modify-Write logic for Memtable
-        // Safe because PipelinedWAL ensures single-threaded access for writes
-        let new_entry = match mt.get_entry(&key) {
-            Some(Entry::Value(v)) => {
-                if let Some(ref op) = self.options.merge_operator {
-                    // Try to resolve full merge immediately
-                    // Note: This creates a slice of reference to slice.
-                    let operands = [operand.as_ref()];
-                    if let Some(merged) = op.full_merge(&key, Some(&v), &operands) {
-                        Entry::Value(Bytes::from(merged))
-                    } else {
-                        // Failed to merge (e.g. overflow). Fallback to appending operand?
-                        // Or maybe the operator expects to handle failure?
-                        // We'll append to preserve the operation, but this overwrites the Value
-                        // with a Merge list, essentially losing the base value unless we had
-                        // a way to store "BaseValue + Operands".
-                        // Since we don't, and full_merge failed, we are in a bad state.
-                        // Assuming full_merge is robust, we panic or log.
-                        // For now, we'll create a Merge entry with just the operand,
-                        // effectively "resetting" the value if the user didn't handle it.
-                        // Ideally, Memtable should support Value+Operands.
-                        warn!(
-                            "Merge operator returned None for full_merge on key {:?}. Overwriting.",
-                            key
-                        );
-                        Entry::Merge(vec![operand])
-                    }
-                } else {
-                    // No operator - cannot merge against Value.
-                    // We must overwrite or fail.
-                    warn!("Merge called without merge_operator on existing Value. Overwriting.");
-                    Entry::Merge(vec![operand])
-                }
-            }
-            Some(Entry::Merge(ops)) => {
-                let mut new_ops = ops.clone();
-                // Optimization: Partial merge
-                if let Some(ref op) = self.options.merge_operator {
-                    let pushed = if let Some(last) = new_ops.last() {
-                        if let Some(merged) = op.partial_merge(&key, last, &operand) {
-                            new_ops.pop();
-                            new_ops.push(Bytes::from(merged));
-                            true
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    };
-                    if !pushed {
-                        new_ops.push(operand);
-                    }
-                } else {
-                    new_ops.push(operand);
-                }
-                Entry::Merge(new_ops)
-            }
-            Some(Entry::Tombstone) => {
-                // Merge against delete -> Merge(op) (acts as Put if Associative)
-                Entry::Merge(vec![operand])
-            }
-            None => Entry::Merge(vec![operand]),
-        };
-
-        mt.put_entry(key, new_entry);
+        // Append merge operand to memtable with new sequence number
+        // Resolution happens at read time
+        mt.merge(key, operand, seq);
 
         // Check flush logic
         let should_flush = self.memtables.iter().any(|mt| mt.load().should_flush());
@@ -1889,7 +1840,7 @@ impl DB {
                 // Collect and sort entries from all pending partitions
                 let mut all_entries: Vec<(Bytes, Entry)> = Vec::new();
                 for partition_mt in pending_partitions_arc.iter() {
-                    for (key, entry) in partition_mt.iter() {
+                    for (key, entry) in partition_mt.iter_entries() {
                         all_entries.push((key, entry));
                     }
                 }
@@ -1973,7 +1924,7 @@ impl DB {
         // Collect entries from ALL partitions FIRST (before storing in immutable)
         let mut all_entries: Vec<(Bytes, Entry)> = Vec::new();
         for partition_mt in &flushing_partitions {
-            for (key, entry) in partition_mt.iter() {
+            for (key, entry) in partition_mt.iter_entries() {
                 all_entries.push((key, entry));
             }
         }
@@ -3504,7 +3455,7 @@ impl DB {
         &self,
         start_key: &[u8],
         end_key: Option<&[u8]>,
-        read_values: bool,
+        _read_values: bool,
     ) -> Result<crate::range::RangeIteratorRev> {
         use crate::range::RangeIteratorRev;
         use crate::memtable::Entry;

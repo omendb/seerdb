@@ -1,7 +1,7 @@
 // WAL reader for crash recovery
 
 use super::record::{Record, RecordError};
-use bytes::BytesMut;
+use bytes::Bytes;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
@@ -70,18 +70,14 @@ impl WALReader {
 
         let total_len = u32::from_be_bytes(len_buf) as usize;
 
-        // Read the rest of the record (data + CRC)
-        let mut record_buf = BytesMut::with_capacity(4 + total_len);
-        record_buf.extend_from_slice(&len_buf);
-
+        // Read the record data (length prefix already consumed)
         let mut data_buf = vec![0u8; total_len];
         self.file.read_exact(&mut data_buf)?;
-        record_buf.extend_from_slice(&data_buf);
 
         self.offset += (4 + total_len) as u64;
 
-        // Decode record
-        let record = Record::decode(record_buf.freeze())?;
+        // Decode record (pass just the record data, not the length prefix)
+        let record = Record::decode(Bytes::from(data_buf))?;
         Ok(Some(record))
     }
 
@@ -128,13 +124,16 @@ mod tests {
                 Record::Put {
                     key: Bytes::from("key1"),
                     value: Bytes::from("value1"),
+                    seq: 1,
                 },
                 Record::Put {
                     key: Bytes::from("key2"),
                     value: Bytes::from("value2"),
+                    seq: 2,
                 },
                 Record::Delete {
                     key: Bytes::from("key1"),
+                    seq: 3,
                 },
             ];
             wal.write_batch(&records).unwrap();
@@ -161,6 +160,7 @@ mod tests {
             wal.write(&Record::Put {
                 key: Bytes::from("key1"),
                 value: Bytes::from("value1"),
+                seq: 1,
             })
             .unwrap();
         }

@@ -158,7 +158,7 @@ pub(crate) fn run_background_flush_partitioned(
     // Collect entries from ALL partitions and sort
     let mut all_entries: Vec<(Bytes, Entry)> = Vec::new();
     for partition_mt in immutable_partitions_arc.iter() {
-        for (key, entry) in partition_mt.iter() {
+        for (key, entry) in partition_mt.iter_entries() {
             all_entries.push((key, entry));
         }
     }

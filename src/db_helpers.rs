@@ -29,36 +29,40 @@ pub(crate) fn recover_partitioned(
     loop {
         match reader.read_next() {
             Ok(Some(record)) => match record {
-                Record::Put { key, value } => {
+                Record::Put { key, value, seq } => {
                     // Hash key to determine partition
                     let partition = partition_for_key(&key);
-                    memtables[partition].put(key, value);
+                    memtables[partition].put(key, value, seq);
                 }
-                Record::Delete { key } => {
+                Record::Delete { key, seq } => {
                     // Hash key to determine partition
                     let partition = partition_for_key(&key);
-                    memtables[partition].delete(key);
+                    memtables[partition].delete(key, seq);
                 }
-                Record::Batch { operations } => {
+                Record::Batch { operations, base_seq } => {
                     // Apply all operations in the batch atomically
+                    let mut current_seq = base_seq;
                     for op in operations {
                         match op {
                             crate::wal::BatchOp::Put { key, value } => {
                                 let partition = partition_for_key(&key);
-                                memtables[partition].put(key, value);
+                                memtables[partition].put(key, value, current_seq);
                             }
                             crate::wal::BatchOp::Delete { key } => {
                                 let partition = partition_for_key(&key);
-                                memtables[partition].delete(key);
+                                memtables[partition].delete(key, current_seq);
                             }
                             crate::wal::BatchOp::Merge { key, operand } => {
                                 let partition = partition_for_key(&key);
                                 apply_merge(&memtables[partition], key, operand, merge_operator);
                             }
                         }
+                        current_seq += 1;
                     }
                 }
-                Record::Merge { key, operand } => {
+                Record::Merge { key, operand, seq: _ } => {
+                    // Note: apply_merge currently uses u64::MAX internally via put_entry
+                    // Ideally it should use the record seq.
                     let partition = partition_for_key(&key);
                     apply_merge(&memtables[partition], key, operand, merge_operator);
                 }

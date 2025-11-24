@@ -106,12 +106,13 @@ fn test_corrupted_wal_detected() {
     let wal_path = db_path.join("wal.log");
     assert!(wal_path.exists(), "WAL file should exist");
 
-    // Corrupt the WAL length prefix of second record
+    // Corrupt the WAL in the middle of data
     // WAL layout: 8-byte header, then records as [4-byte len][data]
-    // With ~33 byte records (Put with 7-char key, 9-char value), record 1 starts ~offset 45
-    // Corrupting the length prefix causes reader to fail when trying to read huge buffer
-    // Note: offset 45 is approximate - we corrupt enough bytes to hit the length prefix
-    corrupt_file(&wal_path, 45, &[0xFF, 0xFF, 0xFF, 0xFF]).unwrap();
+    // Each MVCC Put record: 4 (len prefix) + 1 (type) + 8 (seq) + 4 (key len) + 7 (key) + 4 (val len) + 9 (val) = 37 bytes
+    // After 10 records: 8 + 10*37 = 378 bytes
+    // Corrupt at offset 400 to ensure we're well into the data but not at the end
+    // This corrupts a length prefix or data, causing reader to fail with bad length or decode error
+    corrupt_file(&wal_path, 400, &[0xFF, 0xFF, 0xFF, 0xFF]).unwrap();
 
     // Try to reopen database - should detect corruption
     let opts = DBOptions {

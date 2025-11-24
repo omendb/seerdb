@@ -206,8 +206,12 @@ impl WAL {
                 let encoded = record.encode();
                 offsets.push(self.offset);
 
+                // Write length prefix (4 bytes BE) followed by record data
+                // Reader expects: [len:4 BE][data:len]
+                let len = encoded.len() as u32;
+                batch_buffer.extend_from_slice(&len.to_be_bytes());
                 batch_buffer.extend_from_slice(&encoded);
-                self.offset += encoded.len() as u64;
+                self.offset += (4 + encoded.len()) as u64;
             }
 
             // Single syscall for entire batch (key optimization!)
@@ -290,6 +294,7 @@ mod tests {
         let record = Record::Put {
             key: Bytes::from("key1"),
             value: Bytes::from("value1"),
+            seq: 1,
         };
 
         let offset = wal.write(&record).unwrap();
@@ -309,13 +314,16 @@ mod tests {
             Record::Put {
                 key: Bytes::from("key1"),
                 value: Bytes::from("value1"),
+                seq: 1,
             },
             Record::Put {
                 key: Bytes::from("key2"),
                 value: Bytes::from("value2"),
+                seq: 2,
             },
             Record::Delete {
                 key: Bytes::from("key1"),
+                seq: 3,
             },
         ];
 
@@ -334,6 +342,7 @@ mod tests {
             let record = Record::Put {
                 key: Bytes::from("key1"),
                 value: Bytes::from("value1"),
+                seq: 1,
             };
             wal.write(&record).unwrap();
         }

@@ -240,9 +240,9 @@ mod tests {
         let memtable = Memtable::new(1024 * 1024);
 
         // Insert some test data
-        memtable.put(Bytes::from("key1"), Bytes::from("value1"));
-        memtable.put(Bytes::from("key2"), Bytes::from("value2"));
-        memtable.put(Bytes::from("key3"), Bytes::from("value3"));
+        memtable.put(Bytes::from("key1"), Bytes::from("value1"), 1);
+        memtable.put(Bytes::from("key2"), Bytes::from("value2"), 2);
+        memtable.put(Bytes::from("key3"), Bytes::from("value3"), 3);
 
         let memtables = [&memtable];
         let mut range_iter =
@@ -263,9 +263,9 @@ mod tests {
         let memtable = Memtable::new(1024 * 1024);
 
         // Insert data and a tombstone
-        memtable.put(Bytes::from("key1"), Bytes::from("value1"));
-        memtable.delete(Bytes::from("key2")); // Tombstone
-        memtable.put(Bytes::from("key3"), Bytes::from("value3"));
+        memtable.put(Bytes::from("key1"), Bytes::from("value1"), 1);
+        memtable.delete(Bytes::from("key2"), 2); // Tombstone
+        memtable.put(Bytes::from("key3"), Bytes::from("value3"), 3);
 
         let memtables = [&memtable];
         let mut range_iter = RangeIterator::new(b"key1", None, &memtables, vec![], None).unwrap();
