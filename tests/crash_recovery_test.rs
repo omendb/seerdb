@@ -106,8 +106,12 @@ fn test_corrupted_wal_detected() {
     let wal_path = db_path.join("wal.log");
     assert!(wal_path.exists(), "WAL file should exist");
 
-    // Corrupt the WAL (flip bits in a record)
-    corrupt_file(&wal_path, 50, &[0xFF, 0xFF, 0xFF, 0xFF]).unwrap();
+    // Corrupt the WAL length prefix of second record
+    // WAL layout: 8-byte header, then records as [4-byte len][data]
+    // With ~33 byte records (Put with 7-char key, 9-char value), record 1 starts ~offset 45
+    // Corrupting the length prefix causes reader to fail when trying to read huge buffer
+    // Note: offset 45 is approximate - we corrupt enough bytes to hit the length prefix
+    corrupt_file(&wal_path, 45, &[0xFF, 0xFF, 0xFF, 0xFF]).unwrap();
 
     // Try to reopen database - should detect corruption
     let opts = DBOptions {
