@@ -1187,6 +1187,60 @@ impl SSTable {
         }
     }
 
+    /// Get the raw entry (encoded key + value) for the latest version of a user key.
+    ///
+    /// Used by transactions for OCC conflict detection - returns the encoded
+    /// InternalKey so the sequence number can be extracted.
+    pub fn get_raw_entry(&mut self, user_key: &[u8]) -> Result<Option<(Bytes, Bytes)>> {
+        // Check bloom filter
+        if !self.bloom.contains(user_key) {
+            return Ok(None);
+        }
+
+        // Search for the latest version (seq = u64::MAX)
+        let search_key = InternalKey::new(
+            Bytes::copy_from_slice(user_key),
+            u64::MAX,
+            ValueType::Value,
+        );
+        let encoded_search_key = search_key.encode();
+
+        // Find the index block
+        let (index_block_offset, index_block_size) =
+            match self.find_index_block(&encoded_search_key) {
+                Some((offset, size)) => (offset, size),
+                None => return Ok(None),
+            };
+
+        let index_block = self.load_block(index_block_offset, index_block_size)?;
+
+        // Find the data block
+        let (data_block_offset, data_block_size) =
+            match self.find_in_index_block(&index_block, &encoded_search_key)? {
+                Some((offset, size)) => (offset, size),
+                None => return Ok(None),
+            };
+
+        let data_block = self.load_block(data_block_offset, data_block_size)?;
+
+        // Get raw entry from data block
+        let (found_key, entry_value) = match data_block.find_lower_bound(&encoded_search_key) {
+            Some(entry) => entry,
+            None => return Ok(None),
+        };
+
+        // Verify user_key matches
+        if found_key.len() < 9 {
+            return Ok(None);
+        }
+        let found_user_key = InternalKey::extract_user_key(&found_key);
+        if found_user_key.as_ref() != user_key {
+            return Ok(None);
+        }
+
+        Ok(Some((found_key, entry_value)))
+    }
+
     #[inline]
     fn find_index_block(&self, key: &[u8]) -> Option<(u64, u32)> {
         // CRITICAL FIX (Bug #11): Disable ALEX for top-level index lookup

@@ -1,6 +1,6 @@
 # STATUS - seerdb
 
-**Last Updated**: November 24, 2025
+**Last Updated**: November 25, 2025
 **Version**: 0.0.1-alpha
 **Status**: Active Development (Omendb Integration)
 
@@ -10,7 +10,7 @@
 
 | Metric | Value |
 |--------|-------|
-| **Tests** | 200 lib + integration tests passing |
+| **Tests** | 207 lib + integration tests passing |
 | **Compilation** | Clean (no errors, no warnings) |
 | **Lines of Code** | ~30K Rust |
 | **ai/ Files** | 16 (cleaned from 68) |
@@ -38,12 +38,12 @@
 | **Buffer Pool** | `src/buffer/` | Page caching with eviction |
 | **Health Checks** | `src/health.rs` | Database health monitoring |
 | **Object Store** | Feature flag `object-store` | S3/GCS backend support |
+| **Transaction API** | `src/transaction.rs`, `db.begin_transaction()` | OCC with snapshot isolation |
 
 ### ❌ Not Implemented
 
 | Feature | Priority | Notes |
 |---------|----------|-------|
-| **Transaction API** | Medium | `begin_transaction()` / `commit()` / `abort()` |
 | **Column Families** | None | Use key prefixes instead |
 
 ---
@@ -88,10 +88,13 @@ src/
 
 ---
 
-## Recent Changes (Nov 24, 2025)
+## Recent Changes (Nov 25, 2025)
 
-1. **SSTable MVCC Methods**: `add_internal()`, `get_mvcc()` for version-aware read/write
+1. **Transaction API**: Complete OCC implementation with snapshot isolation
+   - `db.begin_transaction()` returns `Transaction` handle
+   - `Transaction.get/put/delete` with buffered writes + read-your-writes
+   - `Transaction.commit()` with OCC validation (read-set conflict detection)
+   - `Transaction.abort()` discards buffer
 2. **MVCC Core Complete**: Sequence numbers flow through entire write path
 3. **MVCC Garbage Collection**: SnapshotTracker + GC-aware compaction
 4. **DB flush MVCC**: Flush/compaction preserve all MVCC versions
-5. **Cleaned ai/ Directory**: 68 → 15 files

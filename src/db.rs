@@ -116,6 +116,12 @@ pub enum DBError {
 
     #[error("Object store error: {0}")]
     ObjectStore(String),
+
+    #[error("Transaction aborted or already committed")]
+    TransactionAborted,
+
+    #[error("Transaction conflict: {0}")]
+    TransactionConflict(crate::transaction::TransactionConflict),
 }
 
 pub type Result<T> = std::result::Result<T, DBError>;
@@ -1617,6 +1623,173 @@ impl DB {
     /// ```
     pub fn batch_with_capacity(&self, capacity: usize) -> crate::batch::Batch<'_> {
         crate::batch::Batch::with_capacity(self, capacity)
+    }
+
+    /// Begin a new optimistic transaction.
+    ///
+    /// Transactions provide snapshot isolation with write-write conflict detection
+    /// at commit time using Optimistic Concurrency Control (OCC).
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use seerdb::{DB, DBOptions};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = DB::open(DBOptions::default())?;
+    ///
+    /// let mut txn = db.begin_transaction();
+    ///
+    /// // Read a value (recorded for conflict detection)
+    /// let value = txn.get(b"key")?;
+    ///
+    /// // Buffer writes
+    /// txn.put(b"key", b"new_value")?;
+    ///
+    /// // Commit atomically (validates no conflicts)
+    /// txn.commit()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Conflict Detection
+    ///
+    /// If another writer modifies a key that was read by this transaction,
+    /// commit will fail with `TransactionConflict`. The transaction can then
+    /// be retried with fresh data.
+    pub fn begin_transaction(&self) -> crate::transaction::Transaction<'_> {
+        let start_seq = self.next_seq.load(Ordering::SeqCst);
+        let gc_handle = crate::types::SnapshotHandle::new(start_seq, Arc::clone(&self.snapshot_tracker));
+        crate::transaction::Transaction::new(self, start_seq, gc_handle)
+    }
+
+    /// Get a value at a specific sequence number (snapshot isolation).
+    ///
+    /// Internal method used by transactions to read at their snapshot point.
+    pub(crate) fn get_at_seq(&self, key: &[u8], snapshot_seq: u64) -> Result<Option<Bytes>> {
+        // Check correct partition first
+        let partition = partition_for_key(key);
+        let mt = self.memtables[partition].load();
+        if let Some((value, _seq)) = mt.get(key, snapshot_seq) {
+            if value.is_empty() {
+                return Ok(None);
+            }
+            return Ok(Some(value));
+        }
+
+        // Check immutable memtables
+        let immut_arc = self.immutable_memtables.load();
+        if let Some(ref immutable_partitions) = **immut_arc {
+            let partition_mt = &immutable_partitions[partition];
+            if let Some((value, _seq)) = partition_mt.get(key, snapshot_seq) {
+                if value.is_empty() {
+                    return Ok(None);
+                }
+                return Ok(Some(value));
+            }
+        }
+
+        // Check SSTables (newest to oldest)
+        let lsm_arc = self.lsm.load();
+        let has_vlog = self.options.vlog_threshold.is_some();
+        let vlog_path = self.options.data_dir.join("values.vlog");
+
+        for level_num in 0..lsm_arc.num_levels() {
+            if let Some(level) = lsm_arc.level(level_num) {
+                let sstables: Vec<_> = level.sstables().iter().rev().collect();
+                for sstable_path in sstables {
+                    let cached_sstable = self.sstable_cache.get_or_insert_with(
+                        sstable_path,
+                        || -> Result<Arc<Mutex<SSTable>>> {
+                            let global_cache = Some(Arc::clone(&self.global_block_cache));
+                            let buffer_pool = self.buffer_pool.clone();
+                            let mut sstable = if let Some(pool) = buffer_pool {
+                                SSTable::open_with_buffer_pool(sstable_path, Some(pool))?
+                            } else {
+                                SSTable::open_with_global_cache(sstable_path, global_cache)?
+                            };
+                            if has_vlog {
+                                let vlog = VLog::open(&vlog_path)?;
+                                sstable = sstable.with_vlog(vlog);
+                            }
+                            Ok(Arc::new(Mutex::new(sstable)))
+                        },
+                    )?;
+
+                    let mut sstable = cached_sstable.lock().expect("SSTable lock poisoned");
+                    if let Ok(Some(value)) = sstable.get_mvcc(key, snapshot_seq) {
+                        if value.is_empty() {
+                            return Ok(None);
+                        }
+                        return Ok(Some(value));
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Get the latest sequence number for a key.
+    ///
+    /// Internal method used by transactions for OCC conflict detection.
+    /// Returns None if the key doesn't exist.
+    pub(crate) fn get_latest_seq(&self, key: &[u8]) -> Result<Option<u64>> {
+        // Check correct partition first
+        let partition = partition_for_key(key);
+        let mt = self.memtables[partition].load();
+        if let Some((_value, seq)) = mt.get(key, u64::MAX) {
+            return Ok(Some(seq));
+        }
+
+        // Check immutable memtables
+        let immut_arc = self.immutable_memtables.load();
+        if let Some(ref immutable_partitions) = **immut_arc {
+            let partition_mt = &immutable_partitions[partition];
+            if let Some((_value, seq)) = partition_mt.get(key, u64::MAX) {
+                return Ok(Some(seq));
+            }
+        }
+
+        // Check SSTables - need to get seq from entry
+        let lsm_arc = self.lsm.load();
+        let has_vlog = self.options.vlog_threshold.is_some();
+        let vlog_path = self.options.data_dir.join("values.vlog");
+
+        for level_num in 0..lsm_arc.num_levels() {
+            if let Some(level) = lsm_arc.level(level_num) {
+                let sstables: Vec<_> = level.sstables().iter().rev().collect();
+                for sstable_path in sstables {
+                    let cached_sstable = self.sstable_cache.get_or_insert_with(
+                        sstable_path,
+                        || -> Result<Arc<Mutex<SSTable>>> {
+                            let global_cache = Some(Arc::clone(&self.global_block_cache));
+                            let buffer_pool = self.buffer_pool.clone();
+                            let mut sstable = if let Some(pool) = buffer_pool {
+                                SSTable::open_with_buffer_pool(sstable_path, Some(pool))?
+                            } else {
+                                SSTable::open_with_global_cache(sstable_path, global_cache)?
+                            };
+                            if has_vlog {
+                                let vlog = VLog::open(&vlog_path)?;
+                                sstable = sstable.with_vlog(vlog);
+                            }
+                            Ok(Arc::new(Mutex::new(sstable)))
+                        },
+                    )?;
+
+                    let mut sstable = cached_sstable.lock().expect("SSTable lock poisoned");
+                    if let Ok(Some((encoded_key, _value))) = sstable.get_raw_entry(key) {
+                        // Decode the internal key to get the sequence number
+                        if let Some(ikey) = InternalKey::decode(encoded_key) {
+                            return Ok(Some(ikey.seq));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     /// Internal put method (skips WAL write - used by batch)

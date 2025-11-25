@@ -131,6 +131,7 @@ pub mod simd;
 pub mod snapshot;
 pub mod sstable;
 pub mod storage;
+pub mod transaction;
 pub mod types;
 pub mod vlog;
 pub mod wal;
@@ -149,6 +150,7 @@ pub use metrics::DBStats;
 pub use snapshot::Snapshot;
 pub use sstable::{SSTable, SSTableBuilder};
 pub use storage::LocalStorage;
+pub use transaction::{Transaction, TransactionConflict};
 #[cfg(feature = "object-store")]
 pub use storage::{ObjectStoreBackend, RetryConfig, Storage};
 pub use types::{InternalKey, ValueType};
