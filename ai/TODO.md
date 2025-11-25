@@ -1,32 +1,27 @@
 # TODO - seerdb
 
 **Last Updated**: November 25, 2025
-**Focus**: Transaction API stable, ready for benchmarking
+**Focus**: Stable - ready for oadb integration
 **Version**: 0.0.1-alpha
 
 ---
 
 ## Active Tasks
 
-### Transaction Benchmark (P1)
-
-| Task | Status | Notes |
-|------|--------|-------|
-| Transaction throughput benchmark | ❌ TODO | Measure txn/sec under contention |
-| Compare with raw put/get | ❌ TODO | Overhead measurement |
+None - Transaction API complete with tests and benchmarks.
 
 ---
 
 ## Test Coverage
 
-| Area | Unit | Integration | Stress |
-|------|------|-------------|--------|
-| Core DB | ✅ | ✅ | ✅ |
-| Batch writes | ✅ | ✅ | ✅ |
-| Snapshots | ✅ | ✅ | ✅ |
-| **Transaction API** | ✅ 7 | ✅ 9 | ✅ |
-| Compaction | ✅ | ✅ | ✅ |
-| Crash recovery | ✅ | ✅ | ✅ |
+| Area | Unit | Integration | Stress | Bench |
+|------|------|-------------|--------|-------|
+| Core DB | ✅ | ✅ | ✅ | ✅ |
+| Batch writes | ✅ | ✅ | ✅ | ✅ |
+| Snapshots | ✅ | ✅ | ✅ | - |
+| **Transaction API** | ✅ 7 | ✅ 9 | ✅ | ✅ |
+| Compaction | ✅ | ✅ | ✅ | ✅ |
+| Crash recovery | ✅ | ✅ | ✅ | ✅ |
 
 ---
 
@@ -34,6 +29,7 @@
 
 | Task | Priority | Trigger |
 |------|----------|---------|
+| Lock-free OCC | Low | When commit lock becomes bottleneck |
 | Async I/O (io_uring) | Low | When syscall overhead is bottleneck |
 | Cloud storage hardening | Low | Production scaling phase |
 | Compaction tuning | Low | Write stall reports |
@@ -43,6 +39,7 @@
 
 ## Completed (Nov 2025)
 
+- ✅ **Transaction benchmark** - 52K txn/sec, ~0% overhead vs raw put
 - ✅ **Transaction OCC bug fix** - Added commit lock to prevent TOCTOU race
 - ✅ **Transaction integration tests** - 9 tests covering concurrency, crash recovery, snapshots
 - ✅ **Transaction API** - OCC with snapshot isolation, read-set conflict detection
