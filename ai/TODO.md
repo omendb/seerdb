@@ -1,41 +1,32 @@
 # TODO - seerdb
 
 **Last Updated**: November 25, 2025
-**Focus**: Transaction API stabilization
+**Focus**: Transaction API stable, ready for benchmarking
 **Version**: 0.0.1-alpha
 
 ---
 
 ## Active Tasks
 
-### Transaction API Testing (P0 - Blocking oadb release)
+### Transaction Benchmark (P1)
 
 | Task | Status | Notes |
 |------|--------|-------|
-| Concurrent transaction conflict test | ❌ TODO | Multiple threads, same keys, OCC validation |
-| Transaction crash recovery test | ❌ TODO | Committed txn survives crash |
-| Transaction + snapshot interaction test | ❌ TODO | Txn reads from snapshot, concurrent writes |
-
-### Transaction API Testing (P1 - Should have)
-
-| Task | Status | Notes |
-|------|--------|-------|
-| Transaction benchmark | ❌ TODO | Throughput measurement |
-| Large transaction stress test | ❌ TODO | 10K+ keys in read-set/write-buffer |
-| Mixed workload test | ❌ TODO | txn + raw put/get concurrently |
+| Transaction throughput benchmark | ❌ TODO | Measure txn/sec under contention |
+| Compare with raw put/get | ❌ TODO | Overhead measurement |
 
 ---
 
-## Test Coverage Gaps
+## Test Coverage
 
-| Area | Unit | Integration | Bench | Stress |
-|------|------|-------------|-------|--------|
-| Core DB | ✅ | ✅ | ✅ | ✅ |
-| Batch writes | ✅ | ✅ | ✅ | ✅ |
-| Snapshots | ✅ | ✅ | ❌ | ✅ |
-| **Transaction API** | ✅ 7 | ❌ | ❌ | ❌ |
-| Compaction | ✅ | ✅ | ✅ | ✅ |
-| Crash recovery | ✅ | ✅ | ✅ | ✅ |
+| Area | Unit | Integration | Stress |
+|------|------|-------------|--------|
+| Core DB | ✅ | ✅ | ✅ |
+| Batch writes | ✅ | ✅ | ✅ |
+| Snapshots | ✅ | ✅ | ✅ |
+| **Transaction API** | ✅ 7 | ✅ 9 | ✅ |
+| Compaction | ✅ | ✅ | ✅ |
+| Crash recovery | ✅ | ✅ | ✅ |
 
 ---
 
@@ -52,6 +43,8 @@
 
 ## Completed (Nov 2025)
 
+- ✅ **Transaction OCC bug fix** - Added commit lock to prevent TOCTOU race
+- ✅ **Transaction integration tests** - 9 tests covering concurrency, crash recovery, snapshots
 - ✅ **Transaction API** - OCC with snapshot isolation, read-set conflict detection
 - ✅ MVCC core (InternalKey, Memtable, WAL, SSTable methods)
 - ✅ **DB flush MVCC** - Flush/compaction now preserve all MVCC versions

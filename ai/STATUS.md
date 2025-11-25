@@ -10,7 +10,7 @@
 
 | Metric | Value |
 |--------|-------|
-| **Tests** | 207 lib + integration tests passing |
+| **Tests** | 216 tests passing (207 lib + 9 transaction integration) |
 | **Compilation** | Clean (no errors, no warnings) |
 | **Lines of Code** | ~30K Rust |
 | **ai/ Files** | 16 (cleaned from 68) |
@@ -90,15 +90,15 @@ src/
 
 ## Current Focus: Transaction API Stabilization
 
-Transaction API implemented but needs hardening before oadb depends on it.
+Transaction API hardened with commit lock fix and comprehensive tests.
 
 | Gap | Priority | Status |
 |-----|----------|--------|
-| Concurrent conflict test | P0 | ❌ TODO |
-| Crash recovery test | P0 | ❌ TODO |
-| Snapshot interaction test | P0 | ❌ TODO |
+| Concurrent conflict test | P0 | ✅ Done (found TOCTOU bug, fixed) |
+| Crash recovery test | P0 | ✅ Done |
+| Snapshot interaction test | P0 | ✅ Done |
+| Large txn stress test | P1 | ✅ Done (10K keys) |
 | Benchmark | P1 | ❌ TODO |
-| Large txn stress test | P1 | ❌ TODO |
 
 ---
 
