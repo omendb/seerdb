@@ -177,6 +177,10 @@ harness = false
 name = "omendb_simulation"
 harness = false
 
+[[bench]]
+name = "transaction_bench"
+harness = false
+
 # Examples that require optional features
 [[example]]
 name = "baseline_benchmark"
