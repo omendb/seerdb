@@ -39,13 +39,6 @@
 | **Health Checks** | `src/health.rs` | Database health monitoring |
 | **Object Store** | Feature flag `object-store` | S3/GCS backend support |
 
-### 🚧 Partial / Needs Work
-
-| Feature | Status | Gap |
-|---------|--------|-----|
-| **DB flush MVCC** | ✅ Done | Flush/compaction write MVCC entries |
-| **MVCC GC** | ✅ Done | SnapshotTracker tracks active snapshots, compaction GC's old versions |
-
 ### ❌ Not Implemented
 
 | Feature | Priority | Notes |

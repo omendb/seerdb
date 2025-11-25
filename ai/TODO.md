@@ -1,21 +1,14 @@
 # TODO - seerdb
 
 **Last Updated**: November 24, 2025
-**Focus**: Omendb Integration (MVCC completion)
+**Focus**: Transaction API
 **Version**: 0.0.1-alpha
 
 ---
 
 ## Active Tasks
 
-### 1. MVCC Completion (High Priority)
-
-| Task | Status | Notes |
-|------|--------|-------|
-| **DB flush MVCC** | ✅ Done | Flush uses `add_internal()`, compaction uses `add_raw_mvcc()` |
-| **MVCC garbage collection** | ✅ Done | SnapshotTracker + GC-aware compaction |
-
-### 2. Transaction API (Medium Priority)
+### 1. Transaction API (Medium Priority)
 
 | Task | Status | Notes |
 |------|--------|-------|
