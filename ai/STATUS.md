@@ -88,6 +88,20 @@ src/
 
 ---
 
+## Current Focus: Transaction API Stabilization
+
+Transaction API implemented but needs hardening before oadb depends on it.
+
+| Gap | Priority | Status |
+|-----|----------|--------|
+| Concurrent conflict test | P0 | ❌ TODO |
+| Crash recovery test | P0 | ❌ TODO |
+| Snapshot interaction test | P0 | ❌ TODO |
+| Benchmark | P1 | ❌ TODO |
+| Large txn stress test | P1 | ❌ TODO |
+
+---
+
 ## Recent Changes (Nov 25, 2025)
 
 1. **Transaction API**: Complete OCC implementation with snapshot isolation

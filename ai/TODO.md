@@ -1,14 +1,41 @@
 # TODO - seerdb
 
 **Last Updated**: November 25, 2025
-**Focus**: Ready for omendb integration
+**Focus**: Transaction API stabilization
 **Version**: 0.0.1-alpha
 
 ---
 
 ## Active Tasks
 
-None - Transaction API complete. Ready for omendb integration.
+### Transaction API Testing (P0 - Blocking oadb release)
+
+| Task | Status | Notes |
+|------|--------|-------|
+| Concurrent transaction conflict test | ❌ TODO | Multiple threads, same keys, OCC validation |
+| Transaction crash recovery test | ❌ TODO | Committed txn survives crash |
+| Transaction + snapshot interaction test | ❌ TODO | Txn reads from snapshot, concurrent writes |
+
+### Transaction API Testing (P1 - Should have)
+
+| Task | Status | Notes |
+|------|--------|-------|
+| Transaction benchmark | ❌ TODO | Throughput measurement |
+| Large transaction stress test | ❌ TODO | 10K+ keys in read-set/write-buffer |
+| Mixed workload test | ❌ TODO | txn + raw put/get concurrently |
+
+---
+
+## Test Coverage Gaps
+
+| Area | Unit | Integration | Bench | Stress |
+|------|------|-------------|-------|--------|
+| Core DB | ✅ | ✅ | ✅ | ✅ |
+| Batch writes | ✅ | ✅ | ✅ | ✅ |
+| Snapshots | ✅ | ✅ | ❌ | ✅ |
+| **Transaction API** | ✅ 7 | ❌ | ❌ | ❌ |
+| Compaction | ✅ | ✅ | ✅ | ✅ |
+| Crash recovery | ✅ | ✅ | ✅ | ✅ |
 
 ---
 

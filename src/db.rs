@@ -624,6 +624,10 @@ pub struct DB {
     /// Compaction uses this to determine oldest snapshot sequence number,
     /// so it can safely GC old versions that no snapshot needs.
     snapshot_tracker: Arc<crate::types::SnapshotTracker>,
+    /// Commit lock for transaction OCC serialization.
+    /// Prevents TOCTOU race where concurrent transactions validate at the same time
+    /// and both see no conflicts, leading to lost updates.
+    pub(crate) commit_lock: Arc<Mutex<()>>,
 }
 
 impl DB {
@@ -1008,6 +1012,7 @@ impl DB {
             #[cfg(feature = "object-store")]
             storage_backend,
             snapshot_tracker,
+            commit_lock: Arc::new(Mutex::new(())),
         };
 
         // Flush memtables if any partition filled up during recovery

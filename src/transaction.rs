@@ -186,6 +186,11 @@ impl<'db> Transaction<'db> {
         }
         self.active = false;
 
+        // Acquire commit lock to serialize validation+write
+        // This prevents TOCTOU race where concurrent transactions both pass validation
+        // because neither has written yet, leading to lost updates.
+        let _commit_guard = self.db.commit_lock.lock().expect("commit lock poisoned");
+
         // OCC Validation: check for write-write conflicts
         let conflicts = self.validate_read_set()?;
         if !conflicts.is_empty() {
@@ -229,6 +234,7 @@ impl<'db> Transaction<'db> {
             })
             .map_err(DBError::Wal)?;
 
+        // Lock released here when _commit_guard drops
         Ok(())
     }
 
