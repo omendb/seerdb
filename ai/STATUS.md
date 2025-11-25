@@ -10,7 +10,7 @@
 
 | Metric | Value |
 |--------|-------|
-| **Tests** | 193 lib + integration tests passing |
+| **Tests** | 200 lib + integration tests passing |
 | **Compilation** | Clean (no errors, no warnings) |
 | **Lines of Code** | ~30K Rust |
 | **ai/ Files** | 16 (cleaned from 68) |
@@ -44,7 +44,7 @@
 | Feature | Status | Gap |
 |---------|--------|-----|
 | **DB flush MVCC** | ✅ Done | Flush/compaction write MVCC entries |
-| **MVCC GC** | Not started | Old versions not garbage collected |
+| **MVCC GC** | ✅ Done | SnapshotTracker tracks active snapshots, compaction GC's old versions |
 
 ### ❌ Not Implemented
 
@@ -99,5 +99,6 @@ src/
 
 1. **SSTable MVCC Methods**: `add_internal()`, `get_mvcc()` for version-aware read/write
 2. **MVCC Core Complete**: Sequence numbers flow through entire write path
-3. **Cleaned ai/ Directory**: 68 → 15 files
-4. **Documentation Audit**: Identified stale docs claiming features not implemented
+3. **MVCC Garbage Collection**: SnapshotTracker + GC-aware compaction
+4. **DB flush MVCC**: Flush/compaction preserve all MVCC versions
+5. **Cleaned ai/ Directory**: 68 → 15 files

@@ -64,6 +64,7 @@ pub(crate) fn run_compaction(
     pending_deletions: &Arc<Mutex<Vec<(PathBuf, std::time::Instant)>>>,
     filter: &Option<Arc<dyn CompactionFilter>>,
     #[cfg(feature = "object-store")] storage_backend: &Option<Arc<dyn Storage>>,
+    snapshot_tracker: &Arc<crate::types::SnapshotTracker>,
 ) -> Result<()> {
     use crate::db::DB;
 
@@ -84,6 +85,7 @@ pub(crate) fn run_compaction(
             pending_deletions,
             filter,
             storage_backend,
+            snapshot_tracker,
         )
     }
 
@@ -99,6 +101,7 @@ pub(crate) fn run_compaction(
             max_flushed_seq,
             pending_deletions,
             filter,
+            snapshot_tracker,
         )
     }
 }
@@ -388,6 +391,7 @@ pub(crate) fn spawn_compaction_worker(
     pending_deletions: Arc<Mutex<Vec<(PathBuf, Instant)>>>,
     filter: Option<Arc<dyn CompactionFilter>>,
     #[cfg(feature = "object-store")] storage_backend: Option<Arc<dyn Storage>>,
+    snapshot_tracker: Arc<crate::types::SnapshotTracker>,
 ) -> (Option<Sender<CompactionTask>>, Option<JoinHandle<()>>) {
     if !enabled {
         return (None, None);
@@ -417,6 +421,7 @@ pub(crate) fn spawn_compaction_worker(
                                 &pending_deletions,
                                 &filter,
                                 &storage_backend,
+                                &snapshot_tracker,
                             );
 
                             #[cfg(not(feature = "object-store"))]
@@ -430,6 +435,7 @@ pub(crate) fn spawn_compaction_worker(
                                 &max_flushed_seq,
                                 &pending_deletions,
                                 &filter,
+                                &snapshot_tracker,
                             );
 
                             if let Err(e) = res {

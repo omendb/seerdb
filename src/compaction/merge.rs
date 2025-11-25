@@ -1,8 +1,9 @@
 // Merge iterator for compaction
-// Merges multiple sorted SSTables
+// Merges multiple sorted SSTables with MVCC garbage collection
 
 use crate::compaction::{CompactionFilter, FilterDecision};
 use crate::sstable::{SSTable, SSTableError};
+use crate::types::InternalKey;
 use bytes::Bytes;
 use std::sync::Arc;
 
@@ -14,13 +15,38 @@ pub struct MergeIterator {
 impl MergeIterator {
     /// Create a new merge iterator from multiple SSTables
     ///
-    /// Collects all entries, sorts by key, and deduplicates (keeps newest).
+    /// Collects all entries, sorts by key, and applies MVCC garbage collection.
     /// For L0 compaction, "newest" means from HIGHER source_id (later in vector).
     /// L0 SSTables are ordered oldest→newest, so higher index = newer data.
+    ///
+    /// # MVCC Garbage Collection
+    /// - `oldest_snapshot`: Sequence number of the oldest active snapshot.
+    ///   Pass `u64::MAX` if no snapshots are active (GC everything possible).
+    /// - For each user_key, keeps:
+    ///   - The newest version (always)
+    ///   - Any version with seq >= oldest_snapshot (visible to active snapshots)
+    /// - Drops old versions with seq < oldest_snapshot when a newer version exists.
     pub fn new(
         mut sstables: Vec<SSTable>,
         level: usize,
         filter: Option<Arc<dyn CompactionFilter>>,
+    ) -> Result<Self, SSTableError> {
+        // Default: no GC (keep all versions)
+        Self::with_gc(sstables, level, filter, u64::MAX)
+    }
+
+    /// Create a merge iterator with MVCC garbage collection
+    ///
+    /// # Arguments
+    /// * `sstables` - SSTables to merge (older first for L0)
+    /// * `level` - Target compaction level
+    /// * `filter` - Optional compaction filter
+    /// * `oldest_snapshot` - Oldest active snapshot seq (u64::MAX = no snapshots)
+    pub fn with_gc(
+        mut sstables: Vec<SSTable>,
+        level: usize,
+        filter: Option<Arc<dyn CompactionFilter>>,
+        oldest_snapshot: u64,
     ) -> Result<Self, SSTableError> {
         let mut all_entries = Vec::new();
 
@@ -34,8 +60,8 @@ impl MergeIterator {
             }
         }
 
-        // Sort by key first, then by source_id DESCENDING (higher = newer)
-        // CRITICAL FIX: Higher source_id means newer SSTable in L0
+        // Sort by encoded key first, then by source_id DESCENDING (higher = newer)
+        // With MVCC encoding, this sorts by (user_key ASC, seq DESC, source_id DESC)
         all_entries.sort_by(|a, b| {
             match a.0.cmp(&b.0) {
                 std::cmp::Ordering::Equal => b.2.cmp(&a.2), // Higher source_id first (NEWEST)
@@ -46,14 +72,15 @@ impl MergeIterator {
         let mut finalized_entries = Vec::new();
 
         if let Some(filter) = filter {
-            // Group by key and apply filter logic
+            // Group by ENCODED key and apply filter logic
+            // (filter API expects encoded keys, not user keys)
             let mut i = 0;
             while i < all_entries.len() {
                 let key = &all_entries[i].0;
                 let mut j = i + 1;
 
-                // Find all versions of this key
-                while j < all_entries.len() && all_entries[j].0 == key {
+                // Find all versions of this ENCODED key
+                while j < all_entries.len() && all_entries[j].0 == *key {
                     j += 1;
                 }
 
@@ -98,24 +125,82 @@ impl MergeIterator {
                 i = j;
             }
         } else {
-            // Fast path: Simple deduplication (keep newest)
-            let mut last_key: Option<Bytes> = None;
-
-            for (key, value, _source_id) in all_entries {
-                if let Some(ref last) = last_key {
-                    if key == last {
-                        continue; // Duplicate, skip
-                    }
-                }
-
-                finalized_entries.push((key.clone(), value));
-                last_key = Some(key);
-            }
+            // Fast path with MVCC GC: Group by user_key, apply GC rules
+            Self::apply_mvcc_gc(&all_entries, oldest_snapshot, &mut finalized_entries);
         }
 
         Ok(Self {
             entries: finalized_entries.into_iter(),
         })
+    }
+
+    /// Apply MVCC garbage collection to sorted entries
+    ///
+    /// Groups entries by user_key and keeps:
+    /// - Newest version (always)
+    /// - Versions with seq >= oldest_snapshot (visible to snapshots)
+    fn apply_mvcc_gc(
+        all_entries: &[(Bytes, Bytes, usize)],
+        oldest_snapshot: u64,
+        finalized_entries: &mut Vec<(Bytes, Bytes)>,
+    ) {
+        if all_entries.is_empty() {
+            return;
+        }
+
+        let mut i = 0;
+        while i < all_entries.len() {
+            let (encoded_key, value, _) = &all_entries[i];
+
+            // Try to decode as InternalKey
+            if let Some(ikey) = InternalKey::decode(encoded_key.clone()) {
+                let user_key = &ikey.user_key;
+
+                // Find all versions of this user_key
+                let mut j = i + 1;
+                while j < all_entries.len() {
+                    if let Some(next_ikey) = InternalKey::decode(all_entries[j].0.clone()) {
+                        if next_ikey.user_key != *user_key {
+                            break;
+                        }
+                    } else {
+                        // Not an InternalKey, different key
+                        break;
+                    }
+                    j += 1;
+                }
+
+                // Process all versions of this user_key [i..j)
+                // First entry (i) is newest due to sort order (seq DESC)
+                let mut kept_newest = false;
+
+                for idx in i..j {
+                    let (enc_key, val, _) = &all_entries[idx];
+                    if let Some(ver_ikey) = InternalKey::decode(enc_key.clone()) {
+                        // Keep if:
+                        // 1. This is the newest version (first one), OR
+                        // 2. seq >= oldest_snapshot (visible to active snapshot)
+                        if !kept_newest || ver_ikey.seq >= oldest_snapshot {
+                            finalized_entries.push((enc_key.clone(), val.clone()));
+                            kept_newest = true;
+                        }
+                        // else: GC this old version
+                    }
+                }
+
+                i = j;
+            } else {
+                // Not an InternalKey (legacy format) - keep with simple dedup
+                finalized_entries.push((encoded_key.clone(), value.clone()));
+
+                // Skip duplicates of the same non-MVCC key
+                let mut j = i + 1;
+                while j < all_entries.len() && all_entries[j].0 == *encoded_key {
+                    j += 1;
+                }
+                i = j;
+            }
+        }
     }
 }
 
@@ -399,5 +484,131 @@ mod tests {
         // merge receives [part2, part1]
         // our merge logic concatenates them -> part2part1
         assert_eq!(&entries[2].1[1..], b"part2part1");
+    }
+
+    #[test]
+    fn test_mvcc_gc_no_snapshots() {
+        // Test that old versions are GC'd when no snapshots are active
+        use crate::types::{InternalKey, ValueType};
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("mvcc.sst");
+
+        // Build SSTable with multiple versions of same key
+        let mut builder = SSTableBuilder::create(&path).unwrap();
+
+        // key1 @ seq 300 (newest)
+        let ikey1 = InternalKey::new(Bytes::from("key1"), 300, ValueType::Value);
+        builder.add_internal(&ikey1, Bytes::from("value_v3")).unwrap();
+
+        // key1 @ seq 200 (middle)
+        let ikey2 = InternalKey::new(Bytes::from("key1"), 200, ValueType::Value);
+        builder.add_internal(&ikey2, Bytes::from("value_v2")).unwrap();
+
+        // key1 @ seq 100 (oldest)
+        let ikey3 = InternalKey::new(Bytes::from("key1"), 100, ValueType::Value);
+        builder.add_internal(&ikey3, Bytes::from("value_v1")).unwrap();
+
+        builder.finish().unwrap();
+
+        let sstable = SSTable::open(&path).unwrap();
+
+        // With no snapshots (oldest_snapshot = u64::MAX), only newest should survive
+        let merge = MergeIterator::with_gc(vec![sstable], 0, None, u64::MAX).unwrap();
+        let entries: Vec<_> = merge.collect::<Result<Vec<_>, _>>().unwrap();
+
+        // Should have only 1 entry (the newest version)
+        assert_eq!(entries.len(), 1, "Expected 1 entry, got {}", entries.len());
+
+        // Decode the key to verify it's the newest version
+        let ikey = InternalKey::decode(entries[0].0.clone()).unwrap();
+        assert_eq!(ikey.user_key, Bytes::from("key1"));
+        assert_eq!(ikey.seq, 300);
+    }
+
+    #[test]
+    fn test_mvcc_gc_with_snapshot() {
+        // Test that versions needed by snapshots are preserved
+        use crate::types::{InternalKey, ValueType};
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("mvcc.sst");
+
+        // Build SSTable with multiple versions
+        let mut builder = SSTableBuilder::create(&path).unwrap();
+
+        // key1 @ seq 300 (newest)
+        let ikey1 = InternalKey::new(Bytes::from("key1"), 300, ValueType::Value);
+        builder.add_internal(&ikey1, Bytes::from("value_v3")).unwrap();
+
+        // key1 @ seq 200 (middle)
+        let ikey2 = InternalKey::new(Bytes::from("key1"), 200, ValueType::Value);
+        builder.add_internal(&ikey2, Bytes::from("value_v2")).unwrap();
+
+        // key1 @ seq 100 (oldest)
+        let ikey3 = InternalKey::new(Bytes::from("key1"), 100, ValueType::Value);
+        builder.add_internal(&ikey3, Bytes::from("value_v1")).unwrap();
+
+        builder.finish().unwrap();
+
+        let sstable = SSTable::open(&path).unwrap();
+
+        // Snapshot at seq 150 means we need seq >= 150
+        // So seq 300 and seq 200 should survive, seq 100 should be GC'd
+        let merge = MergeIterator::with_gc(vec![sstable], 0, None, 150).unwrap();
+        let entries: Vec<_> = merge.collect::<Result<Vec<_>, _>>().unwrap();
+
+        // Should have 2 entries (seq 300 and seq 200)
+        assert_eq!(entries.len(), 2, "Expected 2 entries, got {}", entries.len());
+
+        // Verify the sequences
+        let ikey0 = InternalKey::decode(entries[0].0.clone()).unwrap();
+        let ikey1 = InternalKey::decode(entries[1].0.clone()).unwrap();
+
+        assert_eq!(ikey0.seq, 300);
+        assert_eq!(ikey1.seq, 200);
+    }
+
+    #[test]
+    fn test_mvcc_gc_preserves_different_keys() {
+        // Test that GC correctly handles multiple different keys
+        use crate::types::{InternalKey, ValueType};
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("mvcc.sst");
+
+        let mut builder = SSTableBuilder::create(&path).unwrap();
+
+        // key1 @ seq 200
+        let ikey1 = InternalKey::new(Bytes::from("key1"), 200, ValueType::Value);
+        builder.add_internal(&ikey1, Bytes::from("key1_v2")).unwrap();
+
+        // key1 @ seq 100
+        let ikey2 = InternalKey::new(Bytes::from("key1"), 100, ValueType::Value);
+        builder.add_internal(&ikey2, Bytes::from("key1_v1")).unwrap();
+
+        // key2 @ seq 150
+        let ikey3 = InternalKey::new(Bytes::from("key2"), 150, ValueType::Value);
+        builder.add_internal(&ikey3, Bytes::from("key2_v1")).unwrap();
+
+        builder.finish().unwrap();
+
+        let sstable = SSTable::open(&path).unwrap();
+
+        // No snapshots - should keep only newest of each key
+        let merge = MergeIterator::with_gc(vec![sstable], 0, None, u64::MAX).unwrap();
+        let entries: Vec<_> = merge.collect::<Result<Vec<_>, _>>().unwrap();
+
+        // Should have 2 entries (newest of key1, and key2)
+        assert_eq!(entries.len(), 2, "Expected 2 entries, got {}", entries.len());
+
+        let ikey0 = InternalKey::decode(entries[0].0.clone()).unwrap();
+        let ikey1 = InternalKey::decode(entries[1].0.clone()).unwrap();
+
+        assert_eq!(ikey0.user_key, Bytes::from("key1"));
+        assert_eq!(ikey0.seq, 200);
+
+        assert_eq!(ikey1.user_key, Bytes::from("key2"));
+        assert_eq!(ikey1.seq, 150);
     }
 }

@@ -13,7 +13,7 @@
 | Task | Status | Notes |
 |------|--------|-------|
 | **DB flush MVCC** | ✅ Done | Flush uses `add_internal()`, compaction uses `add_raw_mvcc()` |
-| **MVCC garbage collection** | ❌ TODO | Old versions accumulate |
+| **MVCC garbage collection** | ✅ Done | SnapshotTracker + GC-aware compaction |
 
 ### 2. Transaction API (Medium Priority)
 
@@ -39,6 +39,8 @@
 ## Completed (Nov 2025)
 
 - ✅ MVCC core (InternalKey, Memtable, WAL, SSTable methods)
+- ✅ **DB flush MVCC** - Flush/compaction now preserve all MVCC versions
+- ✅ **MVCC GC** - SnapshotTracker + GC-aware compaction
 - ✅ Snapshot API, range/reverse iterators, merge operators
 - ✅ Crash recovery tests fixed
 - ✅ ai/ cleanup (68 → 16 files)

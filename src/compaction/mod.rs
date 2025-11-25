@@ -37,11 +37,19 @@ pub type Result<T> = std::result::Result<T, CompactionError>;
 ///
 /// # Returns
 /// Path to the new SSTable and its size in bytes
+///
+/// # Arguments
+/// * `input_paths` - Paths to SSTables to compact (newer first)
+/// * `output_path` - Path for output SSTable
+/// * `compaction_level` - The level being compacted TO (passed to filter)
+/// * `filter` - Optional compaction filter
+/// * `oldest_snapshot` - Oldest active snapshot seq for MVCC GC (u64::MAX = no GC)
 pub fn compact_sstables(
     input_paths: &[PathBuf],
     output_path: impl AsRef<Path>,
     compaction_level: usize,
     filter: Option<Arc<dyn CompactionFilter>>,
+    oldest_snapshot: u64,
 ) -> Result<(PathBuf, u64)> {
     if input_paths.is_empty() {
         return Err(CompactionError::NoInput);
@@ -54,8 +62,8 @@ pub fn compact_sstables(
         sstables.push(sstable);
     }
 
-    // Create merge iterator
-    let merge = MergeIterator::new(sstables, compaction_level, filter)?;
+    // Create merge iterator with MVCC GC
+    let merge = MergeIterator::with_gc(sstables, compaction_level, filter, oldest_snapshot)?;
 
     // Build new SSTable from merged entries
     let output_path = output_path.as_ref().to_path_buf();
@@ -89,6 +97,7 @@ pub fn compact_sstables(
 /// * `input_paths` - Paths to SSTables to compact (newer first)
 /// * `compaction_level` - The level being compacted TO (passed to filter)
 /// * `filter` - Optional compaction filter
+/// * `oldest_snapshot` - Oldest active snapshot seq for MVCC GC (u64::MAX = no GC)
 ///
 /// # Returns
 /// Complete SSTable as bytes (caller writes to file and/or uploads to cloud)
@@ -96,6 +105,7 @@ pub fn compact_sstables_buffered(
     input_paths: &[PathBuf],
     compaction_level: usize,
     filter: Option<Arc<dyn CompactionFilter>>,
+    oldest_snapshot: u64,
 ) -> Result<Bytes> {
     if input_paths.is_empty() {
         return Err(CompactionError::NoInput);
@@ -108,8 +118,8 @@ pub fn compact_sstables_buffered(
         sstables.push(sstable);
     }
 
-    // Create merge iterator
-    let merge = MergeIterator::new(sstables, compaction_level, filter)?;
+    // Create merge iterator with MVCC GC
+    let merge = MergeIterator::with_gc(sstables, compaction_level, filter, oldest_snapshot)?;
 
     // Build new SSTable in memory
     let mut builder = SSTableBuilder::new_buffered();
@@ -603,9 +613,9 @@ mod tests {
             .unwrap();
         builder2.finish().unwrap();
 
-        // Compact
+        // Compact (no active snapshots = u64::MAX means GC everything)
         let output_path = dir.path().join("output.sst");
-        let (result_path, size) = compact_sstables(&[path1, path2], &output_path, 0, None).unwrap();
+        let (result_path, size) = compact_sstables(&[path1, path2], &output_path, 0, None, u64::MAX).unwrap();
 
         assert_eq!(result_path, output_path);
         assert!(size > 0);
@@ -659,7 +669,7 @@ mod tests {
 
         // Compact (older first, newer second - like L0 order)
         let output_path = dir.path().join("output.sst");
-        compact_sstables(&[path1, path2], &output_path, 0, None).unwrap();
+        compact_sstables(&[path1, path2], &output_path, 0, None, u64::MAX).unwrap();
 
         // Verify output has newer value (from higher source_id)
         let mut output_sst = SSTable::open(&output_path).unwrap();

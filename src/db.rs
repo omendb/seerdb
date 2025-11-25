@@ -614,6 +614,10 @@ pub struct DB {
     /// WAL always remains on local disk for durability
     #[cfg(feature = "object-store")]
     storage_backend: Option<Arc<dyn crate::storage::Storage>>,
+    /// Tracks active snapshots for MVCC garbage collection.
+    /// Compaction uses this to determine oldest snapshot sequence number,
+    /// so it can safely GC old versions that no snapshot needs.
+    snapshot_tracker: Arc<crate::types::SnapshotTracker>,
 }
 
 impl DB {
@@ -805,6 +809,9 @@ impl DB {
         // Initialize pending deletions queue (for Bug #7b fix)
         let pending_deletions = Arc::new(Mutex::new(Vec::new()));
 
+        // Initialize snapshot tracker for MVCC garbage collection
+        let snapshot_tracker = Arc::new(crate::types::SnapshotTracker::new());
+
         let compaction_filter = options.compaction_filter.clone();
         let _merge_operator = options.merge_operator.clone();
 
@@ -883,6 +890,7 @@ impl DB {
             Arc::clone(&pending_deletions),
             compaction_filter.clone(),
             storage_backend.clone(),
+            Arc::clone(&snapshot_tracker),
         );
 
         #[cfg(not(feature = "object-store"))]
@@ -897,6 +905,7 @@ impl DB {
             Arc::clone(&compaction_healthy),
             Arc::clone(&pending_deletions),
             compaction_filter.clone(),
+            Arc::clone(&snapshot_tracker),
         );
 
         // Start background flush worker if enabled
@@ -992,6 +1001,7 @@ impl DB {
             compaction_filter,
             #[cfg(feature = "object-store")]
             storage_backend,
+            snapshot_tracker,
         };
 
         // Flush memtables if any partition filled up during recovery
@@ -2224,6 +2234,7 @@ impl DB {
                 &self.pending_deletions,
                 &self.compaction_filter,
                 &self.storage_backend,
+                &self.snapshot_tracker,
             )
         }
         #[cfg(not(feature = "object-store"))]
@@ -2238,6 +2249,7 @@ impl DB {
                 &self.max_flushed_seq,
                 &self.pending_deletions,
                 &self.compaction_filter,
+                &self.snapshot_tracker,
             )
         }
     }
@@ -2255,6 +2267,7 @@ impl DB {
         pending_deletions: &Arc<Mutex<Vec<(PathBuf, std::time::Instant)>>>,
         filter: &Option<Arc<dyn crate::compaction::CompactionFilter>>,
         storage_backend: &Option<Arc<dyn crate::storage::Storage>>,
+        snapshot_tracker: &Arc<crate::types::SnapshotTracker>,
     ) -> Result<()> {
         Self::do_compact_level_impl(
             lsm,
@@ -2267,6 +2280,7 @@ impl DB {
             pending_deletions,
             filter,
             storage_backend,
+            snapshot_tracker,
         )
     }
 
@@ -2282,6 +2296,7 @@ impl DB {
         max_flushed_seq: &Arc<AtomicU64>,
         pending_deletions: &Arc<Mutex<Vec<(PathBuf, std::time::Instant)>>>,
         filter: &Option<Arc<dyn crate::compaction::CompactionFilter>>,
+        snapshot_tracker: &Arc<crate::types::SnapshotTracker>,
     ) -> Result<()> {
         Self::do_compact_level_impl(
             lsm,
@@ -2293,6 +2308,7 @@ impl DB {
             max_flushed_seq,
             pending_deletions,
             filter,
+            snapshot_tracker,
         )
     }
 
@@ -2309,6 +2325,7 @@ impl DB {
         pending_deletions: &Arc<Mutex<Vec<(PathBuf, std::time::Instant)>>>,
         filter: &Option<Arc<dyn crate::compaction::CompactionFilter>>,
         storage_backend: &Option<Arc<dyn crate::storage::Storage>>,
+        snapshot_tracker: &Arc<crate::types::SnapshotTracker>,
     ) -> Result<()> {
         let compaction_start = Instant::now();
 
@@ -2386,9 +2403,10 @@ impl DB {
         let (result_path, size) = if storage_backend.is_some() {
             use crate::compaction::compact_sstables_buffered;
 
-            // Build SSTable in memory
+            // Build SSTable in memory with MVCC GC
             // Use output level (level_num + 1) for compaction
-            let bytes = compact_sstables_buffered(&input_paths, level_num + 1, filter.clone())?;
+            let oldest_snapshot = snapshot_tracker.oldest_snapshot();
+            let bytes = compact_sstables_buffered(&input_paths, level_num + 1, filter.clone(), oldest_snapshot)?;
             let size = bytes.len() as u64;
 
             // Write to local disk (single syscall)
@@ -2406,8 +2424,9 @@ impl DB {
 
             (output_path, size)
         } else {
-            // No cloud storage - use traditional compaction
-            compact_sstables(&input_paths, &output_path, level_num + 1, filter.clone())?
+            // No cloud storage - use traditional compaction with MVCC GC
+            let oldest_snapshot = snapshot_tracker.oldest_snapshot();
+            compact_sstables(&input_paths, &output_path, level_num + 1, filter.clone(), oldest_snapshot)?
         };
 
         // Track physical bytes written during compaction
@@ -2468,6 +2487,7 @@ impl DB {
         max_flushed_seq: &Arc<AtomicU64>,
         pending_deletions: &Arc<Mutex<Vec<(PathBuf, std::time::Instant)>>>,
         filter: &Option<Arc<dyn crate::compaction::CompactionFilter>>,
+        snapshot_tracker: &Arc<crate::types::SnapshotTracker>,
     ) -> Result<()> {
         let compaction_start = Instant::now();
 
@@ -2536,9 +2556,10 @@ impl DB {
         *counter += 1;
         drop(counter);
 
-        // Compact SSTables
+        // Compact SSTables with MVCC GC
+        let oldest_snapshot = snapshot_tracker.oldest_snapshot();
         let (result_path, size) =
-            compact_sstables(&input_paths, &output_path, level_num + 1, filter.clone())?;
+            compact_sstables(&input_paths, &output_path, level_num + 1, filter.clone(), oldest_snapshot)?;
 
         // Track physical bytes written during compaction
         metrics.record_physical_bytes(size);
@@ -3770,15 +3791,18 @@ impl DB {
             sstables.push(level_sstables);
         }
 
-        // 5. Create Snapshot
+        // 5. Create Snapshot with GC tracking
         // We pass empty active memtables because we just swapped them out.
         // The data is now in immutable_memtables.
-        let snapshot = Snapshot::new(
+        let seq = self.next_seq.load(Ordering::Relaxed);
+        let gc_handle = crate::types::SnapshotHandle::new(seq, Arc::clone(&self.snapshot_tracker));
+        let snapshot = Snapshot::with_gc_handle(
             Vec::new(),
             Some(Arc::clone(&old_partitions_arc)),
             sstables,
-            self.next_seq.load(Ordering::Relaxed),
+            seq,
             self.options.merge_operator.clone(),
+            gc_handle,
         );
 
         // 6. Trigger flush

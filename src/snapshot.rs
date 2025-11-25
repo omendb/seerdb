@@ -3,6 +3,7 @@
 use crate::memtable::Memtable;
 use crate::range::RangeIterator;
 use crate::sstable::SSTable;
+use crate::types::SnapshotHandle;
 use crate::MergeOperator;
 use bytes::Bytes;
 use std::sync::{Arc, Mutex};
@@ -13,6 +14,11 @@ pub struct Snapshot {
     sstables: Vec<Vec<Arc<Mutex<SSTable>>>>,
     sequence_number: u64,
     merge_operator: Option<Arc<dyn MergeOperator>>,
+    /// Handle for automatic unregistration from SnapshotTracker on drop.
+    /// When this Snapshot is dropped, the handle unregisters from the tracker,
+    /// allowing compaction to GC versions older than this snapshot.
+    #[allow(dead_code)] // Drop impl uses this implicitly
+    gc_handle: Option<SnapshotHandle>,
 }
 
 impl Snapshot {
@@ -29,6 +35,27 @@ impl Snapshot {
             sstables,
             sequence_number,
             merge_operator,
+            gc_handle: None,
+        }
+    }
+
+    /// Create a snapshot with GC tracking.
+    /// The snapshot will automatically unregister from the tracker when dropped.
+    pub(crate) fn with_gc_handle(
+        memtables: Vec<Arc<Memtable>>,
+        immutable_memtables: Option<Arc<Vec<Arc<Memtable>>>>,
+        sstables: Vec<Vec<Arc<Mutex<SSTable>>>>,
+        sequence_number: u64,
+        merge_operator: Option<Arc<dyn MergeOperator>>,
+        gc_handle: SnapshotHandle,
+    ) -> Self {
+        Self {
+            memtables,
+            immutable_memtables,
+            sstables,
+            sequence_number,
+            merge_operator,
+            gc_handle: Some(gc_handle),
         }
     }
 
