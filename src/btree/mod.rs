@@ -4,7 +4,7 @@
 //! with prefix compression. Pages are never updated in place — writes create
 //! new versions at different locations tracked by the PMT.
 
-mod node;
+pub(crate) mod node;
 mod tree;
 
 pub use node::{Node, NodeHeader, PageType, ValueType, Tombstone, BlobPointer, ValueRef, InsertError, SplitError, PAGE_SIZE, BLOB_POINTER_SIZE};
