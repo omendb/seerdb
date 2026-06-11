@@ -20,14 +20,10 @@
 //! - WiscKey (FAST 2016): key-value separation for reduced write amplification
 //! - Tidehunter (2026): WAL-as-store architecture (reference for I/O patterns)
 
-mod btree;
-mod buffer;
-mod blob;
-mod concurrency;
-mod recovery;
-mod space;
-mod mvcc;
-
-// Public API (to be implemented)
-// pub use btree::BTree;
-// pub use buffer::BufferManager;
+pub mod btree;
+pub mod buffer;
+pub mod blob;
+pub mod concurrency;
+pub mod recovery;
+pub mod space;
+pub mod mvcc;
