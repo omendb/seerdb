@@ -1,161 +1,81 @@
 # seerdb
 
-LSM storage engine with learned data structures. Research-grade embedded storage implementing 2018-2024 papers on learned indexes, workload-aware optimization, and efficient key-value separation.
+High-performance out-of-place B-tree storage engine for NVMe SSDs. Written in Rust.
 
 ## Project Structure
 
-| Directory | Purpose                                                                  |
-| --------- | ------------------------------------------------------------------------ |
-| docs/     | User/team documentation                                                  |
-| ai/       | **AI session context** - workspace for tracking state across sessions    |
-| src/      | Core implementation (db/, memtable/, wal/, sstable/, compaction/, vlog/) |
-| tests/    | Integration tests (25+ test files)                                       |
-| benches/  | Criterion benchmarks (YCSB, baseline comparisons)                        |
-| fuzz/     | Fuzzing targets (db_operations, wal, sstable, vlog)                      |
-| examples/ | Usage examples and baseline benchmarks                                   |
+| Directory | Purpose |
+|---|---|
+| `ai/` | AI session context (local only, not tracked in git) |
+| `src/` | Core implementation |
+| `tests/` | Integration tests |
+| `benches/` | Criterion benchmarks |
 
-### AI Context Organization
+### Source Modules
 
-**Purpose:** AI maintains project context between sessions using ai/
-
-**Session files** (read every session):
-
-- ai/STATUS.md — Current state, metrics, blockers (read FIRST)
-- ai/TODO.md — Tasks (fallback, prefer beads `bd`)
-- ai/ROADMAP.md — Data integrity hardening phases
-
-**Reference files** (loaded on demand):
-
-- ai/research/ — External research
-- ai/design/ — Component specs
-- ai/tmp/ — Temporary artifacts (gitignored)
-
-**Task tracking:** Beads (`bd`) initialized. Use `bd list`, `bd create`, `bd close`.
+| Module | Responsibility |
+|---|---|
+| `btree/` | B-tree data structure, node format, operations |
+| `buffer/` | Buffer pool, page guards, eviction |
+| `space/` | File management, page allocation, FDP/ZNS |
+| `blob/` | Blob file management, KV separation, GC |
+| `concurrency/` | Latches, optimistic lock coupling |
+| `recovery/` | WAL, crash recovery, log manager |
+| `mvcc/` | Transaction management, snapshots, PMT |
 
 ## Technology Stack
 
-| Component       | Technology                              |
-| --------------- | --------------------------------------- |
-| Language        | Rust (nightly, edition 2021)            |
-| Framework       | None (embedded library)                 |
-| Package Manager | Cargo                                   |
-| Allocator       | jemalloc (tikv-jemallocator)            |
-| Compression     | LZ4 (fast), ZSTD (high ratio)           |
-| Hashing         | xxhash (bloom), foldhash (partitioning) |
-| Testing         | proptest, criterion, cargo-fuzz         |
+| Component | Technology |
+|---|---|
+| Language | Rust (stable, edition 2024) |
+| Compression | LZ4 (fast), ZSTD (high ratio) |
+| Testing | proptest, criterion, cargo-fuzz |
 
 ## Commands
 
 ```bash
 # Build
-rustup override set nightly
 cargo build --release
 
 # Test
 cargo test --lib              # Unit tests
 cargo test                    # All tests
-cargo test --features failpoints failpoint  # Crash testing
+cargo test --features zns     # With ZNS support
 
 # Bench
 cargo bench
 
-# Fuzz
-cargo +nightly fuzz run db_operations
-
 # Lint
-cargo clippy --workspace --no-default-features --lib -- -D clippy::correctness -W clippy::pedantic
+cargo clippy --all-features -- -D warnings
 ```
 
 ## Verification Steps
 
-Commands to verify correctness (must pass):
-
 - Build: `cargo build --release` (zero errors)
 - Tests: `cargo test --lib` (all pass)
-- Clippy: `cargo clippy --lib` (zero warnings with pedantic)
+- Clippy: `cargo clippy --all-features -- -D warnings` (zero warnings)
 - Docs: `cargo doc --no-deps` (zero warnings)
-
-**Version bumps:** Always `git add Cargo.toml Cargo.lock` — lock file updates automatically.
-
-## Performance Verification
-
-**CRITICAL: Always profile before and after dependency changes or hot-path modifications.**
-
-```bash
-# Quick profiling test (memtable operations)
-cargo test --lib memtable_profile --release -- --ignored --nocapture
-
-# Expected baselines (Mac M3 Max):
-# - PUT: ~200 ns/op (~5M ops/sec)
-# - GET: ~180 ns/op (~5.5M ops/sec)
-# - GET (miss): ~80 ns/op
-
-# Full regression benchmark (~55s)
-cargo bench --bench quick_regression
-```
-
-**Red flags requiring investigation:**
-
-- PUT > 1,000 ns/op (expect ~200 ns/op)
-- GET > 500 ns/op (expect ~180 ns/op)
-- Any operation 10x+ slower than baseline
-
-**Dependency evaluation checklist:**
-
-1. Check GitHub issues for performance regressions
-2. Run profiling test before and after
-3. Compare against documented baselines
-4. Test on both Mac and Linux (Fedora)
 
 ## Architecture
 
-- **Memtable**: Partitioned skiplist (16 partitions) with ArcSwap for lock-free reads
-- **WAL**: Write-ahead log with configurable sync (SyncAll/SyncData/None)
-- **SSTable**: ALEX learned index + bloom filters + LZ4/ZSTD compression
-- **VLog**: WiscKey-style value separation for large values
-- **Compaction**: 7-level LSM with Dostoevsky adaptive strategy
+See `ai/design/engine_spec.md` for the complete specification.
 
-## API
+- **Out-of-place B-tree**: Pages never updated in place. PMT tracks locations.
+- **KV separation**: Large values (>1KB) stored in append-only blob files.
+- **SSD-native**: O_DIRECT for predictable latency, FDP/ZNS for minimal write amp.
+- **MVCC**: Copy-on-write provides natural snapshot isolation.
+
+## API (planned)
 
 ```rust
-use seerdb::{DB, DBOptions};
+use seerdb::{DB, Options};
 
-// Simple (std::fs::File pattern)
-let db = DB::open("./my_db")?;
-
-// Configured (std::fs::OpenOptions pattern)
-let db = DBOptions::default()
-    .memtable_capacity(64 * 1024 * 1024)
-    .background_compaction(true)
-    .open("./my_db")?;
-
-// Operations
+let db = DB::open("./my_db", Options::default())?;
 db.put(b"key", b"value")?;
-db.get(b"key")?;
+let val = db.get(b"key")?;
 db.delete(b"key")?;
-db.flush()?;
 ```
-
-## Code Standards
-
-| Aspect      | Standard                                          |
-| ----------- | ------------------------------------------------- |
-| Naming      | `put`/`get`/`delete` (RocksDB convention)         |
-| Visibility  | Minimal public API, internal modules `pub(crate)` |
-| Errors      | `thiserror` for library errors                    |
-| Async       | Sync for files, tokio for network, rayon for CPU  |
-| Allocations | Prefer `&str`/`&[T]` over `String`/`Vec<T>`       |
-
-## Verification Infrastructure
-
-| Category       | Status | Details                                       |
-| -------------- | ------ | --------------------------------------------- |
-| Property-based | ✅     | proptest (8 properties)                       |
-| Data integrity | ✅     | 16 tests (WAL, flush, compaction, concurrent) |
-| Fuzzing        | ✅     | 4 targets: db_ops, wal, sstable, vlog         |
-| Failpoints     | ✅     | 4 crash injection points                      |
-| Benchmarks     | ✅     | YCSB, baseline vs RocksDB/sled/fjall          |
 
 ## Current Focus
 
-See ai/STATUS.md for current state, ai/ROADMAP.md for data integrity hardening phases.
+See `ai/STATUS.md` for current state, `ai/TODO.md` for tasks, `tk ls` for priorities.
