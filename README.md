@@ -1,100 +1,33 @@
 # seerdb
 
-Research-grade LSM storage engine with learned data structures.
+High-performance out-of-place B-tree storage engine for NVMe SSDs. Written in Rust.
 
-[![Crates.io](https://img.shields.io/crates/v/seerdb.svg)](https://crates.io/crates/seerdb)
-[![Docs.rs](https://docs.rs/seerdb/badge.svg)](https://docs.rs/seerdb)
-[![CI](https://github.com/omendb/seerdb/actions/workflows/ci.yml/badge.svg)](https://github.com/omendb/seerdb/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+## What
 
-Embedded key-value storage integrating learned indexes (ALEX), key-value separation (WiscKey), and workload-aware compaction from recent systems research.
+An embedded key-value storage engine designed from scratch for modern hardware:
 
-## Installation
+- **Out-of-place writes** (LeanStore-inspired): pages never updated in place, 6-10x less flash writes than LSM
+- **KV separation** (WiscKey-inspired): large values stored separately for lower write amplification
+- **SSD-native**: designed for NVMe, with optional FDP/ZNS support
+- **MVCC**: copy-on-write concurrency control, snapshot isolation
 
-```toml
-[dependencies]
-seerdb = "0.0.4"
-```
+## Why
 
-Requires nightly Rust:
+LSM trees (RocksDB, LevelDB, fjall) rewrite data 10-30x during compaction. This is architectural, not tunable. Out-of-place B-trees achieve competitive write throughput with 6-10x less flash writes, better read performance, and simpler code.
 
-```bash
-rustup override set nightly
-```
+No Rust storage engine does this. seerdb fills that gap.
 
-## Quick Start
+## Status
 
-```rust
-use seerdb::{DB, DBOptions};
+Early development. See [ai/STATUS.md](ai/STATUS.md) for current state.
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let db = DB::open(DBOptions::default())?;
+## References
 
-    // Basic operations
-    db.put(b"key", b"value")?;
-    let val = db.get(b"key")?;
-    db.delete(b"key")?;
-
-    // Batch writes (atomic)
-    let mut batch = db.batch();
-    batch.put(b"user:1", b"alice");
-    batch.put(b"user:2", b"bob");
-    batch.commit()?;
-
-    // Range scan
-    for result in db.prefix(b"user:")? {
-        let (key, value) = result?;
-        println!("{:?} = {:?}", key, value);
-    }
-
-    // Point-in-time snapshot
-    let snapshot = db.snapshot();
-    db.put(b"key", b"new_value")?;
-    assert_eq!(snapshot.get(b"key")?, val); // snapshot sees old state
-
-    Ok(())
-}
-```
-
-## Features
-
-- **Learned indexes** (ALEX) for adaptive key distribution
-- **Key-value separation** (WiscKey) for reduced write amplification
-- **Merge operators** for atomic read-modify-write (counters, lists)
-- **OCC transactions** with snapshot isolation
-- **Point-in-time snapshots**
-- **Range queries** and prefix scans
-- **Tiered storage** with S3/GCS/Azure support
-- **Compression** (ZSTD/LZ4) and SIMD optimizations
-
-## Architecture
-
-seerdb is a 7-level LSM tree with:
-
-- **Memtable**: Partitioned skip list (16 partitions) with lock-free reads via `ArcSwap`
-- **WAL**: Write-ahead log with configurable sync policies
-- **SSTable**: Two-level index with ALEX learned index for data blocks, bloom filters, LZ4/ZSTD compression
-- **VLog**: Optional WiscKey-style value log for large values (reduces write amplification)
-- **Compaction**: Dostoevsky-inspired tiered/leveled hybrid with lazy leveling
-
-## Benchmarks
-
-Run benchmarks with:
-
-```bash
-cargo bench                              # All benchmarks
-cargo bench --bench ycsb_benchmark       # YCSB workloads
-cargo bench --bench mixed_workload       # Read/write mix
-```
-
-## Testing
-
-```bash
-cargo test --lib                         # Unit tests (213 tests)
-cargo test                               # All tests including integration
-cargo test --features failpoints         # Crash/recovery tests
-```
+- LeanStore (VLDB 2024, 2026) — out-of-place B-tree, SSD-aware buffer management
+- "How to Write to SSDs" (VLDB 2026) — DB-SSD co-optimization, NoWA pattern
+- WiscKey (FAST 2016) — key-value separation for reduced write amplification
+- ZLeanStore (GitHub) — C++ implementation of out-of-place B-tree with blob storage
 
 ## License
 
-[Apache License 2.0](LICENSE)
+Apache License 2.0

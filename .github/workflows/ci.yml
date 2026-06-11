@@ -2,20 +2,30 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  # Pin nightly for reproducibility (update monthly)
-  RUST_NIGHTLY: nightly-2024-12-01
 
 jobs:
-  # ==========================================================================
-  # Stage 1: Fast checks (parallel, no deps needed)
-  # ==========================================================================
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo check --all-features
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --all-features
 
   fmt:
     name: Format
@@ -35,143 +45,4 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - name: Clippy (lib)
-        run: |
-          cargo clippy --workspace --no-default-features --lib -- \
-            -D warnings \
-            -D clippy::correctness \
-            -W clippy::suspicious \
-            -W clippy::pedantic \
-            -A clippy::too_many_arguments \
-            -A clippy::type_complexity \
-            -A clippy::module_name_repetitions
-      - name: Clippy (tests)
-        run: |
-          cargo clippy --workspace --no-default-features --tests -- \
-            -D clippy::correctness \
-            -W clippy::suspicious
-
-  docs:
-    name: Documentation
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Build docs
-        run: cargo doc --workspace --no-default-features --no-deps
-        env:
-          RUSTDOCFLAGS: -D warnings
-
-  # ==========================================================================
-  # Stage 2: Security checks
-  # ==========================================================================
-
-  security:
-    name: Security Audit
-    runs-on: ubuntu-latest
-    permissions:
-      checks: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: rustsec/audit-check@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-  deny:
-    name: Cargo Deny
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          command: check
-          arguments: --all-features
-
-  # ==========================================================================
-  # Stage 3: Tests (after format/lint pass)
-  # ==========================================================================
-
-  test-stable:
-    name: Test (stable)
-    runs-on: ubuntu-latest
-    needs: [fmt, clippy]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Unit tests
-        run: cargo test --lib --no-default-features
-        timeout-minutes: 10
-
-  test-nightly:
-    name: Test (nightly + SIMD)
-    runs-on: ubuntu-latest
-    needs: [fmt, clippy]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_NIGHTLY }}
-      - uses: Swatinem/rust-cache@v2
-      - name: Unit tests with SIMD
-        run: cargo test --lib --all-features
-        timeout-minutes: 10
-
-  test-failpoints:
-    name: Test (failpoints)
-    runs-on: ubuntu-latest
-    needs: [fmt, clippy]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Failpoint tests
-        # Failpoints use global state, must run serially
-        run: cargo test --features failpoints --test failpoint_tests -- --test-threads=1
-        timeout-minutes: 5
-
-  # ==========================================================================
-  # Stage 4: Property-based tests (longer running)
-  # ==========================================================================
-
-  proptest:
-    name: Property Tests
-    runs-on: ubuntu-latest
-    needs: [test-stable]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Property-based tests
-        run: cargo test --lib proptest
-        timeout-minutes: 15
-        env:
-          PROPTEST_CASES: 500
-
-  # ==========================================================================
-  # Stage 5: MSRV check (only on Cargo.toml changes)
-  # ==========================================================================
-
-  msrv:
-    name: MSRV Check
-    runs-on: ubuntu-latest
-    if: contains(github.event.head_commit.modified, 'Cargo.toml') || github.event_name == 'pull_request'
-    steps:
-      - uses: actions/checkout@v4
-      - name: Get MSRV from Cargo.toml
-        id: msrv
-        run: |
-          MSRV=$(grep -E "^rust-version" Cargo.toml | sed 's/rust-version = "\(.*\)"/\1/' || echo "")
-          echo "msrv=$MSRV" >> $GITHUB_OUTPUT
-          echo "MSRV: $MSRV"
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ steps.msrv.outputs.msrv }}
-        if: steps.msrv.outputs.msrv != ''
-      - uses: Swatinem/rust-cache@v2
-        if: steps.msrv.outputs.msrv != ''
-      - name: Check MSRV builds
-        run: cargo check --lib --no-default-features
-        if: steps.msrv.outputs.msrv != ''
+      - run: cargo clippy --all-features -- -D warnings

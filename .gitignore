@@ -1,8 +1,5 @@
 /target
-fuzz_sstable.log
-
-# Local cargo config (target-cpu=native breaks CI)
-.cargo/config.toml
+Cargo.lock
 
 # Coverage reports
 /coverage
@@ -13,3 +10,8 @@ flamegraph*.svg
 
 # Benchmark results
 /criterion
+
+# Fuzz artifacts
+fuzz/artifacts/
+fuzz/corpus/
+fuzz/SanitizerCoverage*.log
